@@ -28,3 +28,8 @@ node_modules/
 .vite/
 coverage/
 .omx/
+
+.codex/
+.mcp.json
+.vscode/
+/AGENTS.md

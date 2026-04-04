@@ -52,8 +52,14 @@ dependencies = [
     "dulwich>=0.22.0,<1.0.0",
 ]
 
+[project.entry-points."nanobot.channels"]
+webui = "nanobot_webui:WebUIChannel"
+
 [project.optional-dependencies]
 api = [
+    "aiohttp>=3.9.0,<4.0.0",
+]
+webui = [
     "aiohttp>=3.9.0,<4.0.0",
 ]
 wecom = [
@@ -99,10 +105,12 @@ include = [
     "nanobot/templates/**/*.md",
     "nanobot/skills/**/*.md",
     "nanobot/skills/**/*.sh",
+    "nanobot_webui/**/*.py",
+    "nanobot_webui/static/**/*",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["nanobot"]
+packages = ["nanobot", "nanobot_webui"]
 
 [tool.hatch.build.targets.wheel.sources]
 "nanobot" = "nanobot"
@@ -113,6 +121,7 @@ packages = ["nanobot"]
 [tool.hatch.build.targets.sdist]
 include = [
     "nanobot/",
+    "nanobot_webui/",
     "bridge/",
     "README.md",
     "LICENSE",

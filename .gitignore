@@ -24,3 +24,7 @@ botpy.log
 nano.*.save
 .DS_Store
 uv.lock
+node_modules/
+.vite/
+coverage/
+.omx/

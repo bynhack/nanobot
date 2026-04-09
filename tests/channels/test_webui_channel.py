@@ -197,7 +197,7 @@ async def test_websocket_cancel_maps_to_stop_command(aiohttp_client, channel) ->
 
     with patch.object(channel, "_handle_message", new=AsyncMock()) as handle_message:
         await ws.send_json({"type": "message.cancel"})
-        await asyncio.sleep(0)
+        await asyncio.sleep(0.05)
 
     handle_message.assert_awaited_once_with(
         sender_id="webui_browser",

@@ -20,6 +20,26 @@ marked.setOptions({
   gfm: true,
 });
 
+const INLINE_LATEX_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\$\\rightarrow\$/g, '→'],
+  [/\$\\leftarrow\$/g, '←'],
+  [/\$\\Rightarrow\$/g, '⇒'],
+  [/\$\\Leftarrow\$/g, '⇐'],
+  [/\$\\leftrightarrow\$/g, '↔'],
+  [/\$\\Leftrightarrow\$/g, '⇔'],
+];
+
+const INLINE_BOLD_PATTERN = /\*\*([^*\n]+)\*\*/g;
+
+export function normalizeInlineArtifacts(raw: string): string {
+  let normalized = raw;
+  for (const [pattern, replacement] of INLINE_LATEX_REPLACEMENTS) {
+    normalized = normalized.replace(pattern, replacement);
+  }
+  normalized = normalized.replace(INLINE_BOLD_PATTERN, '<strong>$1</strong>');
+  return normalized;
+}
+
 function enhanceCodeBlocks(host: ParentNode): void {
   host.querySelectorAll('pre code').forEach((block) => {
     hljs.highlightElement(block as HTMLElement);
@@ -49,7 +69,7 @@ function enhanceCodeBlocks(host: ParentNode): void {
 }
 
 export function renderMarkdownHtml(raw: string): string {
-  const html = marked.parse(raw) as string;
+  const html = marked.parse(normalizeInlineArtifacts(raw)) as string;
   return DOMPurify.sanitize(html, {
     USE_PROFILES: { html: true },
   });

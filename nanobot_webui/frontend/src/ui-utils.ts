@@ -20,7 +20,14 @@ export function bootstrapConfig(): BootstrapConfig {
 }
 
 export function shortChatId(chatId: string | null): string {
-  return chatId ? `会话：${chatId.slice(0, 8)}` : '';
+  if (!chatId) {
+    return '';
+  }
+  if (chatId.includes(':')) {
+    const [channel, value] = chatId.split(':', 2);
+    return `${channel} · ${value.slice(0, 12)}`;
+  }
+  return `会话：${chatId.slice(0, 8)}`;
 }
 
 export function formatDate(value: string | null): string {

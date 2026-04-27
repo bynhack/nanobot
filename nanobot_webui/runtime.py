@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from nanobot.agent.loop import AgentLoop
     from nanobot.bus.events import InboundMessage
     from nanobot.bus.queue import MessageBus
+    from nanobot_webui.interactive.registry import InteractionRegistry
 
 _ROUTE_CONTEXT: ContextVar["WebUIRouteContext | None"] = ContextVar("webui_route_context", default=None)
 
@@ -80,6 +81,45 @@ def attach_webui_runtime(bus: MessageBus, hook: Any) -> bool:
     loop._process_message = MethodType(_wrapped_process_message, loop)
     loop._webui_runtime_attached = True
     logger.info("WebUI runtime attached to AgentLoop")
+    return True
+
+
+def attach_webui_interactive_tools(bus: MessageBus, registry: "InteractionRegistry") -> bool:
+    """Attach WebUI interactive tools to the live AgentLoop tool registry exactly once."""
+    loop = _find_agent_loop(bus)
+    if loop is None:
+        return False
+
+    if getattr(loop, "_webui_interactive_tools_attached", False):
+        return True
+
+    from nanobot_webui.interactive.tools import interactive_tools
+
+    for tool in interactive_tools(registry):
+        if not loop.tools.has(tool.name):
+            loop.tools.register(tool)
+
+    original_get_definitions = loop.tools.get_definitions
+    if not getattr(loop.tools, "_webui_interactive_tool_filter_attached", False):
+        def _wrapped_get_definitions():
+            definitions = original_get_definitions()
+            route = current_route_context()
+            if route is None or route.message.channel != "webui":
+                return [
+                    schema for schema in definitions
+                    if not (
+                        isinstance(schema, dict)
+                        and isinstance(schema.get("function"), dict)
+                        and str(schema["function"].get("name", "")).startswith("interactive_")
+                    )
+                ]
+            return definitions
+
+        loop.tools.get_definitions = _wrapped_get_definitions  # type: ignore[method-assign]
+        loop.tools._webui_interactive_tool_filter_attached = True  # type: ignore[attr-defined]
+
+    loop._webui_interactive_tools_attached = True
+    logger.info("WebUI interactive tools attached to AgentLoop")
     return True
 
 

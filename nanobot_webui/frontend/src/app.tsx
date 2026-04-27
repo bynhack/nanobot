@@ -18,6 +18,7 @@ import {
   type ThreadMessageLike,
   type ToolCallMessagePartProps,
 } from '@assistant-ui/react';
+import { useComposerAddAttachment } from '@assistant-ui/core/react';
 import {
   createContext,
   useCallback,
@@ -27,12 +28,22 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ChangeEvent,
+  type KeyboardEvent,
   type PropsWithChildren,
 } from 'react';
 
-import { deleteSession, loadSessions, uploadFiles, withAuthQuery } from './api';
+import { deleteSession, loadSessions, loadSettingsSkills, uploadFiles, withAuthQuery } from './api';
+import { InteractiveActionsProvider, InteractiveDataPart } from './interactive';
 import { enhanceMarkdownHost, renderMarkdownHtml } from './markdown';
 import { MediaPreviewController } from './media-preview';
+import { attachDroppedFiles, fileListToArray, hasDraggedFiles } from './composer-drop';
+import {
+  draftTailAfterSlashSelection,
+  filterSkillSuggestions,
+  type SkillCandidate,
+  shouldShowSkillPicker,
+} from './skill-quick-select';
 import { SettingsScreen, type ThemePreference } from './settings-page';
 import { STORAGE_KEYS, createInitialState, createStore } from './store';
 import './styles.css';
@@ -40,6 +51,7 @@ import type {
   AppState,
   ActiveTurnState,
   HistoryMessage,
+  InteractiveResultPayload,
   MediaItem,
   PendingToolBlock,
   TurnPhase,
@@ -66,6 +78,8 @@ const appStore = createStore(
     window.localStorage.getItem(STORAGE_KEYS.chatId),
   ),
 );
+
+const DETAIL_PANEL_WIDTH_KEY = 'nanobot_webui_detail_panel_width';
 
 const ASSISTANT_COMPLETE_STATUS = { type: 'complete', reason: 'stop' } as const;
 const ASSISTANT_RUNNING_STATUS = { type: 'running' } as const;
@@ -224,6 +238,7 @@ function mediaToAttachments(media: MediaItem[]) {
       type,
       name: item.name,
       contentType: mime,
+      status: { type: 'complete' as const },
       content:
         type === 'image'
           ? [{ type: 'image' as const, image: item.url }]
@@ -294,6 +309,27 @@ function historyMessageToThreadMessage(
       role: 'assistant',
       status: ASSISTANT_COMPLETE_STATUS,
       content,
+    };
+  }
+
+  if (message.type === 'interactive') {
+    return {
+      id,
+      role: 'assistant',
+      status: ASSISTANT_COMPLETE_STATUS,
+      content: [
+        {
+          type: 'data',
+          name: 'interactive',
+          data: {
+            id: message.id,
+            kind: message.kind,
+            payload: message.payload,
+            status: message.status,
+            result: message.result,
+          },
+        },
+      ] as const as ThreadMessageLike['content'],
     };
   }
 
@@ -689,6 +725,11 @@ function AssistantMessage() {
               Text: AssistantTextPart,
               Image: AssistantImagePart,
               File: AssistantFilePart,
+              data: {
+                by_name: {
+                  interactive: InteractiveDataPart,
+                },
+              },
               Empty: AssistantEmptyPart,
               tools: { Fallback: ToolCallPart },
               ToolGroup,
@@ -703,42 +744,301 @@ function AssistantMessage() {
   );
 }
 
-function Composer({ isRunning }: { isRunning: boolean }) {
+function Composer({
+  isRunning,
+  skills,
+  selectedSkillName,
+  onSelectSkill,
+  onClearSkill,
+}: {
+  isRunning: boolean;
+  skills: SkillCandidate[];
+  selectedSkillName: string | null;
+  onSelectSkill: (skillName: string) => void;
+  onClearSkill: () => void;
+}) {
+  const composerHostRef = useRef<HTMLDivElement | null>(null);
+  const dragDepthRef = useRef(0);
+  const { addAttachment } = useComposerAddAttachment();
+  const [draft, setDraft] = useState('');
+  const [inputRevision, setInputRevision] = useState(0);
+  const [highlightedSkillIndex, setHighlightedSkillIndex] = useState(0);
+  const [isDragActive, setIsDragActive] = useState(false);
+  const showSkillPicker = shouldShowSkillPicker(draft) && !isRunning;
+  const skillSuggestions = useMemo(
+    () => filterSkillSuggestions(skills, draft).slice(0, 8),
+    [draft, skills],
+  );
+  const selectedSkill = useMemo(
+    () =>
+      selectedSkillName
+        ? skills.find((skill) => skill.name === selectedSkillName) ?? null
+        : null,
+    [selectedSkillName, skills],
+  );
+
+  const findComposerEditable = useCallback(() => {
+    const root = composerHostRef.current;
+    if (!root) {
+      return null;
+    }
+    const editable = root.querySelector('textarea, input, [contenteditable="true"]');
+    if (!editable) {
+      return null;
+    }
+    return editable;
+  }, []);
+
+  const readComposerInputValue = useCallback((): string => {
+    const editable = findComposerEditable();
+    if (!editable) {
+      return draft;
+    }
+    if (editable instanceof HTMLTextAreaElement || editable instanceof HTMLInputElement) {
+      return editable.value;
+    }
+    if (editable instanceof HTMLElement && editable.isContentEditable) {
+      return editable.textContent ?? '';
+    }
+    return draft;
+  }, [draft, findComposerEditable]);
+
+  const applyComposerInputValue = useCallback((nextDraft: string) => {
+    const editable = findComposerEditable();
+    if (!editable) {
+      return;
+    }
+    if (editable instanceof HTMLTextAreaElement || editable instanceof HTMLInputElement) {
+      editable.value = nextDraft;
+      editable.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: nextDraft }));
+      editable.focus();
+      if (editable instanceof HTMLTextAreaElement) {
+        editable.setSelectionRange(nextDraft.length, nextDraft.length);
+      }
+      return;
+    }
+    if (editable instanceof HTMLElement && editable.isContentEditable) {
+      editable.textContent = nextDraft;
+      editable.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: nextDraft }));
+      editable.focus();
+    }
+  }, [findComposerEditable]);
+
+  useEffect(() => {
+    if (inputRevision === 0) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      applyComposerInputValue(draft);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [applyComposerInputValue, draft, inputRevision]);
+
+  useEffect(() => {
+    setHighlightedSkillIndex(0);
+  }, [draft, skillSuggestions.length]);
+
+  const applySelectedSkill = useCallback(
+    (skillName: string) => {
+      const nextDraft = draftTailAfterSlashSelection(readComposerInputValue());
+      setDraft(nextDraft);
+      setInputRevision((current) => current + 1);
+      onSelectSkill(skillName);
+    },
+    [onSelectSkill, readComposerInputValue],
+  );
+
+  const handleDraftChange = useCallback(
+    (event: ChangeEvent<HTMLTextAreaElement>) => {
+      const raw = event.target.value;
+      const normalized =
+        selectedSkillName && raw.startsWith('/') ? draftTailAfterSlashSelection(raw) : raw;
+      if (normalized !== raw) {
+        applyComposerInputValue(normalized);
+      }
+      setDraft(normalized);
+    },
+    [applyComposerInputValue, selectedSkillName],
+  );
+
+  const handleDraftKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (event.key === 'Backspace' && !draft && selectedSkillName) {
+        event.preventDefault();
+        onClearSkill();
+        return;
+      }
+      if (!showSkillPicker) {
+        return;
+      }
+      if (!skillSuggestions.length) {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setDraft('');
+        }
+        return;
+      }
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setHighlightedSkillIndex((current) => (current + 1) % skillSuggestions.length);
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        setHighlightedSkillIndex((current) =>
+          current === 0 ? skillSuggestions.length - 1 : current - 1,
+        );
+        return;
+      }
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        const picked = skillSuggestions[highlightedSkillIndex] ?? skillSuggestions[0];
+        if (picked) {
+          applySelectedSkill(picked.name);
+        }
+        return;
+      }
+      if (event.key === 'Enter') {
+        const picked = skillSuggestions[highlightedSkillIndex] ?? skillSuggestions[0];
+        if (picked) {
+          event.preventDefault();
+          applySelectedSkill(picked.name);
+        }
+      }
+    },
+    [
+      applySelectedSkill,
+      draft,
+      highlightedSkillIndex,
+      onClearSkill,
+      selectedSkillName,
+      showSkillPicker,
+      skillSuggestions,
+    ],
+  );
+
+  const handleDragEnter = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (!hasDraggedFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    dragDepthRef.current += 1;
+    setIsDragActive(true);
+  }, []);
+
+  const handleDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (!hasDraggedFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    if (!isDragActive) {
+      setIsDragActive(true);
+    }
+  }, [isDragActive]);
+
+  const handleDragLeave = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (!hasDraggedFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
+      setIsDragActive(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    if (!hasDraggedFiles(event.dataTransfer)) {
+      return;
+    }
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setIsDragActive(false);
+    const files = fileListToArray(event.dataTransfer.files);
+    if (!files.length) {
+      return;
+    }
+    void attachDroppedFiles(files, addAttachment);
+  }, [addAttachment]);
+
   return (
-    <ComposerPrimitive.Root className="composer-surface">
-      <ComposerPrimitive.AddAttachment className="composer-attach" aria-label="添加附件">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
-        </svg>
-      </ComposerPrimitive.AddAttachment>
-      <div className="composer-main">
-        <div className="composer-attachments-row mt-1">
-          <ComposerPrimitive.Attachments>
-            {() => <ComposerAttachmentChip />}
-          </ComposerPrimitive.Attachments>
-        </div>
-      <ComposerPrimitive.Input
-        className="composer-input"
-        placeholder="发送消息…"
-        submitMode="enter"
-        rows={1}
-        unstable_focusOnRunStart={false}
-        unstable_focusOnScrollToBottom={false}
-        unstable_focusOnThreadSwitched={false}
-      />
-      </div>
-      {isRunning ? (
-        <ComposerPrimitive.Cancel className="composer-cancel">
-          <span className="composer-stop-glyph" />
-        </ComposerPrimitive.Cancel>
-      ) : (
-        <ComposerPrimitive.Send className="composer-send">
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M7 11L12 6L17 11M12 18V7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+    <div ref={composerHostRef} className="composer-host">
+      <ComposerPrimitive.Root
+        className={`composer-surface${isDragActive ? ' drag-active' : ''}`}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        <ComposerPrimitive.AddAttachment className="composer-attach" aria-label="添加附件">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 5v14M5 12h14" />
           </svg>
-        </ComposerPrimitive.Send>
-      )}
-    </ComposerPrimitive.Root>
+        </ComposerPrimitive.AddAttachment>
+        <div className="composer-main">
+          <div className="composer-attachments-row mt-1">
+            <ComposerPrimitive.Attachments>
+              {() => <ComposerAttachmentChip />}
+            </ComposerPrimitive.Attachments>
+          </div>
+          <div className="composer-input-inline">
+            {selectedSkill ? (
+              <span className="composer-selected-skill-chip inline">
+                <span>{selectedSkill.name}</span>
+              </span>
+            ) : null}
+            <ComposerPrimitive.Input
+              key={`composer-input-${selectedSkillName ?? 'none'}-${inputRevision}`}
+              className="composer-input"
+              placeholder={selectedSkill ? '继续输入…' : '发送消息…（输入 / 选择技能）'}
+              submitMode="enter"
+              rows={1}
+              unstable_focusOnRunStart={false}
+              unstable_focusOnScrollToBottom={false}
+              unstable_focusOnThreadSwitched={false}
+              onChange={handleDraftChange}
+              onKeyDown={handleDraftKeyDown}
+            />
+          </div>
+          {showSkillPicker ? (
+            <div className="composer-skill-picker" role="listbox" aria-label="技能建议">
+              <div className="composer-skill-picker-head">技能建议</div>
+              {skillSuggestions.length ? (
+                <div className="composer-skill-picker-list">
+                  {skillSuggestions.map((skill, index) => (
+                    <button
+                      key={skill.name}
+                      type="button"
+                      className={`composer-skill-item${index === highlightedSkillIndex ? ' active' : ''}`}
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        applySelectedSkill(skill.name);
+                      }}
+                    >
+                      <span className="composer-skill-name">/{skill.name}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="composer-skill-picker-empty">没有匹配的技能</div>
+              )}
+            </div>
+          ) : null}
+        </div>
+        {isRunning ? (
+          <ComposerPrimitive.Cancel className="composer-cancel">
+            <span className="composer-stop-glyph" />
+          </ComposerPrimitive.Cancel>
+        ) : (
+          <ComposerPrimitive.Send className="composer-send">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M7 11L12 6L17 11M12 18V7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            </svg>
+          </ComposerPrimitive.Send>
+        )}
+      </ComposerPrimitive.Root>
+    </div>
   );
 }
 
@@ -751,6 +1051,14 @@ export function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [appView, setAppView] = useState<AppView>('chat');
   const [panelOpen, setPanelOpen] = useState(false);
+  const [availableSkills, setAvailableSkills] = useState<SkillCandidate[]>([]);
+  const [selectedSkillName, setSelectedSkillName] = useState<string | null>(null);
+  const [detailPanelWidth, setDetailPanelWidth] = useState(() => {
+    const raw = window.localStorage.getItem(DETAIL_PANEL_WIDTH_KEY);
+    const width = raw ? Number(raw) : 440;
+    return Number.isFinite(width) ? Math.min(880, Math.max(360, width)) : 440;
+  });
+  const [resizingDetailPanel, setResizingDetailPanel] = useState(false);
   const [themePreference, setThemePreference] = useState<ThemePreference>(() => readThemePreference());
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -799,9 +1107,19 @@ export function App() {
   }, [themePreference]);
 
   useEffect(() => {
+    window.localStorage.setItem(DETAIL_PANEL_WIDTH_KEY, String(detailPanelWidth));
+  }, [detailPanelWidth]);
+
+  useEffect(() => {
     authTokenRef.current = state.authToken;
     chatIdRef.current = state.currentChatId;
   }, [state.authToken, state.currentChatId]);
+
+  useEffect(() => {
+    setPanelOpen(false);
+    previewRef.current?.close();
+    pendingPreviewRef.current = null;
+  }, [state.currentChatId]);
 
   useEffect(() => {
     setDraftToken(state.authToken);
@@ -871,6 +1189,34 @@ export function App() {
   }, [state.authToken]);
 
   useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        const skillSummaries = await loadSettingsSkills(authTokenRef.current);
+        if (!active) {
+          return;
+        }
+        setAvailableSkills(
+          skillSummaries.map((skill) => ({
+            name: skill.name,
+            description: skill.description,
+            enabled:
+              skill.enabled ||
+              (typeof skill.path === 'string' && skill.path.endsWith('/SKILL.md')),
+          })),
+        );
+      } catch {
+        if (active) {
+          setAvailableSkills([]);
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [state.authToken]);
+
+  useEffect(() => {
     if (appView !== 'chat') {
       previewRef.current?.close();
       previewRef.current = null;
@@ -915,6 +1261,35 @@ export function App() {
   }, [panelOpen]);
 
   useEffect(() => {
+    if (!resizingDetailPanel) {
+      return;
+    }
+
+    const onMouseMove = (event: MouseEvent) => {
+      const nextWidth = window.innerWidth - event.clientX;
+      setDetailPanelWidth(Math.min(880, Math.max(360, nextWidth)));
+    };
+
+    const onMouseUp = () => {
+      setResizingDetailPanel(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [resizingDetailPanel]);
+
+  useEffect(() => {
     if (!state.currentChatId) {
       return;
     }
@@ -953,6 +1328,20 @@ export function App() {
   );
 
   const runtimeMessages = useMemo(() => buildRuntimeMessages(state), [state]);
+  const activeSession = useMemo(
+    () => state.sessions.find((session) => session.chat_id === state.currentChatId) ?? null,
+    [state.currentChatId, state.sessions],
+  );
+  const isReadOnlySession = Boolean(activeSession?.read_only);
+  const hasPendingInteractive = useMemo(() => {
+    const chatId = state.currentChatId;
+    if (!chatId) {
+      return false;
+    }
+    return (state.messagesByChat[chatId] ?? []).some(
+      (message) => message.type === 'interactive' && message.status === 'pending',
+    );
+  }, [state.currentChatId, state.messagesByChat]);
   const activeTurn = state.currentChatId ? state.activeTurns[state.currentChatId] : null;
   
   // 基于最后一条消息的状态判断是否正在运行
@@ -967,8 +1356,12 @@ export function App() {
   const handleNewMessage = useCallback(
     async (message: AppendMessage) => {
       const content = extractTextInput(message);
+      const effectiveContent =
+        selectedSkillName && !content.trimStart().startsWith('$')
+          ? `$${selectedSkillName} ${content}`.trimEnd()
+          : content;
       const files = extractAttachmentFiles(message);
-      if (!content && !files.length) {
+      if (!effectiveContent && !files.length) {
         showFlash('请输入消息或添加附件');
         return;
       }
@@ -976,6 +1369,17 @@ export function App() {
       const chatId = appStore.getState().currentChatId;
       if (!chatId || appStore.getState().connectionState !== 'connected') {
         showFlash('连接尚未建立，请稍后重试');
+        return;
+      }
+      const session = appStore.getState().sessions.find((item) => item.chat_id === chatId);
+      if (session?.read_only) {
+        showFlash('当前会话来自其他渠道，仅支持查看历史');
+        return;
+      }
+      if ((appStore.getState().messagesByChat[chatId] ?? []).some(
+        (item) => item.type === 'interactive' && item.status === 'pending',
+      )) {
+        showFlash('当前会话存在未完成交互，请先完成后再发送新消息');
         return;
       }
 
@@ -992,15 +1396,51 @@ export function App() {
       appStore.dispatch({
         type: 'local.user_message',
         chatId,
-        content,
+        content: effectiveContent,
         media: uploadedFiles.map(({ url, name, mime }) => ({ url, name, mime })),
       });
       appStore.dispatch({ type: 'local.turn_started', chatId });
       wsClientRef.current?.send({
         type: 'message.send',
-        content,
+        content: effectiveContent,
         attachments: uploadedFiles.map(({ path, name, mime }) => ({ path, name, mime })),
       });
+      setSelectedSkillName(null);
+    },
+    [selectedSkillName, showFlash],
+  );
+
+  const handleResolveInteractive = useCallback(
+    (interactionId: string, result: InteractiveResultPayload) => {
+      if (appStore.getState().connectionState !== 'connected') {
+        showFlash('连接尚未建立，请稍后重试');
+        return;
+      }
+      const sent = wsClientRef.current?.send({
+        type: 'interactive.response',
+        id: interactionId,
+        result,
+      });
+      if (!sent) {
+        showFlash('交互结果发送失败，请重试');
+      }
+    },
+    [showFlash],
+  );
+
+  const handleCancelInteractive = useCallback(
+    (interactionId: string) => {
+      if (appStore.getState().connectionState !== 'connected') {
+        showFlash('连接尚未建立，请稍后重试');
+        return;
+      }
+      const sent = wsClientRef.current?.send({
+        type: 'interactive.cancel',
+        id: interactionId,
+      });
+      if (!sent) {
+        showFlash('交互取消发送失败，请重试');
+      }
     },
     [showFlash],
   );
@@ -1011,7 +1451,9 @@ export function App() {
     isDisabled:
       (bootstrap.authRequired && !state.authToken) ||
       state.connectionState !== 'connected' ||
-      !state.currentChatId,
+      !state.currentChatId ||
+      isReadOnlySession ||
+      hasPendingInteractive,
     adapters: {
       attachments: webuiAttachmentAdapter,
     },
@@ -1033,9 +1475,29 @@ export function App() {
     },
   });
 
+  const interactiveActions = useMemo(
+    () => ({
+      disabled:
+        state.connectionState !== 'connected' ||
+        !state.currentChatId ||
+        isReadOnlySession,
+      resolve: handleResolveInteractive,
+      cancel: handleCancelInteractive,
+    }),
+    [
+      handleCancelInteractive,
+      handleResolveInteractive,
+      isReadOnlySession,
+      hasPendingInteractive,
+      state.connectionState,
+      state.currentChatId,
+    ],
+  );
+
   return (
     <DetailPreviewContext.Provider value={previewActions}>
       <div className="shell">
+        {resizingDetailPanel ? <div className="detail-resize-overlay" aria-hidden="true" /> : null}
         <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
           <div className="sidebar-header">
             <div className="brand">
@@ -1086,30 +1548,32 @@ export function App() {
                   >
                     <div className="session-meta">
                       <span>{formatDate(session.last_ts || session.created_at)}</span>
-                      <span>{session.message_count} 条</span>
+                      <span>{session.read_only ? `${session.channel ?? 'other'} · 只读` : `${session.message_count} 条`}</span>
                     </div>
                     <p>{session.preview}</p>
-                    <button
-                      type="button"
-                      className="delete-pill"
-                      aria-label="删除会话"
-                      onClick={async (event) => {
-                        event.stopPropagation();
-                        try {
-                          await deleteSession(session.chat_id, state.authToken);
-                          if (state.currentChatId === session.chat_id) {
-                            wsClientRef.current?.send({ type: 'session.new' });
+                    {!session.read_only ? (
+                      <button
+                        type="button"
+                        className="delete-pill"
+                        aria-label="删除会话"
+                        onClick={async (event) => {
+                          event.stopPropagation();
+                          try {
+                            await deleteSession(session.chat_id, state.authToken);
+                            if (state.currentChatId === session.chat_id) {
+                              wsClientRef.current?.send({ type: 'session.new' });
+                            }
+                            await refreshSessions();
+                          } catch (error) {
+                            showFlash(error instanceof Error ? error.message : '删除会话失败');
                           }
-                          await refreshSessions();
-                        } catch (error) {
-                          showFlash(error instanceof Error ? error.message : '删除会话失败');
-                        }
-                      }}
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                      </svg>
-                    </button>
+                        }}
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    ) : null}
                   </div>
                 ))
               ) : (
@@ -1151,42 +1615,57 @@ export function App() {
                 </button>
             </div>
             {flashMessage ? <div className="flash">{flashMessage}</div> : null}
-            <AssistantRuntimeProvider runtime={runtime}>
-              <ThreadPrimitive.Root className="thread-root">
-                <ThreadPrimitive.Viewport className="messages">
-                  <ThreadPrimitive.Empty>
-                    <div className="hero-welcome">
-                      <div className="hero-logo">
-                        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                          <path d="M12 2c0 0 1.2 5.4 6 6-4.8 1.2-6 6-6 6s-1.2-5.4-6-6c4.8-1.2 6-6 6-6z" />
-                          <path d="M19.5 15c0 0 .6 2.7 2.5 3-1.9.6-2.5 3-2.5 3s-.6-2.7-2.5-3c1.9-.6 2.5-3 2.5-3z" opacity=".72" />
-                          <path d="M4.5 4c0 0 .4 1.8 1.5 2-1.1.4-1.5 2-1.5 2s-.4-1.8-1.5-2c1.1-.4 1.5-2 1.5-2z" opacity=".48" />
-                        </svg>
+            <InteractiveActionsProvider value={interactiveActions}>
+              <AssistantRuntimeProvider runtime={runtime}>
+                <ThreadPrimitive.Root className="thread-root">
+                  <ThreadPrimitive.Viewport className="messages">
+                    <ThreadPrimitive.Empty>
+                      <div className="hero-welcome">
+                        <div className="hero-logo">
+                          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                            <path d="M12 2c0 0 1.2 5.4 6 6-4.8 1.2-6 6-6 6s-1.2-5.4-6-6c4.8-1.2 6-6 6-6z" />
+                            <path d="M19.5 15c0 0 .6 2.7 2.5 3-1.9.6-2.5 3-2.5 3s-.6-2.7-2.5-3c1.9-.6 2.5-3 2.5-3z" opacity=".72" />
+                            <path d="M4.5 4c0 0 .4 1.8 1.5 2-1.1.4-1.5 2-1.5 2s-.4-1.8-1.5-2c1.1-.4 1.5-2 1.5-2z" opacity=".48" />
+                          </svg>
+                        </div>
+                        <div className="hero-title">有什么我可以帮您的？</div>
                       </div>
-                      <div className="hero-title">有什么我可以帮您的？</div>
-                    </div>
-                  </ThreadPrimitive.Empty>
-                  <ThreadPrimitive.Messages
-                    components={{
-                      UserMessage,
-                      AssistantMessage,
-                    }}
-                  />
-                  <ThreadPrimitive.ViewportFooter className="thread-footer">
-                    {turnStatusText ? <div className="turn-status-line">{turnStatusText}</div> : null}
-                    <ThreadPrimitive.ScrollToBottom className="thread-scroll-bottom">
-                      ↓
-                    </ThreadPrimitive.ScrollToBottom>
-                    <Composer isRunning={isRunning} />
-                  </ThreadPrimitive.ViewportFooter>
-                </ThreadPrimitive.Viewport>
-              </ThreadPrimitive.Root>
-            </AssistantRuntimeProvider>
+                    </ThreadPrimitive.Empty>
+                    <ThreadPrimitive.Messages
+                      components={{
+                        UserMessage,
+                        AssistantMessage,
+                      }}
+                    />
+                    <ThreadPrimitive.ViewportFooter className="thread-footer">
+                      {turnStatusText ? <div className="turn-status-line">{turnStatusText}</div> : null}
+                      <ThreadPrimitive.ScrollToBottom className="thread-scroll-bottom">
+                        ↓
+                      </ThreadPrimitive.ScrollToBottom>
+                      <Composer
+                        isRunning={isRunning}
+                        skills={availableSkills}
+                        selectedSkillName={selectedSkillName}
+                        onSelectSkill={setSelectedSkillName}
+                        onClearSkill={() => setSelectedSkillName(null)}
+                      />
+                    </ThreadPrimitive.ViewportFooter>
+                  </ThreadPrimitive.Viewport>
+                </ThreadPrimitive.Root>
+              </AssistantRuntimeProvider>
+            </InteractiveActionsProvider>
           </main>
           <section
             ref={panelRef}
             className={`detail-panel${panelOpen ? '' : ' hidden'}`}
+            style={{ width: `${detailPanelWidth}px` }}
           >
+            <button
+              type="button"
+              className="detail-resize-handle"
+              aria-label="调整查看器宽度"
+              onMouseDown={() => setResizingDetailPanel(true)}
+            />
             <div className="detail-header">
               <div>
                 <div className="detail-kicker">查看器</div>

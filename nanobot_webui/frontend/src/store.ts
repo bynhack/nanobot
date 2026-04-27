@@ -4,6 +4,7 @@ import type {
   BootstrapConfig,
   ConnectionState,
   HistoryMessage,
+  InteractiveHistoryItem,
   MediaItem,
   PendingToolBlock,
   ServerEvent,
@@ -83,6 +84,36 @@ function appendMessage(state: AppState, chatId: string, message: HistoryMessage)
     messagesByChat: {
       ...state.messagesByChat,
       [chatId]: [...(state.messagesByChat[chatId] ?? []), ensureMessageId(chatId, message)],
+    },
+  };
+}
+
+function upsertInteractiveMessage(
+  state: AppState,
+  chatId: string,
+  item: InteractiveHistoryItem & { type: 'interactive' },
+): AppState {
+  const messages = state.messagesByChat[chatId] ?? [];
+  const index = messages.findIndex((message) => message.type === 'interactive' && message.id === item.id);
+  if (index === -1) {
+    return appendMessage(state, chatId, item);
+  }
+  const current = messages[index];
+  if (
+    current &&
+    current.type === 'interactive' &&
+    current.status !== 'pending' &&
+    item.status === 'pending'
+  ) {
+    return state;
+  }
+  const nextMessages = [...messages];
+  nextMessages[index] = ensureMessageId(chatId, item);
+  return {
+    ...state,
+    messagesByChat: {
+      ...state.messagesByChat,
+      [chatId]: nextMessages,
     },
   };
 }
@@ -303,6 +334,65 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
       },
       currentChatId: state.currentChatId === event.chatId ? null : state.currentChatId,
       sessions: state.sessions.filter((session) => session.chat_id !== event.chatId),
+    };
+  }
+
+  if (event.type === 'interactive.request') {
+    return upsertInteractiveMessage(state, event.chatId, {
+      type: 'interactive',
+      id: event.id,
+      kind: event.kind,
+      payload: event.payload,
+      status: 'pending',
+    });
+  }
+
+  if (event.type === 'interactive.response') {
+    const messages = state.messagesByChat[event.chatId] ?? [];
+    const index = messages.findIndex((message) => message.type === 'interactive' && message.id === event.id);
+    if (index === -1) {
+      return state;
+    }
+    const nextMessages = [...messages];
+    const current = nextMessages[index];
+    if (!current || current.type !== 'interactive') {
+      return state;
+    }
+    nextMessages[index] = {
+      ...current,
+      status: 'ok',
+      result: event.result,
+    };
+    return {
+      ...state,
+      messagesByChat: {
+        ...state.messagesByChat,
+        [event.chatId]: nextMessages,
+      },
+    };
+  }
+
+  if (event.type === 'interactive.cancel') {
+    const messages = state.messagesByChat[event.chatId] ?? [];
+    const index = messages.findIndex((message) => message.type === 'interactive' && message.id === event.id);
+    if (index === -1) {
+      return state;
+    }
+    const nextMessages = [...messages];
+    const current = nextMessages[index];
+    if (!current || current.type !== 'interactive') {
+      return state;
+    }
+    nextMessages[index] = {
+      ...current,
+      status: 'cancelled',
+    };
+    return {
+      ...state,
+      messagesByChat: {
+        ...state.messagesByChat,
+        [event.chatId]: nextMessages,
+      },
     };
   }
 

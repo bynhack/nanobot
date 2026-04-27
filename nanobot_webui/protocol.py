@@ -7,7 +7,14 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 
-ClientCommandType = Literal["message.send", "message.cancel", "session.new", "session.switch"]
+ClientCommandType = Literal[
+    "message.send",
+    "message.cancel",
+    "session.new",
+    "session.switch",
+    "interactive.response",
+    "interactive.cancel",
+]
 
 
 @dataclass(slots=True)
@@ -27,6 +34,8 @@ class ClientCommand:
     chat_id: str | None = None
     content: str = ""
     attachments: list[ClientAttachment] | None = None
+    interaction_id: str | None = None
+    result: dict[str, Any] | None = None
 
 
 def parse_client_command(raw: str) -> ClientCommand | None:
@@ -69,6 +78,17 @@ def parse_client_command(raw: str) -> ClientCommand | None:
         if not chat_id:
             return None
         return ClientCommand(type="session.switch", chat_id=chat_id)
+    if kind == "interactive.response":
+        interaction_id = str(data.get("id", "")).strip()
+        result = data.get("result")
+        if not interaction_id or not isinstance(result, dict):
+            return None
+        return ClientCommand(type="interactive.response", interaction_id=interaction_id, result=result)
+    if kind == "interactive.cancel":
+        interaction_id = str(data.get("id", "")).strip()
+        if not interaction_id:
+            return None
+        return ClientCommand(type="interactive.cancel", interaction_id=interaction_id)
     return None
 
 
@@ -135,6 +155,48 @@ def tools_finished_event(
         "chatId": chat_id,
         "durationMs": duration_ms,
         "results": results,
+    }
+
+
+def interactive_request_event(
+    chat_id: str,
+    *,
+    session_key: str,
+    interaction_id: str,
+    kind: str,
+    payload: dict[str, Any],
+    created_at: float,
+) -> dict[str, Any]:
+    return {
+        "type": "interactive.request",
+        "chatId": chat_id,
+        "sessionKey": session_key,
+        "id": interaction_id,
+        "kind": kind,
+        "payload": payload,
+        "createdAt": created_at,
+    }
+
+
+def interactive_response_event(
+    chat_id: str,
+    *,
+    interaction_id: str,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "type": "interactive.response",
+        "chatId": chat_id,
+        "id": interaction_id,
+        "result": result,
+    }
+
+
+def interactive_cancel_event(chat_id: str, *, interaction_id: str) -> dict[str, Any]:
+    return {
+        "type": "interactive.cancel",
+        "chatId": chat_id,
+        "id": interaction_id,
     }
 
 

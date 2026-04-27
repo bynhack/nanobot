@@ -132,6 +132,7 @@ packages = ["nanobot", "nanobot_webui"]
 
 [tool.hatch.build.targets.wheel.sources]
 "nanobot" = "nanobot"
+"nanobot_webui" = "nanobot_webui"
 
 [tool.hatch.build.targets.wheel.force-include]
 "bridge" = "nanobot/bridge"

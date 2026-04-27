@@ -121,6 +121,9 @@ async def test_sessions_endpoint_uses_saved_metadata(aiohttp_client, channel, wo
     assert body == [
         {
             "chat_id": chat_id,
+            "session_key": f"webui:{chat_id}",
+            "channel": "webui",
+            "read_only": False,
             "created_at": "2026-04-02T12:00:00",
             "last_ts": "2026-04-02T12:00:01",
             "preview": "metadata preview text",

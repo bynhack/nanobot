@@ -1,4 +1,4 @@
-import type { ServerEvent } from './types';
+import type { InteractiveCommand, ServerEvent } from './types';
 
 interface WebSocketClientOptions {
   getAuthToken: () => string;
@@ -60,11 +60,16 @@ export class WebSocketClient {
     });
   }
 
-  send(command: Record<string, unknown>): void {
+  send(command: Record<string, unknown> | InteractiveCommand): boolean {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      return;
+      return false;
     }
-    this.socket.send(JSON.stringify(command));
+    try {
+      this.socket.send(JSON.stringify(command));
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   close(): void {

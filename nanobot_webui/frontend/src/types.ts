@@ -8,6 +8,9 @@ export interface BootstrapConfig {
 
 export interface SessionSummary {
   chat_id: string;
+  session_key?: string;
+  channel?: string;
+  read_only?: boolean;
   created_at: string | null;
   last_ts: string | null;
   preview: string;
@@ -19,6 +22,46 @@ export interface ToolHistoryItem {
   args: Record<string, unknown>;
   result: string;
   status: 'ok' | 'error';
+}
+
+export interface InteractiveSelectOption {
+  label: string;
+  value: string;
+  description?: string;
+  disabled?: boolean;
+}
+
+export interface InteractiveSelectPayload {
+  title?: string;
+  description?: string;
+  options?: InteractiveSelectOption[];
+  multiple?: boolean;
+  searchable?: boolean;
+  placeholder?: string;
+}
+
+export interface InteractiveInputPayload {
+  title?: string;
+  description?: string;
+  placeholder?: string;
+  multiline?: boolean;
+  password?: boolean;
+  required_input?: boolean;
+}
+
+export interface InteractiveResultPayload {
+  confirmed?: boolean;
+  selected?: string | string[];
+  value?: string;
+  [key: string]: unknown;
+}
+
+export interface InteractiveHistoryItem {
+  id: string;
+  kind: 'confirm' | 'select' | 'input' | string;
+  payload: Record<string, unknown>;
+  status: 'pending' | 'ok' | 'cancelled' | 'error' | string;
+  result?: InteractiveResultPayload;
 }
 
 export interface MediaItem {
@@ -39,7 +82,14 @@ export type HistoryMessage =
   | (HistoryMessageBase & { type: 'user'; content: string; media?: MediaItem[] })
   | (HistoryMessageBase & { type: 'assistant'; content: string })
   | (HistoryMessageBase & { type: 'tools'; tools: ToolHistoryItem[] })
+  | (HistoryMessageBase & InteractiveHistoryItem & { type: 'interactive' })
   | (HistoryMessageBase & { type: 'outbound'; content: string; media: MediaItem[] });
+
+export interface InteractiveCommand {
+  type: 'interactive.response' | 'interactive.cancel';
+  id: string;
+  result?: Record<string, unknown>;
+}
 
 export interface ToolCallStart {
   name: string;
@@ -150,6 +200,9 @@ export type ServerEvent =
   | { type: 'session.init'; chatId: string; sessionId: string }
   | { type: 'session.history'; chatId: string; messages: HistoryMessage[] }
   | { type: 'session.deleted'; chatId: string }
+  | { type: 'interactive.request'; chatId: string; sessionKey: string; id: string; kind: string; payload: Record<string, unknown>; createdAt: number }
+  | { type: 'interactive.response'; chatId: string; id: string; result: InteractiveResultPayload }
+  | { type: 'interactive.cancel'; chatId: string; id: string }
   | { type: 'turn.phase'; chatId: string; phase: TurnPhase; streamId?: string; resuming?: boolean }
   | { type: 'turn.delta'; chatId: string; delta: string; streamId?: string }
   | { type: 'tools.started'; chatId: string; tools: ToolCallStart[] }

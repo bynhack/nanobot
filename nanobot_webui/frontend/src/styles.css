@@ -299,6 +299,13 @@
     border: 1px solid var(--color-border-subtle);
     box-shadow: var(--color-floating-shadow);
   }
+  .composer-surface.drag-active {
+    background: color-mix(in srgb, var(--color-accent) 6%, var(--color-bg-elevated));
+    border-color: color-mix(in srgb, var(--color-accent) 55%, var(--color-border-subtle));
+    box-shadow:
+      var(--color-floating-shadow),
+      0 0 0 4px color-mix(in srgb, var(--color-accent) 12%, transparent);
+  }
   .composer-attach {
     @apply inline-flex items-center justify-center w-8 h-8 rounded-full border-0 cursor-pointer transition-colors shrink-0 self-end mb-1;
     background: transparent;
@@ -342,12 +349,82 @@
     height: 10px;
     background: var(--color-bg-main);
   }
+  .composer-input-inline {
+    @apply flex items-start gap-2 px-1;
+  }
+  .composer-input-inline .composer-input {
+    @apply min-w-0;
+  }
+  .composer-host {
+    @apply w-full max-w-3xl mx-auto relative;
+  }
+  .composer-skill-picker {
+    @apply mt-2 rounded-xl border overflow-hidden;
+    background: var(--color-bg-surface);
+    border-color: var(--color-border-subtle);
+  }
+  .composer-skill-picker-head {
+    @apply px-3 py-2 text-xs;
+    color: var(--color-text-muted);
+    border-bottom: 1px solid var(--color-border-subtle);
+  }
+  .composer-skill-picker-list {
+    @apply flex flex-col;
+  }
+  .composer-skill-item {
+    @apply w-full px-3 py-2 border-0 text-left cursor-pointer transition-colors;
+    background: transparent;
+    border-bottom: 1px solid var(--color-border-subtle);
+  }
+  .composer-skill-item:last-child {
+    border-bottom: 0;
+  }
+  .composer-skill-item:hover,
+  .composer-skill-item.active {
+    background: var(--color-bg-surface-hover);
+  }
+  .composer-skill-name {
+    @apply text-sm font-semibold;
+    color: var(--color-text-primary);
+  }
+  .composer-skill-picker-empty {
+    @apply px-3 py-3 text-sm;
+    color: var(--color-text-muted);
+  }
+  .composer-selected-skill-chip {
+    @apply inline-flex items-center text-sm font-semibold rounded-full px-3 py-1 shrink-0;
+    background: #ede8ff;
+    color: #7c4dff;
+    border: 1px solid #e3dbff;
+  }
+  .composer-selected-skill-chip.inline {
+    @apply mt-1;
+  }
 
   /* Detail Panel */
   .detail-panel {
-    @apply w-[440px] shrink-0 flex flex-col z-40;
+    @apply shrink-0 flex flex-col z-40 relative;
     background: var(--color-bg-panel);
     border-left: 1px solid var(--color-border-strong);
+  }
+  .detail-resize-overlay {
+    @apply fixed inset-0 z-[95];
+    cursor: col-resize;
+    background: transparent;
+  }
+  .detail-resize-handle {
+    @apply absolute left-0 top-0 bottom-0 w-2 border-0 cursor-col-resize;
+    transform: translateX(-50%);
+    background: transparent;
+  }
+  .detail-resize-handle::after {
+    content: "";
+    @apply absolute left-1/2 top-0 bottom-0 w-px;
+    transform: translateX(-50%);
+    background: var(--color-border-subtle);
+  }
+  .detail-resize-handle:hover::after {
+    background: var(--color-accent);
   }
   .detail-header {
     @apply p-4 flex items-center justify-between;
@@ -939,9 +1016,28 @@
 
   /* Preview Panels */
   .panel-image, .panel-media, .panel-frame {
-    @apply w-full max-h-[80vh] rounded-xl shadow-lg;
+    @apply rounded-xl shadow-lg;
     background: var(--color-code-block-bg);
     border: 1px solid var(--color-border-strong);
+  }
+  .panel-image {
+    @apply block mx-auto;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 80vh;
+    object-fit: contain;
+  }
+  .panel-media, .panel-frame {
+    @apply w-full max-h-[80vh];
+  }
+  .panel-html-shell {
+    @apply w-full flex-1 min-h-[70vh] rounded-xl overflow-hidden;
+    background: var(--color-preview-host);
+    border: 1px solid var(--color-border-strong);
+  }
+  .panel-frame {
+    @apply h-full min-h-[70vh] max-h-none rounded-none border-0;
   }
   .panel-empty {
     @apply rounded-xl p-4 text-sm;
@@ -1045,6 +1141,117 @@
   .copy-button:hover { background: var(--color-bg-surface); }
   .message-markdown { @apply w-full; }
   .media-inline { @apply inline-flex mt-3 mr-2 align-top; }
+
+  .interactive-card {
+    @apply mt-3 w-full max-w-[34rem] rounded-2xl border p-4 shadow-sm;
+    background: linear-gradient(180deg, var(--color-bg-elevated), var(--color-bg-panel));
+    border-color: var(--color-border-subtle);
+  }
+  .interactive-header { @apply flex items-center justify-between gap-3; }
+  .interactive-kind {
+    @apply inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.12em];
+    background: var(--color-bg-surface);
+    color: var(--color-text-secondary);
+  }
+  .interactive-status {
+    @apply inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium;
+    background: var(--color-bg-surface);
+    color: var(--color-text-secondary);
+  }
+  .interactive-status-pending {
+    background: color-mix(in srgb, var(--color-accent) 12%, var(--color-bg-surface));
+    color: var(--color-accent);
+  }
+  .interactive-status-ok {
+    background: rgba(16, 163, 127, 0.14);
+    color: var(--color-accent);
+  }
+  .interactive-status-cancelled {
+    background: rgba(245, 158, 11, 0.14);
+    color: #b45309;
+  }
+  .interactive-status-error {
+    background: rgba(185, 28, 28, 0.14);
+    color: var(--color-danger-flash-text);
+  }
+  .interactive-title {
+    @apply mt-3 text-[15px] font-semibold leading-6;
+    color: var(--color-text-primary);
+  }
+  .interactive-copy {
+    @apply mt-2 mb-0 text-sm leading-6;
+    color: var(--color-text-secondary);
+  }
+  .interactive-result {
+    @apply mt-3 rounded-xl px-3 py-2.5 text-sm leading-6 whitespace-pre-wrap break-words;
+    background: var(--color-bg-surface);
+    color: var(--color-text-primary);
+  }
+  .interactive-actions { @apply mt-4 flex flex-wrap items-center gap-2; }
+  .interactive-button {
+    @apply inline-flex min-h-10 items-center justify-center rounded-xl border px-4 py-2 text-sm font-medium transition-colors;
+    border-color: transparent;
+  }
+  .interactive-button:disabled { @apply cursor-not-allowed opacity-60; }
+  .interactive-button.secondary {
+    background: var(--color-bg-surface);
+    color: var(--color-text-secondary);
+    border-color: var(--color-border-strong);
+  }
+  .interactive-button.secondary:hover:not(:disabled) { background: var(--color-bg-surface-hover); }
+  .interactive-button.primary {
+    color: white;
+    background: var(--color-accent);
+  }
+  .interactive-button.primary:hover:not(:disabled) { background: var(--color-accent-hover); }
+  .interactive-button-danger {
+    background: #b42318;
+  }
+  .interactive-button-danger:hover:not(:disabled) {
+    background: #912018;
+  }
+  .interactive-button-warning {
+    background: #d97706;
+  }
+  .interactive-button-warning:hover:not(:disabled) {
+    background: #b45309;
+  }
+  .interactive-search, .interactive-input {
+    @apply mt-3 w-full rounded-xl border px-3 py-2.5 text-sm outline-none transition-shadow;
+    background: var(--color-bg-elevated);
+    border-color: var(--color-border-subtle);
+    color: var(--color-text-primary);
+  }
+  .interactive-input.multiline { @apply min-h-28 resize-y; }
+  .interactive-search:focus, .interactive-input:focus {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 4px var(--color-selection-ring);
+  }
+  .interactive-options { @apply mt-3 flex flex-col gap-2; }
+  .interactive-option {
+    @apply flex items-start gap-3 rounded-xl border px-3 py-2.5 transition-colors;
+    border-color: var(--color-border-subtle);
+    background: var(--color-bg-elevated);
+  }
+  .interactive-option.selected {
+    border-color: var(--color-accent);
+    box-shadow: 0 0 0 3px var(--color-selection-ring);
+  }
+  .interactive-option.disabled { @apply opacity-60; }
+  .interactive-option input { @apply mt-1 shrink-0; }
+  .interactive-option-body { @apply flex flex-col gap-1; }
+  .interactive-option-label {
+    @apply text-sm font-medium leading-5;
+    color: var(--color-text-primary);
+  }
+  .interactive-option-description {
+    @apply text-xs leading-5;
+    color: var(--color-text-muted);
+  }
+  .interactive-empty {
+    @apply mt-3 text-xs;
+    color: var(--color-text-muted);
+  }
 }
 
 @keyframes slideUp {

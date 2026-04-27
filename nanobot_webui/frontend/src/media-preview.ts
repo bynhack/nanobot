@@ -580,12 +580,14 @@ export class MediaPreviewController {
       }
 
       if (mime === 'text/html') {
+        const wrap = document.createElement('div');
+        wrap.className = 'panel-html-shell';
         const iframe = document.createElement('iframe');
-        iframe.srcdoc = DOMPurify.sanitize(await fetchText(item.url, this.getToken()), {
-          USE_PROFILES: { html: true },
-        });
+        iframe.src = authedUrl;
+        iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts allow-forms');
         iframe.className = 'panel-frame';
-        this.replaceBody(iframe);
+        wrap.appendChild(iframe);
+        this.replaceBody(wrap);
         return;
       }
 

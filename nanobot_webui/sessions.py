@@ -25,6 +25,21 @@ def session_key_for(chat_id: str) -> str:
     return f"webui:{chat_id}"
 
 
+def parse_session_ref(value: str) -> tuple[str | None, str]:
+    raw = (value or "").strip()
+    if not raw:
+        return None, ""
+    if ":" in raw:
+        channel, chat_id = raw.split(":", 1)
+        return channel or None, chat_id
+    return "webui", raw
+
+
+def canonical_session_key(value: str) -> str:
+    channel, chat_id = parse_session_ref(value)
+    return f"webui:{chat_id}" if channel == "webui" else value
+
+
 def _message_text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -69,6 +84,18 @@ def _extract_user_attachments(content: str) -> tuple[str, list[str]]:
     return text, attachments
 
 
+def _parse_interactive_tool_result(value: str) -> dict[str, Any] | None:
+    try:
+        parsed = json.loads(value)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    if "kind" not in parsed or "status" not in parsed:
+        return None
+    return parsed
+
+
 class SessionQueryService:
     """Load WebUI session summaries and reconstruct display history."""
 
@@ -108,18 +135,20 @@ class SessionQueryService:
         deleted.add(chat_id)
         self._save_deleted(deleted)
 
-    def _load_session(self, chat_id: str) -> Session | None:
-        if self._is_deleted(chat_id):
+    def _load_session(self, session_ref: str) -> Session | None:
+        channel, chat_id = parse_session_ref(session_ref)
+        if channel == "webui" and self._is_deleted(chat_id):
             return None
         manager = self._manager()
-        key = session_key_for(chat_id)
+        key = session_key_for(chat_id) if channel == "webui" else session_ref
         path = manager._get_session_path(key)
         if not path.exists():
             return None
         return manager._load(key)
 
     @staticmethod
-    def _summary_from_session(chat_id: str, session: Session) -> dict[str, Any]:
+    def _summary_from_session(session_key: str, session: Session) -> dict[str, Any]:
+        channel, chat_id = parse_session_ref(session_key)
         preview = session.metadata.get("preview")
         message_count = session.metadata.get("message_count")
         last_ts = session.metadata.get("last_ts")
@@ -143,7 +172,10 @@ class SessionQueryService:
             last_ts = last_seen
 
         return {
-            "chat_id": chat_id,
+            "chat_id": chat_id if channel == "webui" else session_key,
+            "session_key": session_key,
+            "channel": channel or "unknown",
+            "read_only": channel != "webui",
             "created_at": session.created_at.isoformat(),
             "last_ts": last_ts,
             "preview": preview or "(empty)",
@@ -157,10 +189,8 @@ class SessionQueryService:
 
         for item in manager.list_sessions():
             key = str(item.get("key", ""))
-            if not key.startswith("webui:"):
-                continue
-            chat_id = key.split(":", 1)[1]
-            if not is_valid_chat_id(chat_id) or chat_id in deleted:
+            channel, chat_id = parse_session_ref(key)
+            if channel == "webui" and (not is_valid_chat_id(chat_id) or chat_id in deleted):
                 continue
 
             preview = item.get("preview")
@@ -171,11 +201,14 @@ class SessionQueryService:
                 session = manager._load(key)
                 if session is None:
                     continue
-                results.append(self._summary_from_session(chat_id, session))
+                results.append(self._summary_from_session(key, session))
                 continue
 
             results.append({
-                "chat_id": chat_id,
+                "chat_id": chat_id if channel == "webui" else key,
+                "session_key": key,
+                "channel": channel or "unknown",
+                "read_only": channel != "webui",
                 "created_at": created_at,
                 "last_ts": last_ts,
                 "preview": preview or "(empty)",
@@ -185,8 +218,8 @@ class SessionQueryService:
         results.sort(key=lambda entry: entry.get("last_ts") or entry.get("created_at") or "", reverse=True)
         return results
 
-    def load_history(self, chat_id: str, *, media_service: Any) -> list[dict[str, Any]]:
-        session = self._load_session(chat_id)
+    def load_history(self, session_ref: str, *, media_service: Any) -> list[dict[str, Any]]:
+        session = self._load_session(session_ref)
         if session is None:
             return []
 
@@ -243,6 +276,30 @@ class SessionQueryService:
                     args = {}
                 result_text = tool_results.get(str(tool_call.get("id", "")), "")
                 status = "error" if isinstance(result_text, str) and result_text.startswith("Error") else "ok"
+
+                if name.startswith("interactive_"):
+                    parsed_result = _parse_interactive_tool_result(result_text)
+                    kind = name.replace("interactive_", "", 1)
+                    payload = args
+                    interaction_id = str(tool_call.get("id", ""))
+                    interaction_status = status
+                    result_payload: dict[str, Any] | None = None
+                    if parsed_result:
+                        interaction_id = str(parsed_result.get("interaction_id") or interaction_id)
+                        kind = str(parsed_result.get("kind") or kind)
+                        payload = parsed_result.get("payload") if isinstance(parsed_result.get("payload"), dict) else payload
+                        interaction_status = str(parsed_result.get("status") or interaction_status)
+                        if isinstance(parsed_result.get("result"), dict):
+                            result_payload = parsed_result["result"]
+                    result.append({
+                        "type": "interactive",
+                        "id": interaction_id,
+                        "kind": kind,
+                        "payload": payload,
+                        "status": interaction_status,
+                        "result": result_payload,
+                    })
+                    continue
 
                 if name == "message":
                     media_value = args.get("media")

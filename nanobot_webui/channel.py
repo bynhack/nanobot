@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import mimetypes
+import os
 import time
 import uuid
 from pathlib import Path
@@ -24,6 +25,9 @@ from nanobot_webui.management import WebUIManagementService
 from nanobot_webui.media import MediaService
 from nanobot_webui.protocol import (
     error_event,
+    interactive_cancel_event,
+    interactive_request_event,
+    interactive_response_event,
     parse_client_command,
     session_deleted_event,
     session_history_event,
@@ -34,11 +38,17 @@ from nanobot_webui.protocol import (
     turn_delta_event,
     turn_phase_event,
 )
-from nanobot_webui.runtime import attach_webui_runtime, current_route_context
-from nanobot_webui.sessions import SessionQueryService, is_valid_chat_id
+from nanobot_webui.runtime import (
+    attach_webui_interactive_tools,
+    attach_webui_runtime,
+    current_route_context,
+)
+from nanobot_webui.interactive import InteractionRegistry
+from nanobot_webui.sessions import SessionQueryService, canonical_session_key, is_valid_chat_id, parse_session_ref
 from nanobot_webui.uploads import attachment_prompt_suffix, next_upload_path
 
 STATIC_DIR = Path(__file__).parent / "static"
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 class _TurnTracker:
@@ -87,6 +97,37 @@ def _hint(name: str, args: dict[str, Any]) -> str:
     return f'{name}("{text}"{suffix})'
 
 
+def _read_env_file_value(key: str) -> str:
+    for base in (Path.cwd(), REPO_ROOT):
+        env_path = base / ".env"
+        if not env_path.exists():
+            continue
+        try:
+            for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, value = line.split("=", 1)
+                if name.strip() != key:
+                    continue
+                return value.strip().strip('"').strip("'")
+        except Exception:
+            continue
+    return ""
+
+
+def _resolve_webui_title(config_title: str) -> str:
+    return (
+        os.environ.get("NANOBOT_WEBUI_TITLE", "").strip()
+        or _read_env_file_value("NANOBOT_WEBUI_TITLE")
+        or config_title
+    )
+
+
+def _is_interactive_tool(name: str) -> bool:
+    return name.startswith("interactive_")
+
+
 class WebUIHook(AgentHook):
     """Push WebUI-specific tool lifecycle and streaming completion events."""
 
@@ -107,7 +148,8 @@ class WebUIHook(AgentHook):
 
     async def before_execute_tools(self, ctx: AgentHookContext) -> None:
         chat_id = self._chat_id(ctx)
-        if not chat_id or not ctx.tool_calls or self._registry.is_blocked(chat_id):
+        visible_tool_calls = [tool_call for tool_call in ctx.tool_calls if not _is_interactive_tool(tool_call.name)]
+        if not chat_id or not visible_tool_calls or self._registry.is_blocked(chat_id):
             return
 
         self._tools_started_at[self._session_key(ctx)] = time.monotonic()
@@ -122,7 +164,7 @@ class WebUIHook(AgentHook):
                         "args": tool_call.arguments,
                         "hint": _hint(tool_call.name, tool_call.arguments),
                     }
-                    for tool_call in ctx.tool_calls
+                    for tool_call in visible_tool_calls
                 ],
             ),
         )
@@ -132,14 +174,20 @@ class WebUIHook(AgentHook):
         if not chat_id or self._registry.is_blocked(chat_id):
             return
 
-        if ctx.tool_calls:
+        visible_tool_indexes = [
+            index for index, tool_call in enumerate(ctx.tool_calls)
+            if not _is_interactive_tool(tool_call.name)
+        ]
+
+        if visible_tool_indexes:
             session_key = self._session_key(ctx)
             started = self._tools_started_at.pop(session_key, None)
             if started is None:
                 started = time.monotonic()
             duration_ms = round((time.monotonic() - started) * 1000)
             results: list[dict[str, Any]] = []
-            for index, event in enumerate(ctx.tool_events):
+            for index in visible_tool_indexes:
+                event = ctx.tool_events[index] if index < len(ctx.tool_events) else {}
                 raw = ctx.tool_results[index] if index < len(ctx.tool_results) else None
                 results.append({
                     "name": event.get("name", ""),
@@ -178,6 +226,7 @@ class WebUIChannel(BaseChannel):
             config = WebUIConfig.model_validate(config)
         super().__init__(config, bus)
         self.config: WebUIConfig = config
+        self._resolved_title = _resolve_webui_title(self.config.title)
         self._registry = ConnectionRegistry()
         self._turns = _TurnTracker()
         self._runner: Any = None
@@ -191,6 +240,7 @@ class WebUIChannel(BaseChannel):
         )
         self._sessions = SessionQueryService()
         self._management = WebUIManagementService(self._sessions.workspace)
+        self._interactions = InteractionRegistry(self._sessions.workspace, self._registry.emit_to_chat)
         self._hook = WebUIHook(self._registry, self._turns)
         self._runtime_attached = self._ensure_runtime_attached()
 
@@ -203,6 +253,7 @@ class WebUIChannel(BaseChannel):
 
     def _ensure_runtime_attached(self) -> bool:
         attached = attach_webui_runtime(self.bus, self._hook)
+        attach_webui_interactive_tools(self.bus, self._interactions)
         if not attached:
             logger.warning("WebUI runtime hook is not attached yet; tool lifecycle events will wait for AgentLoop")
         return attached
@@ -240,6 +291,8 @@ class WebUIChannel(BaseChannel):
 
         if not self._runtime_attached:
             self._runtime_attached = self._ensure_runtime_attached()
+        else:
+            attach_webui_interactive_tools(self.bus, self._interactions)
 
         self._running = True
         app = self._create_app(web)
@@ -255,6 +308,7 @@ class WebUIChannel(BaseChannel):
 
     async def stop(self) -> None:
         self._running = False
+        await self._interactions.close()
         await self._registry.close_all()
         if self._runner:
             await self._runner.cleanup()
@@ -316,7 +370,7 @@ class WebUIChannel(BaseChannel):
         html = await asyncio.to_thread(path.read_text, encoding="utf-8")
         bootstrap = json.dumps(
             {
-                "title": self.config.title,
+                "title": self._resolved_title,
                 "authRequired": self._access.auth_required,
             },
             ensure_ascii=False,
@@ -534,9 +588,13 @@ class WebUIChannel(BaseChannel):
         await ws.prepare(request)
 
         requested = request.rel_url.query.get("chat_id", "").strip()
-        if requested and is_valid_chat_id(requested):
-            chat_ref = [requested]
-            logger.info("WebUI: resumed session {}", chat_ref[0][:8])
+        requested_channel, requested_chat_id = parse_session_ref(requested)
+        if requested and (
+            (requested_channel == "webui" and is_valid_chat_id(requested_chat_id))
+            or requested_channel != "webui"
+        ):
+            chat_ref = [requested if requested_channel != "webui" else requested_chat_id]
+            logger.info("WebUI: resumed session {}", chat_ref[0][:32])
         else:
             chat_ref = [str(uuid.uuid4())]
             logger.info("WebUI: new session {}", chat_ref[0][:8])
@@ -545,13 +603,30 @@ class WebUIChannel(BaseChannel):
         self._registry.subscribe(ws, chat_ref[0])
         await self._registry.emit_to_ws(ws, session_init_event(chat_ref[0]))
 
-        if requested and is_valid_chat_id(requested):
+        if requested and (
+            (requested_channel == "webui" and is_valid_chat_id(requested_chat_id))
+            or requested_channel != "webui"
+        ):
             history = await asyncio.to_thread(
                 self._sessions.load_history,
                 chat_ref[0],
                 media_service=self._media,
             )
             await self._registry.emit_to_ws(ws, session_history_event(chat_ref[0], history))
+            session_key = requested if requested_channel != "webui" else f"webui:{chat_ref[0]}"
+            pending = self._interactions.get_pending_for_session(session_key)
+            if pending is not None:
+                await self._registry.emit_to_ws(
+                    ws,
+                    interactive_request_event(
+                        chat_ref[0],
+                        session_key=pending.session_key,
+                        interaction_id=pending.id,
+                        kind=pending.kind,
+                        payload=pending.payload,
+                        created_at=pending.created_at,
+                    ),
+                )
 
         try:
             async for raw in ws:
@@ -566,6 +641,16 @@ class WebUIChannel(BaseChannel):
                     continue
 
                 if command.type == "message.send":
+                    session_key = canonical_session_key(chat_ref[0])
+                    if self._interactions.get_pending_for_session(session_key):
+                        await self._registry.emit_to_ws(
+                            ws,
+                            error_event("当前会话存在未完成交互，请先完成后再发送新消息", code="interactive_pending", chat_id=chat_ref[0]),
+                        )
+                        continue
+                    if not is_valid_chat_id(chat_ref[0]):
+                        await self._registry.emit_to_ws(ws, error_event("当前会话为只读视图，不能继续发送消息", code="read_only_session"))
+                        continue
                     attachments = command.attachments or []
                     content = command.content
                     if attachments:
@@ -585,6 +670,16 @@ class WebUIChannel(BaseChannel):
                     continue
 
                 if command.type == "message.cancel":
+                    session_key = canonical_session_key(chat_ref[0])
+                    if self._interactions.get_pending_for_session(session_key):
+                        await self._registry.emit_to_ws(
+                            ws,
+                            error_event("当前会话存在未完成交互，请先取消或完成交互", code="interactive_pending", chat_id=chat_ref[0]),
+                        )
+                        continue
+                    if not is_valid_chat_id(chat_ref[0]):
+                        await self._registry.emit_to_ws(ws, error_event("当前会话为只读视图，不能发送停止命令", code="read_only_session"))
+                        continue
                     await self._handle_message(
                         sender_id="webui_browser",
                         chat_id=chat_ref[0],
@@ -605,11 +700,14 @@ class WebUIChannel(BaseChannel):
 
                 if command.type == "session.switch":
                     target = str(command.chat_id or "").strip()
-                    if not is_valid_chat_id(target):
+                    target_channel, target_chat_id = parse_session_ref(target)
+                    if not target or (
+                        target_channel == "webui" and not is_valid_chat_id(target_chat_id)
+                    ):
                         await self._registry.emit_to_ws(ws, error_event("无效的会话 ID", code="invalid_chat_id"))
                         continue
                     old_chat = chat_ref[0]
-                    chat_ref[0] = target
+                    chat_ref[0] = target if target_channel != "webui" else target_chat_id
                     self._registry.mark_active(chat_ref[0])
                     self._registry.subscribe(ws, chat_ref[0])
                     logger.info("WebUI: switch {} → {}", old_chat[:8], chat_ref[0][:8])
@@ -620,6 +718,57 @@ class WebUIChannel(BaseChannel):
                     )
                     await self._registry.emit_to_ws(ws, session_init_event(chat_ref[0]))
                     await self._registry.emit_to_ws(ws, session_history_event(chat_ref[0], history))
+                    session_key = target if target_channel != "webui" else f"webui:{chat_ref[0]}"
+                    pending = self._interactions.get_pending_for_session(session_key)
+                    if pending is not None:
+                        await self._registry.emit_to_ws(
+                            ws,
+                            interactive_request_event(
+                                chat_ref[0],
+                                session_key=pending.session_key,
+                                interaction_id=pending.id,
+                                kind=pending.kind,
+                                payload=pending.payload,
+                                created_at=pending.created_at,
+                            ),
+                        )
+                    continue
+
+                if command.type == "interactive.response":
+                    interaction_id = str(command.interaction_id or "")
+                    pending = self._interactions.get(interaction_id)
+                    if pending is None or pending.chat_id != chat_ref[0]:
+                        await self._registry.emit_to_ws(
+                            ws,
+                            error_event("交互不存在或不属于当前会话", code="interactive_not_found", chat_id=chat_ref[0]),
+                        )
+                        continue
+                    if command.result is not None and await self._interactions.resolve(interaction_id, command.result):
+                        await self._registry.emit_to_chat(
+                            chat_ref[0],
+                            interactive_response_event(
+                                chat_ref[0],
+                                interaction_id=interaction_id,
+                                result=command.result,
+                            ),
+                        )
+                    continue
+
+                if command.type == "interactive.cancel":
+                    interaction_id = str(command.interaction_id or "")
+                    pending = self._interactions.get(interaction_id)
+                    if pending is None or pending.chat_id != chat_ref[0]:
+                        await self._registry.emit_to_ws(
+                            ws,
+                            error_event("交互不存在或不属于当前会话", code="interactive_not_found", chat_id=chat_ref[0]),
+                        )
+                        continue
+                    if await self._interactions.cancel(interaction_id):
+                        await self._registry.emit_to_chat(
+                            chat_ref[0],
+                            interactive_cancel_event(chat_ref[0], interaction_id=interaction_id),
+                        )
+                    continue
         finally:
             self._registry.unsubscribe(ws)
             logger.info("WebUI: session closed {}", chat_ref[0][:8])

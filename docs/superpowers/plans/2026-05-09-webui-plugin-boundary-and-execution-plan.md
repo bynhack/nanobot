@@ -2,11 +2,11 @@
 
 > **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
-**目标：** 在最新 `upstream/main` 上为 `nanobot-channel-webui` 建立洁净执行基线，先形成可回滚的现状快照提交，再按模块边界逐步推进重构。
+**目标：** 在最新 `upstream/main` 上为 `nanobot-channel-webui` 建立洁净执行基线，先形成可回滚的现状快照提交，再只在插件目录内逐步推进重构。
 
-**架构：** 不在当前脏工作区上直接同步上游或大规模整理，而是先备份现场，再基于最新上游创建隔离执行分支。先迁移插件现状形成快照提交，随后按“runtime 通用能力下沉、WebUI 产品层保留”的边界逐阶段实施。
+**架构：** 先同步最新上游并形成现状快照提交，随后仅在 `nanobot-channel-webui/` 内按“兼容层自持、产品层保留”的边界逐阶段实施，不修改 upstream 核心代码。
 
-**技术栈：** git, worktree/branch workflow, Python, nanobot runtime, aiohttp/WebSocket plugin, frontend static bundle
+**技术栈：** git, Python, nanobot runtime compat shim, aiohttp/WebSocket plugin, frontend static bundle
 
 ---
 
@@ -47,8 +47,7 @@ git commit -m "docs: add webui plugin boundary and execution design"
 ### 任务 2：建立上游洁净执行基线
 
 **文件：**
-- 创建：独立执行 worktree 目录（执行时确定）
-- 修改：无仓库内容修改，纯 git/worktree 操作
+- 修改：无仓库内容修改，纯 git 同步操作
 
 - [ ] **步骤 1：获取最新上游**
 
@@ -60,22 +59,17 @@ git commit -m "docs: add webui plugin boundary and execution design"
 运行：`git log --oneline --decorate -n 1 upstream/main`
 预期：输出最新上游头提交，作为后续洁净基线目标。
 
-- [ ] **步骤 3：创建独立执行分支**
+- [ ] **步骤 3：把当前执行分支对齐到最新上游后继续工作**
 
-运行：`git branch codex/webui-plugin-exec upstream/main`
-预期：创建一个从最新 `upstream/main` 派生的新分支，不修改当前工作区。
+运行：`git merge --no-edit upstream/main`
+预期：当前执行分支吸收最新上游提交，但不修改上游代码本身。
 
-- [ ] **步骤 4：创建独立执行 worktree**
+- [ ] **步骤 4：验证当前分支基线**
 
-运行：`git worktree add ../nanobot-webui-plugin-exec codex/webui-plugin-exec`
-预期：在 `../nanobot-webui-plugin-exec` 生成一个洁净工作树，内容与最新上游一致。
+运行：`git status --short --branch`
+预期：当前分支已包含最新上游提交，并且可以继续恢复插件改动。
 
-- [ ] **步骤 5：验证洁净基线**
-
-运行：`git -C ../nanobot-webui-plugin-exec status --short --branch`
-预期：显示 `codex/webui-plugin-exec` 分支且工作区干净，没有未提交改动。
-
-### 任务 3：把当前插件现状迁移为快照提交
+### 任务 3：把当前插件现状保存为快照提交
 
 **文件：**
 - 创建：`nanobot-channel-webui/**`
@@ -83,31 +77,31 @@ git commit -m "docs: add webui plugin boundary and execution design"
 - 修改：`pyproject.toml`
 - 修改：相关测试与锁文件（以现状为准）
 
-- [ ] **步骤 1：在洁净 worktree 中导入补丁**
+- [ ] **步骤 1：恢复已备份的插件改动**
 
-运行：`git -C ../nanobot-webui-plugin-exec apply --reject --whitespace=fix ../nanobot-webui-plugin-prebaseline.patch`
-预期：尽可能把当前变更迁移到独立执行 worktree；若有 `.rej`，说明需要手动处理冲突。
+运行：`git stash pop` 或等价恢复方式
+预期：插件现状改动回到当前分支工作区。
 
 - [ ] **步骤 2：补齐未跟踪文件**
 
-运行：`rsync -a --files-from=../nanobot-webui-plugin-untracked.txt ./ ../nanobot-webui-plugin-exec/`
-预期：将当前工作区中未跟踪的新文件同步到洁净 worktree。
+运行：按未跟踪清单恢复插件目录与文档文件
+预期：快照范围完整，但不包含临时垃圾目录。
 
 - [ ] **步骤 3：检查迁移后的状态**
 
-运行：`git -C ../nanobot-webui-plugin-exec status --short`
+运行：`git status --short`
 预期：看到迁移后的插件现状文件变化，且无意外缺失。
 
 - [ ] **步骤 4：处理因上游更新带来的最小冲突**
 
-运行：`git -C ../nanobot-webui-plugin-exec diff --stat`
+运行：`git diff --stat`
 预期：确认差异集中在插件迁移相关文件，而非大面积污染上游无关模块。
 
 - [ ] **步骤 5：创建“现状快照提交”**
 
 ```bash
-git -C ../nanobot-webui-plugin-exec add .
-git -C ../nanobot-webui-plugin-exec commit -m "feat: snapshot standalone webui channel plugin state"
+git add .
+git commit -m "feat: snapshot standalone webui channel plugin state"
 ```
 
 ### 任务 4：替换脆弱的 runtime 注入方式
@@ -115,53 +109,50 @@ git -C ../nanobot-webui-plugin-exec commit -m "feat: snapshot standalone webui c
 **文件：**
 - 修改：`nanobot-channel-webui/src/nanobot_channel_webui/compat/runtime.py`
 - 修改：`nanobot-channel-webui/src/nanobot_channel_webui/channel.py`
-- 可能修改：`nanobot/agent/loop.py`
-- 测试：新增或修改与 runtime hook 相关测试
+- 测试：新增或修改插件自己的 runtime hook 相关测试
 
 - [ ] **步骤 1：编写失败的集成测试**
 
-目标：验证 WebUI hook 的挂载不依赖 `gc` 搜索和 monkey patch。
+目标：验证兼容层至少满足“只包裹一次、可重复附着新 hook、仅对 WebUI 消息设置 route context”。
 
 - [ ] **步骤 2：运行测试验证失败**
 
-运行：与新增测试对应的 `pytest` 单测命令
-预期：失败点明确显示当前实现依赖兼容层注入。
+运行：`uv run --with ./nanobot-channel-webui pytest nanobot-channel-webui/tests/test_runtime_compat.py -q`
+预期：失败点明确显示当前 compat shim 的脆弱行为。
 
-- [ ] **步骤 3：实现正式 hook 注册接口**
+- [ ] **步骤 3：实现 plugin-owned compat shim 加固**
 
-目标：让核心 runtime 或 channel 初始化阶段能显式注册 WebUI hook。
+目标：在不修改 upstream 的前提下，保证 compat shim 幂等、最小侵入、可延迟重试。
 
 - [ ] **步骤 4：运行测试验证通过**
 
-运行：新增测试及相关回归测试
-预期：WebUI 事件链照常工作，且不再依赖运行时扫描。
+运行：新增测试及插件相关回归测试
+预期：WebUI 事件链照常工作，且 compat shim 的脆弱点被收敛到插件内部。
 
 - [ ] **步骤 5：Commit**
 
 ```bash
-git -C ../nanobot-webui-plugin-exec add .
-git -C ../nanobot-webui-plugin-exec commit -m "refactor: replace webui runtime monkey patch hook"
+git add nanobot-channel-webui
+git commit -m "refactor(WebUI 插件): 加固 runtime compat shim"
 ```
 
-### 任务 5：抽取通用 lifecycle 事件边界
+### 任务 5：整理 WebUI 私有 lifecycle 事件边界
 
 **文件：**
 - 修改：`nanobot-channel-webui/src/nanobot_channel_webui/channel.py`
-- 可能修改：`nanobot/utils/progress_events.py`
-- 可能新增：核心 runtime events 模块
 - 测试：WebUI tool lifecycle / turn lifecycle 相关测试
 
 - [ ] **步骤 1：梳理现有 WebUI 私有事件模型**
 
-目标：明确 `turn.phase`、`tools.started`、`tools.finished` 中哪些字段属于通用 runtime 事件。
+目标：明确 `turn.phase`、`tools.started`、`tools.finished` 在插件内部的稳定契约。
 
 - [ ] **步骤 2：编写失败测试**
 
-目标：验证核心可产出结构化 lifecycle 数据，而不要求 WebUI 自己从 hook context 现场拼装。
+目标：验证插件在 tool lifecycle / streaming completion 上的事件输出不发生回归。
 
 - [ ] **步骤 3：实现通用事件载荷**
 
-目标：把可复用部分下沉，WebUI 只负责协议映射和前端展示。
+目标：把事件拼装边界收紧在插件内部，减少 channel 与 protocol 之间的隐式耦合。
 
 - [ ] **步骤 4：运行测试验证通过**
 
@@ -171,8 +162,8 @@ git -C ../nanobot-webui-plugin-exec commit -m "refactor: replace webui runtime m
 - [ ] **步骤 5：Commit**
 
 ```bash
-git -C ../nanobot-webui-plugin-exec add .
-git -C ../nanobot-webui-plugin-exec commit -m "refactor: extract shared agent lifecycle events"
+git add nanobot-channel-webui
+git commit -m "refactor(WebUI 插件): 收紧 lifecycle 事件边界"
 ```
 
 ### 任务 6：统一 session 与 media 公共服务边界
@@ -193,7 +184,7 @@ git -C ../nanobot-webui-plugin-exec commit -m "refactor: extract shared agent li
 
 - [ ] **步骤 3：整理公共边界并最小重构**
 
-目标：降低重复实现，同时不破坏当前插件协议与前端契约。
+目标：降低重复实现，同时不破坏当前插件协议与前端契约；不改 upstream 对照实现。
 
 - [ ] **步骤 4：运行测试验证通过**
 
@@ -203,8 +194,8 @@ git -C ../nanobot-webui-plugin-exec commit -m "refactor: extract shared agent li
 - [ ] **步骤 5：Commit**
 
 ```bash
-git -C ../nanobot-webui-plugin-exec add .
-git -C ../nanobot-webui-plugin-exec commit -m "refactor: clarify shared webui session and media services"
+git add nanobot-channel-webui
+git commit -m "refactor(WebUI 插件): 整理 session 与 media 服务边界"
 ```
 
 ### 任务 7：补齐配置接线与可选增强能力
@@ -235,15 +226,15 @@ git -C ../nanobot-webui-plugin-exec commit -m "refactor: clarify shared webui se
 - [ ] **步骤 5：Commit**
 
 ```bash
-git -C ../nanobot-webui-plugin-exec add .
-git -C ../nanobot-webui-plugin-exec commit -m "feat: wire webui plugin to shared channel settings"
+git add nanobot-channel-webui
+git commit -m "feat(WebUI 插件): 接入共享 channel 配置语义"
 ```
 
 ## 自检
 
 - 规格覆盖度：本计划已覆盖“方案落盘、上游洁净基线、现状快照提交、后续分阶段实施”四大目标。
 - 占位符扫描：没有使用 “TODO / 后续补充 / 类似上一步” 之类的占位描述；执行目录已统一为 `../nanobot-webui-plugin-exec`。
-- 类型一致性：统一使用“现状快照提交”“runtime hook 注册”“lifecycle 事件”“session/media 公共服务边界”这些固定术语，避免前后漂移。
+- 类型一致性：统一使用“现状快照提交”“plugin-owned compat shim”“lifecycle 事件边界”“session/media 服务边界”这些固定术语，避免前后漂移。
 
 ## 执行交接
 

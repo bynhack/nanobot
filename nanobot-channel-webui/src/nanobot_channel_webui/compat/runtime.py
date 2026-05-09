@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from nanobot.bus.queue import MessageBus
 
 _ROUTE_CONTEXT: ContextVar["WebUIRouteContext | None"] = ContextVar("webui_route_context", default=None)
+_WRAPPER_MARKER = "_nanobot_webui_runtime_wrapper"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,17 +58,15 @@ def attach_webui_runtime(bus: MessageBus, hook: Any) -> bool:
     if loop is None:
         return False
 
-    extra_hooks = getattr(loop, "_extra_hooks", None)
-    if isinstance(extra_hooks, list) and hook not in extra_hooks:
-        extra_hooks.append(hook)
-
-    if getattr(loop, "_webui_runtime_attached", False):
-        return True
+    _register_hook(loop, hook)
 
     original = loop._process_message
     original_func = getattr(original, "__func__", None)
     if original_func is None:
         return False
+
+    if getattr(original_func, _WRAPPER_MARKER, False):
+        return True
 
     async def _wrapped_process_message(self: AgentLoop, msg: InboundMessage, *args: Any, **kwargs: Any):
         token: Token[WebUIRouteContext | None] | None = None
@@ -79,10 +78,16 @@ def attach_webui_runtime(bus: MessageBus, hook: Any) -> bool:
             if token is not None:
                 pop_route_context(token)
 
+    setattr(_wrapped_process_message, _WRAPPER_MARKER, True)
     loop._process_message = MethodType(_wrapped_process_message, loop)
-    loop._webui_runtime_attached = True
     logger.info("WebUI runtime attached to AgentLoop")
     return True
+
+
+def _register_hook(loop: Any, hook: Any) -> None:
+    extra_hooks = getattr(loop, "_extra_hooks", None)
+    if isinstance(extra_hooks, list) and hook not in extra_hooks:
+        extra_hooks.append(hook)
 
 
 def _find_agent_loop(bus: MessageBus) -> AgentLoop | None:

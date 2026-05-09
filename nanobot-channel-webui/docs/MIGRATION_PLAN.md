@@ -92,12 +92,14 @@ Status:
 ### Phase 4: Runtime compatibility layer
 
 - Move `runtime.py` under `compat/`.
+- Keep all runtime coupling inside the plugin package.
 - Treat hook/loop attachment as an enhancement, not a startup requirement.
 - Allow degraded mode if upstream internals drift.
 
 Status:
 - initial compat shim migrated under `compat/runtime.py`
 - degraded startup behavior is in place when runtime attachment is unavailable
+- compat shim is being hardened in-plugin rather than by modifying upstream core
 
 ### Phase 5: Frontend and static packaging
 

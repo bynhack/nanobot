@@ -248,6 +248,7 @@ class WebUIChannel(BaseChannel):
         self._registry = ConnectionRegistry()
         self._turns = _TurnTracker()
         self._runner: Any = None
+        self._runtime_attach_warned = False
         self._access = WebUIAccessControl(
             allowed_origins=self.config.allowed_origins,
             auth_token=self.config.auth_token,
@@ -271,8 +272,11 @@ class WebUIChannel(BaseChannel):
 
     def _ensure_runtime_attached(self) -> bool:
         attached = attach_webui_runtime(self.bus, self._hook)
-        if not attached:
+        if attached:
+            self._runtime_attach_warned = False
+        elif not self._runtime_attach_warned:
             logger.warning("WebUI runtime hook is not attached yet; tool lifecycle events will wait for AgentLoop")
+            self._runtime_attach_warned = True
         return attached
 
     @property
@@ -402,6 +406,9 @@ class WebUIChannel(BaseChannel):
 
     async def _handle_sessions(self, request: Any) -> Any:
         from aiohttp import web
+
+        if not self._runtime_attached:
+            self._runtime_attached = self._ensure_runtime_attached()
 
         allowed, resp = await self._authorize_request(request)
         if not allowed:
@@ -600,6 +607,9 @@ class WebUIChannel(BaseChannel):
     async def _handle_ws(self, request: Any) -> Any:
         import aiohttp
         from aiohttp import web
+
+        if not self._runtime_attached:
+            self._runtime_attached = self._ensure_runtime_attached()
 
         allowed, resp = await self._authorize_request(request)
         if not allowed:

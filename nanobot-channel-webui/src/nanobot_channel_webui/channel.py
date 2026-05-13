@@ -40,6 +40,7 @@ from .protocol import (
 )
 from .session_index import SessionIndexService
 from .sessions import SessionQueryService, is_valid_chat_id, parse_session_ref
+from .session_workspace import SessionWorkspaceService
 from .turns import TurnAccumulator
 from .user_context import CurrentUser, bind_current_user
 from .uploads import attachment_prompt_suffix, next_upload_path
@@ -259,6 +260,7 @@ class WebUIChannel(BaseChannel):
             signing_secret=self.config.media_signing_secret,
         )
         self._sessions = SessionQueryService()
+        self._workspace = SessionWorkspaceService(self._sessions.workspace)
         self._session_index = SessionIndexService(self._pocketbase)
         self._management = WebUIManagementService(self._sessions.workspace)
         self._management.bind_runtime_observer(self._runtime_observability_snapshot)
@@ -317,6 +319,7 @@ class WebUIChannel(BaseChannel):
         app.router.add_get("/api/settings/config", self._handle_config)
         app.router.add_post("/api/settings/config", self._handle_save_config)
         app.router.add_get("/api/settings/runtime", self._handle_runtime)
+        app.router.add_get("/api/workspaces/{chat_id}", self._handle_workspace)
         app.router.add_post("/uploads/{chat_id}", self._handle_uploads)
         app.router.add_get("/media/{token}", self._handle_media)
         assets_dir = STATIC_DIR / "assets"
@@ -369,15 +372,18 @@ class WebUIChannel(BaseChannel):
                 question, pending_buttons = pending_ask
                 content = _strip_webui_ask_user_text_fallback(content, question, pending_buttons)
                 buttons = pending_buttons
+        media_items = self._media.build_media_items(msg.media) if msg.media else None
 
         payload = turn_completed_event(
             msg.chat_id,
             content=content,
-            media=self._media.build_media_items(msg.media) if msg.media else None,
+            media=media_items,
             buttons=buttons,
             stream_id=snapshot.stream_id,
         )
         await self._registry.emit_to_chat(msg.chat_id, payload)
+        if media_items:
+            await asyncio.to_thread(self._record_workspace_media, msg.chat_id, media_items)
         self._turns.clear(msg.chat_id)
 
     async def send_delta(self, chat_id: str, delta: str, metadata: dict[str, Any] | None = None) -> None:
@@ -692,6 +698,40 @@ class WebUIChannel(BaseChannel):
             session_count=session_count,
         )
         return web.json_response(snapshot)
+
+    def _record_workspace_media(self, chat_id: str, media: list[dict[str, Any]]) -> dict[str, Any]:
+        delivered = []
+        for item in media:
+            url = str(item.get("url") or "").strip()
+            name = str(item.get("name") or "").strip()
+            if not url or not name:
+                continue
+            delivered.append(item)
+        if not delivered:
+            return self._workspace.load_workspace(chat_id)
+        return self._workspace.record_deliveries(chat_id, delivered)
+
+    async def _handle_workspace(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        chat_id = request.match_info.get("chat_id", "").strip()
+        if not chat_id or not is_valid_chat_id(chat_id):
+            return web.json_response({"error": "无效的会话 ID"}, status=400)
+
+        if not await self._can_access_session(user, chat_id):
+            return web.json_response({"error": "无权访问此会话"}, status=404)
+
+        workspace = await asyncio.to_thread(self._workspace.load_workspace, chat_id)
+        return web.json_response({
+            "chat_id": workspace["chat_id"],
+            "updated_at": workspace["updated_at"],
+            "file_count": len(workspace["files"]),
+            "files": workspace["files"],
+        })
 
     async def _handle_uploads(self, request: Any) -> Any:
         from aiohttp import web

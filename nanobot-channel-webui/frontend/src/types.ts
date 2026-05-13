@@ -48,6 +48,27 @@ export interface UploadedAttachment extends MediaItem {
   path: string;
 }
 
+export interface SessionWorkspaceFile {
+  id: string;
+  name: string;
+  url: string;
+  mime: string;
+  deliveredAt: string;
+}
+
+export interface SessionWorkspace {
+  chatId: string;
+  updatedAt: string | null;
+  files: SessionWorkspaceFile[];
+}
+
+export interface WorkspacePanelState {
+  open: boolean;
+  loading: boolean;
+  error: string | null;
+  chatId: string | null;
+}
+
 interface HistoryMessageBase {
   id?: string;
 }
@@ -95,6 +116,8 @@ export interface AppState {
   sessions: SessionSummary[];
   messagesByChat: Record<string, HistoryMessage[]>;
   activeTurns: Record<string, ActiveTurnState>;
+  workspaceByChat: Record<string, SessionWorkspace>;
+  workspacePanel: WorkspacePanelState;
 }
 
 export interface SettingsSkillSummary {

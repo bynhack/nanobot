@@ -6,6 +6,7 @@ import type {
   SettingsSkillDetail,
   SettingsSkillFile,
   SettingsSkillSummary,
+  SessionWorkspace,
   UploadedAttachment,
 } from './types';
 
@@ -113,6 +114,55 @@ export async function uploadFiles(chatId: string, files: File[], token: string):
   }
   const payload = (await response.json()) as { files?: UploadedAttachment[] };
   return payload.files ?? [];
+}
+
+interface SessionWorkspaceResponse {
+  chat_id: string;
+  updated_at: string | null;
+  files?: unknown;
+}
+
+function isSessionWorkspaceFilePayload(value: unknown): value is {
+  id: string;
+  name: string;
+  url: string;
+  mime: string;
+  delivered_at: string;
+} {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const file = value as Record<string, unknown>;
+  return (
+    typeof file.id === 'string'
+    && typeof file.name === 'string'
+    && typeof file.url === 'string'
+    && typeof file.mime === 'string'
+    && typeof file.delivered_at === 'string'
+  );
+}
+
+export async function loadSessionWorkspace(chatId: string, token: string): Promise<SessionWorkspace> {
+  const response = await fetch(`/api/workspaces/${encodeURIComponent(chatId)}`, {
+    headers: authHeaders(token),
+  });
+  if (!response.ok) {
+    throw new Error(`加载工作空间失败（${response.status}）`);
+  }
+  const payload = (await response.json()) as SessionWorkspaceResponse;
+  return {
+    chatId: payload.chat_id,
+    updatedAt: payload.updated_at,
+    files: (Array.isArray(payload.files) ? payload.files : [])
+      .filter(isSessionWorkspaceFilePayload)
+      .map((file) => ({
+        id: file.id,
+        name: file.name,
+        url: file.url,
+        mime: file.mime,
+        deliveredAt: file.delivered_at,
+      })),
+  };
 }
 
 export async function fetchText(url: string, token: string): Promise<string> {

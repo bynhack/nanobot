@@ -8,6 +8,7 @@ import type {
   PendingToolBlock,
   ServerEvent,
   SessionSummary,
+  SessionWorkspace,
 } from './types';
 import { applyTurnEvent, createEmptyTurnState, startLocalTurn } from './turn-state';
 
@@ -38,6 +39,13 @@ export function createInitialState(
     sessions: [],
     messagesByChat: {},
     activeTurns: {},
+    workspaceByChat: {},
+    workspacePanel: {
+      open: false,
+      loading: false,
+      error: null,
+      chatId: null,
+    },
   };
 }
 
@@ -211,6 +219,11 @@ export type Action =
   | { type: 'local.new_draft' }
   | { type: 'local.user_message'; chatId: string; content: string; media?: MediaItem[] }
   | { type: 'local.turn_started'; chatId: string }
+  | { type: 'workspace.open'; chatId: string }
+  | { type: 'workspace.loading'; chatId: string }
+  | { type: 'workspace.loaded'; chatId: string; workspace: SessionWorkspace }
+  | { type: 'workspace.failed'; chatId: string; error: string }
+  | { type: 'workspace.close' }
   | { type: 'server.event'; event: ServerEvent };
 
 export function reducer(state: AppState, action: Action): AppState {
@@ -261,6 +274,64 @@ export function reducer(state: AppState, action: Action): AppState {
         }),
       );
     }
+    case 'workspace.open':
+      return {
+        ...state,
+        workspacePanel: {
+          open: true,
+          loading: false,
+          error: null,
+          chatId: action.chatId,
+        },
+      };
+    case 'workspace.loading':
+      return {
+        ...state,
+        workspacePanel: {
+          open: true,
+          loading: true,
+          error: null,
+          chatId: action.chatId,
+        },
+      };
+    case 'workspace.loaded':
+      return {
+        ...state,
+        workspaceByChat: {
+          ...state.workspaceByChat,
+          [action.chatId]: action.workspace,
+        },
+        workspacePanel:
+          state.workspacePanel.open && state.workspacePanel.chatId === action.chatId
+            ? {
+                ...state.workspacePanel,
+                loading: false,
+                error: null,
+              }
+            : state.workspacePanel,
+      };
+    case 'workspace.failed':
+      if (!state.workspacePanel.open || state.workspacePanel.chatId !== action.chatId) {
+        return state;
+      }
+      return {
+        ...state,
+        workspacePanel: {
+          ...state.workspacePanel,
+          loading: false,
+          error: action.error,
+        },
+      };
+    case 'workspace.close':
+      return {
+        ...state,
+        workspacePanel: {
+          open: false,
+          loading: false,
+          error: null,
+          chatId: null,
+        },
+      };
     case 'server.event':
       return reduceServerEvent(state, action.event);
     default:

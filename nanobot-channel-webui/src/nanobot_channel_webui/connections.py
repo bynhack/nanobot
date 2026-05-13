@@ -85,3 +85,17 @@ class ConnectionRegistry:
     def is_blocked(self, chat_id: str) -> bool:
         """Return whether deliveries are blocked for a deleted chat."""
         return chat_id in self._blocked_chats
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return read-only connection stats for runtime observability."""
+        chat_connections = {
+            chat_id: len(connections)
+            for chat_id, connections in self._chat_connections.items()
+            if connections
+        }
+        return {
+            "active_chat_count": len(chat_connections),
+            "active_connection_count": len(self._ws_chat),
+            "blocked_chat_count": len(self._blocked_chats),
+            "chat_connections": chat_connections,
+        }

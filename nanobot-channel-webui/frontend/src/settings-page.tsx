@@ -5,7 +5,7 @@ import { SkillsTab } from './components/settings/tabs/SkillsTab';
 import { ConfigTab } from './components/settings/tabs/ConfigTab';
 import { RuntimeTab } from './components/settings/tabs/RuntimeTab';
 import { SETTINGS_TABS, SettingsTab, AppearanceMode, UiTheme } from './components/settings/types';
-import type { AppState } from './types';
+import type { AppState, AuthUser, BootstrapConfig } from './types';
 import { connectionStatusText } from './ui-utils';
 
 export type { AppearanceMode, UiTheme, SettingsTab };
@@ -21,6 +21,9 @@ export function SettingsScreen({
   uiTheme,
   onUiThemeChange,
   token,
+  currentUser,
+  authMode,
+  onLogout,
 }: {
   authRequired: boolean;
   connectionState: AppState['connectionState'];
@@ -32,8 +35,20 @@ export function SettingsScreen({
   uiTheme: UiTheme;
   onUiThemeChange: (value: UiTheme) => void;
   token: string;
+  currentUser: AuthUser | null;
+  authMode: BootstrapConfig['authMode'];
+  onLogout: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  const allowedTabs = SETTINGS_TABS.filter((tab) => {
+    if (tab.value === 'general') {
+      return true;
+    }
+    if (currentUser?.role === 'admin') {
+      return true;
+    }
+    return tab.value === 'runtime';
+  });
+  const [activeTab, setActiveTab] = useState<SettingsTab>(allowedTabs[0]?.value ?? 'general');
 
   return (
     <div className="settings-overlay" onClick={onBack}>
@@ -48,7 +63,7 @@ export function SettingsScreen({
               </button>
             </header>
             <nav className="settings-nav" aria-label="设置导航">
-              {SETTINGS_TABS.map((tab) => (
+              {allowedTabs.map((tab) => (
                 <button
                   key={tab.value}
                   type="button"
@@ -85,10 +100,13 @@ export function SettingsScreen({
                     onAppearanceModeChange={onAppearanceModeChange}
                     uiTheme={uiTheme}
                     onUiThemeChange={onUiThemeChange}
+                    currentUser={currentUser}
+                    authMode={authMode}
+                    onLogout={onLogout}
                   />
                 )}
-                {activeTab === 'skills' && <SkillsTab token={token} />}
-                {activeTab === 'config' && <ConfigTab token={token} />}
+                {activeTab === 'skills' && currentUser?.role === 'admin' && <SkillsTab token={token} />}
+                {activeTab === 'config' && currentUser?.role === 'admin' && <ConfigTab token={token} />}
                 {activeTab === 'runtime' && <RuntimeTab token={token} />}
               </div>
             </div>

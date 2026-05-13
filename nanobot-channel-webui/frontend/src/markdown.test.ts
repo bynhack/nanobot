@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeInlineArtifacts } from './markdown';
+import { normalizeInlineArtifacts, shouldRenderMarkdownForAssistant } from './markdown';
 
 describe('normalizeInlineArtifacts', () => {
   it('converts common inline latex arrows to unicode', () => {
@@ -16,5 +16,11 @@ describe('normalizeInlineArtifacts', () => {
 
   it('leaves non-matching text unchanged', () => {
     expect(normalizeInlineArtifacts('[Image #1] normal text')).toBe('[Image #1] normal text');
+  });
+
+  it('disables markdown rendering while assistant text is still streaming', () => {
+    expect(shouldRenderMarkdownForAssistant('running')).toBe(false);
+    expect(shouldRenderMarkdownForAssistant('complete')).toBe(true);
+    expect(shouldRenderMarkdownForAssistant(undefined)).toBe(true);
   });
 });

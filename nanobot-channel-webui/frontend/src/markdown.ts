@@ -38,12 +38,23 @@ const INLINE_LATEX_REPLACEMENTS: Array<[RegExp, string]> = [
   [/\$\\Leftrightarrow\$/g, '⇔'],
 ];
 
+const INLINE_BOLD_REPLACEMENTS: Array<[RegExp, string]> = [
+  [/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>'],
+];
+
 export function normalizeInlineArtifacts(raw: string): string {
   let normalized = raw;
   for (const [pattern, replacement] of INLINE_LATEX_REPLACEMENTS) {
     normalized = normalized.replace(pattern, replacement);
   }
+  for (const [pattern, replacement] of INLINE_BOLD_REPLACEMENTS) {
+    normalized = normalized.replace(pattern, replacement);
+  }
   return normalized;
+}
+
+export function shouldRenderMarkdownForAssistant(statusType?: string): boolean {
+  return statusType !== 'running';
 }
 
 function enhanceCodeBlocks(host: ParentNode): void {

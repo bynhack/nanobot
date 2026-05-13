@@ -43,8 +43,8 @@ def attachment_prompt_suffix(path: str, *, name: str, mime: str) -> str:
     return f"[file: {label}]\n[File: source: {path}]"
 
 
-def next_upload_path(workspace: Path, chat_id: str, filename: str) -> Path:
+def next_upload_path(workspace: Path, user_id: str, chat_id: str, filename: str) -> Path:
     """Return the destination path for an uploaded file."""
-    upload_dir = ensure_dir(workspace / ".nanobot_webui_uploads" / chat_id)
+    upload_dir = ensure_dir(workspace / ".nanobot_webui_uploads" / user_id / chat_id)
     safe_name = safe_filename(filename) or "upload.bin"
     return upload_dir / f"{int(time.time() * 1000)}_{safe_name}"

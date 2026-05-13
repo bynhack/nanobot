@@ -14,7 +14,7 @@ export const UI_THEME_OPTIONS: Array<{
   label: string;
   description: string;
 }> = [
-  { value: 'hr', label: 'HR 清爽', description: '轻灰基底、低装饰、适合高频办公的人力工作台。' },
+  { value: 'hr', label: '清爽浅色', description: '轻灰基底、低装饰，适合高频信息处理与日常操作。' },
   { value: 'business', label: '企业中性', description: '通用企业风格，克制稳妥。' },
   { value: 'gov', label: '政务严肃', description: '低饱和、强秩序，更适合政务与公安。' },
 ];

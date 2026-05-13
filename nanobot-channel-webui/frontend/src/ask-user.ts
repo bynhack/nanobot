@@ -14,7 +14,7 @@ function hasButtons(message: HistoryMessage): message is Extract<HistoryMessage,
   );
 }
 
-export function findPendingAskUserPrompt(messages: HistoryMessage[]): PendingAskUserPrompt | null {
+export function findPendingAskUserPrompt(messages: readonly HistoryMessage[]): PendingAskUserPrompt | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
     if (!message) {

@@ -10,6 +10,7 @@ if [[ -z "${WHEEL_PATH:-}" ]]; then
   exit 1
 fi
 
-echo "Installing wheel: $WHEEL_PATH"
+echo "Installing wheel: $(basename "$WHEEL_PATH")"
+echo "Wheel path: $WHEEL_PATH"
 uv tool install nanobot-ai --with "$WHEEL_PATH" --force
 echo "Done"

@@ -1,4 +1,4 @@
-import { ConnectionState } from '../../../types';
+import { AuthUser, BootstrapConfig, ConnectionState } from '../../../types';
 import { connectionStatusText } from '../../../ui-utils';
 import { APPEARANCE_OPTIONS, AppearanceMode, UI_THEME_OPTIONS, UiTheme } from '../types';
 import { SettingsRow, SettingsSectionTitle } from '../ui/SettingsRow';
@@ -12,6 +12,9 @@ interface GeneralTabProps {
   onAppearanceModeChange: (value: AppearanceMode) => void;
   uiTheme: UiTheme;
   onUiThemeChange: (value: UiTheme) => void;
+  currentUser: AuthUser | null;
+  authMode: BootstrapConfig['authMode'];
+  onLogout: () => void;
 }
 
 export function GeneralTab({
@@ -23,6 +26,9 @@ export function GeneralTab({
   onAppearanceModeChange,
   uiTheme,
   onUiThemeChange,
+  currentUser,
+  authMode,
+  onLogout,
 }: GeneralTabProps) {
   return (
     <>
@@ -70,18 +76,33 @@ export function GeneralTab({
         <SettingsRow label="当前会话 ID" hint="当前正在对话的会话唯一标识符。">
           <code className="text-xs text-muted-foreground">{currentChatId ?? '无'}</code>
         </SettingsRow>
+        {currentUser ? (
+          <>
+            <SettingsRow label="当前账号" hint="当前登录的 PocketBase 用户。">
+              <code className="text-xs text-muted-foreground">{currentUser.email}</code>
+            </SettingsRow>
+            <SettingsRow label="角色" hint="管理员可查看全局配置与运行数据，普通用户仅查看自己的数据。">
+              <div className={`status-badge connected`}>
+                <span className="status-dot" />
+                <span>{currentUser.role === 'admin' ? '管理员' : '普通用户'}</span>
+              </div>
+            </SettingsRow>
+          </>
+        ) : null}
         {authRequired && (
           <SettingsRow
             label="安全认证"
-            hint="管理用于访问此实例的令牌。"
+            hint={authMode === 'pocketbase' ? '管理当前登录账号。' : '管理用于访问此实例的令牌。'}
           >
-            <button
-              className="ghost-button"
-              type="button"
-              onClick={onOpenAuth}
-            >
-              更新令牌
-            </button>
+            {authMode === 'pocketbase' ? (
+              <button className="ghost-button" type="button" onClick={onLogout}>
+                退出登录
+              </button>
+            ) : (
+              <button className="ghost-button" type="button" onClick={onOpenAuth}>
+                更新令牌
+              </button>
+            )}
           </SettingsRow>
         )}
       </section>

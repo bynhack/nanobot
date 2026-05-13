@@ -149,12 +149,15 @@ def turn_completed_event(
     content: str = "",
     media: list[dict[str, str]] | None = None,
     buttons: list[list[str]] | None = None,
+    stream_id: str | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "type": "turn.completed",
         "chatId": chat_id,
         "content": content,
     }
+    if stream_id:
+        payload["streamId"] = stream_id
     if media:
         payload["media"] = media
     if buttons:

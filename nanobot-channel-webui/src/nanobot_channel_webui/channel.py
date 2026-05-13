@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html as html_lib
 import json
 import mimetypes
 import os
@@ -19,11 +20,12 @@ from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 
 from .auth import WebUIAccessControl
-from .compat.runtime import attach_webui_runtime, current_route_context
+from .compat.runtime import attach_webui_runtime, current_route_context, runtime_snapshot
 from .config import CHANNEL_NAME, WebUIConfig
 from .connections import ConnectionRegistry
 from .management import WebUIManagementService
 from .media import MediaService
+from .pocketbase import PocketBaseAuthError, PocketBaseClient
 from .protocol import (
     error_event,
     parse_client_command,
@@ -36,34 +38,14 @@ from .protocol import (
     turn_delta_event,
     turn_phase_event,
 )
+from .session_index import SessionIndexService
 from .sessions import SessionQueryService, is_valid_chat_id, parse_session_ref
+from .turns import TurnAccumulator
+from .user_context import CurrentUser, bind_current_user
 from .uploads import attachment_prompt_suffix, next_upload_path
 
 STATIC_DIR = Path(__file__).parent / "static"
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
-
-
-class _TurnTracker:
-    """Track whether a streaming turn has already produced content."""
-
-    def __init__(self) -> None:
-        self._stream_activity: set[str] = set()
-        self._active_stream_ids: dict[str, str | None] = {}
-
-    def begin_stream(self, chat_id: str, stream_id: str | None) -> bool:
-        previous = self._active_stream_ids.get(chat_id)
-        self._active_stream_ids[chat_id] = stream_id
-        return previous != stream_id
-
-    def note_stream_output(self, chat_id: str) -> None:
-        self._stream_activity.add(chat_id)
-
-    def had_stream_output(self, chat_id: str) -> bool:
-        return chat_id in self._stream_activity
-
-    def clear(self, chat_id: str) -> None:
-        self._stream_activity.discard(chat_id)
-        self._active_stream_ids.pop(chat_id, None)
 
 
 def _hint(name: str, args: dict[str, Any]) -> str:
@@ -97,10 +79,13 @@ def _read_env_file_value(key: str) -> str:
 
 
 def _resolve_webui_title(config_title: str) -> str:
+    configured = str(config_title or "").strip()
+    if configured:
+        return configured
     return (
         os.environ.get("NANOBOT_WEBUI_TITLE", "").strip()
         or _read_env_file_value("NANOBOT_WEBUI_TITLE")
-        or config_title
+        or "Nanobot"
     )
 
 
@@ -138,7 +123,7 @@ def _strip_webui_ask_user_text_fallback(content: str, question: str, buttons: li
 class WebUIHook(AgentHook):
     """Push WebUI-specific tool lifecycle and streaming completion events."""
 
-    def __init__(self, registry: ConnectionRegistry, turns: _TurnTracker) -> None:
+    def __init__(self, registry: ConnectionRegistry, turns: TurnAccumulator) -> None:
         self._registry = registry
         self._turns = turns
         self._tools_started_at: dict[str, float] = {}
@@ -217,9 +202,13 @@ class WebUIHook(AgentHook):
         if ctx.final_content is None and ctx.error is None and ctx.stop_reason not in {"max_iterations", "error"}:
             return
 
+        snapshot = self._turns.finish(chat_id)
+        if not snapshot.should_emit_completion:
+            return
+
         content = ""
         buttons: list[list[str]] | None = None
-        if not self._turns.had_stream_output(chat_id):
+        if not snapshot.had_stream_output:
             content = ctx.final_content or ""
         if ctx.stop_reason == "ask_user":
             parsed_ask = _ask_user_prompt_from_context(ctx)
@@ -228,7 +217,12 @@ class WebUIHook(AgentHook):
 
         await self._registry.emit_to_chat(
             chat_id,
-            turn_completed_event(chat_id, content=content, buttons=buttons),
+            turn_completed_event(
+                chat_id,
+                content=content,
+                buttons=buttons,
+                stream_id=snapshot.stream_id,
+            ),
         )
         self._turns.clear(chat_id)
 
@@ -246,12 +240,18 @@ class WebUIChannel(BaseChannel):
         self.config: WebUIConfig = config
         self._resolved_title = _resolve_webui_title(self.config.title)
         self._registry = ConnectionRegistry()
-        self._turns = _TurnTracker()
+        self._turns = TurnAccumulator()
         self._runner: Any = None
         self._runtime_attach_warned = False
+        self._pocketbase = PocketBaseClient(
+            base_url=self.config.pocketbase_url,
+            users_collection=self.config.pocketbase_users_collection,
+            sessions_collection=self.config.pocketbase_sessions_collection,
+        )
         self._access = WebUIAccessControl(
             allowed_origins=self.config.allowed_origins,
             auth_token=self.config.auth_token,
+            pocketbase=self._pocketbase,
         )
         self._media = MediaService(
             ttl_seconds=self.config.media_token_ttl_seconds,
@@ -259,7 +259,9 @@ class WebUIChannel(BaseChannel):
             signing_secret=self.config.media_signing_secret,
         )
         self._sessions = SessionQueryService()
+        self._session_index = SessionIndexService(self._pocketbase)
         self._management = WebUIManagementService(self._sessions.workspace)
+        self._management.bind_runtime_observer(self._runtime_observability_snapshot)
         self._hook = WebUIHook(self._registry, self._turns)
         self._runtime_attached = self._ensure_runtime_attached()
 
@@ -274,10 +276,26 @@ class WebUIChannel(BaseChannel):
         attached = attach_webui_runtime(self.bus, self._hook)
         if attached:
             self._runtime_attach_warned = False
-        elif not self._runtime_attach_warned:
-            logger.warning("WebUI runtime hook is not attached yet; tool lifecycle events will wait for AgentLoop")
+            return True
+        if not self._runtime_attach_warned:
+            logger.warning(
+                "WebUI runtime hook unavailable; running in outbound-only compatibility mode"
+            )
             self._runtime_attach_warned = True
-        return attached
+        return False
+
+    def _runtime_observability_snapshot(self) -> dict[str, Any]:
+        return {
+            "channel": {
+                "name": self.name,
+                "streaming_enabled": self.supports_streaming,
+                "runtime_attached": self._runtime_attached,
+                "runtime_attach_warned": self._runtime_attach_warned,
+            },
+            "runtime": runtime_snapshot(self.bus),
+            "connections": self._registry.snapshot(),
+            "turns": self._turns.snapshot(),
+        }
 
     @property
     def supports_streaming(self) -> bool:
@@ -286,6 +304,9 @@ class WebUIChannel(BaseChannel):
     def _create_app(self, web: Any) -> Any:
         app = web.Application()
         app.router.add_get("/", self._handle_index)
+        app.router.add_post("/api/auth/login", self._handle_auth_login)
+        app.router.add_post("/api/auth/logout", self._handle_auth_logout)
+        app.router.add_get("/api/auth/me", self._handle_auth_me)
         app.router.add_get("/ws", self._handle_ws)
         app.router.add_get("/sessions", self._handle_sessions)
         app.router.add_delete("/sessions/{chat_id}", self._handle_delete_session)
@@ -336,6 +357,10 @@ class WebUIChannel(BaseChannel):
         if self._registry.is_blocked(msg.chat_id):
             return
 
+        snapshot = self._turns.finish(msg.chat_id)
+        if not snapshot.should_emit_completion:
+            return
+
         content = msg.content
         buttons = msg.buttons or None
         if not buttons:
@@ -350,6 +375,7 @@ class WebUIChannel(BaseChannel):
             content=content,
             media=self._media.build_media_items(msg.media) if msg.media else None,
             buttons=buttons,
+            stream_id=snapshot.stream_id,
         )
         await self._registry.emit_to_chat(msg.chat_id, payload)
         self._turns.clear(msg.chat_id)
@@ -374,13 +400,54 @@ class WebUIChannel(BaseChannel):
             await self._registry.emit_to_chat(chat_id, turn_phase_event(chat_id, "streaming", streamId=stream_id))
         await self._registry.emit_to_chat(chat_id, turn_delta_event(chat_id, delta, stream_id=stream_id))
 
-    async def _authorize_request(self, request: Any) -> tuple[bool, Any | None]:
+    @staticmethod
+    def _session_title_from_preview(preview: str) -> str:
+        text = (preview or "").strip()
+        return text[:40] if text else "新对话"
+
+    @staticmethod
+    def _preview_from_content(content: str, attachments: list[Any] | None = None) -> str:
+        text = (content or "").strip()
+        if text:
+            return text[:60] + ("…" if len(text) > 60 else "")
+        if attachments:
+            first = attachments[0]
+            return str(getattr(first, "name", "") or first.get("name") or "附件")[:60]
+        return "新对话"
+
+    async def _load_indexed_sessions(self, user: CurrentUser) -> list[dict[str, Any]]:
+        records = await self._session_index.list_for_user(user)
+        return [
+            self._sessions.summarize_session(
+                record.chat_id,
+                created_at=record.last_activity_at,
+                last_ts=record.last_activity_at,
+                preview=record.preview or record.title,
+                session_key=record.session_key,
+            )
+            for record in records
+        ]
+
+    async def _can_access_session(self, user: CurrentUser | None, chat_id: str) -> bool:
+        if user is None or not self._pocketbase.enabled:
+            return True
+        return await self._session_index.get_for_user(user, chat_id) is not None
+
+    @staticmethod
+    def _require_admin(user: CurrentUser | None) -> tuple[bool, int, str]:
+        if user is None:
+            return True, 200, ""
+        if user.is_admin:
+            return True, 200, ""
+        return False, 403, "当前账号无权访问此功能"
+
+    async def _authorize_request(self, request: Any) -> tuple[bool, Any | None, CurrentUser | None]:
         from aiohttp import web
 
-        allowed, status, message = self._access.authorize(request)
+        allowed, status, message, user = await self._access.authorize(request)
         if allowed:
-            return True, None
-        return False, web.json_response({"error": message}, status=status)
+            return True, None, user
+        return False, web.json_response({"error": message}, status=status), None
 
     async def _handle_index(self, request: Any) -> Any:
         from aiohttp import web
@@ -393,16 +460,64 @@ class WebUIChannel(BaseChannel):
                 content_type="text/plain",
             )
 
-        html = await asyncio.to_thread(path.read_text, encoding="utf-8")
+        page = await asyncio.to_thread(path.read_text, encoding="utf-8")
         bootstrap = json.dumps(
             {
                 "title": self._resolved_title,
                 "authRequired": self._access.auth_required,
+                "authMode": self._access.auth_mode,
             },
             ensure_ascii=False,
         )
-        html = html.replace('"__WEBUI_BOOTSTRAP__"', bootstrap)
-        return web.Response(text=html, content_type="text/html")
+        page = page.replace("<title>Nanobot</title>", f"<title>{html_lib.escape(self._resolved_title)}</title>")
+        page = page.replace('"__WEBUI_BOOTSTRAP__"', bootstrap)
+        return web.Response(text=page, content_type="text/html")
+
+    async def _handle_auth_login(self, request: Any) -> Any:
+        from aiohttp import web
+
+        if not self._pocketbase.enabled:
+            return web.json_response({"error": "当前未启用 PocketBase 登录"}, status=404)
+
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({"error": "请求体不是有效 JSON"}, status=400)
+        if not isinstance(payload, dict):
+            return web.json_response({"error": "请求体格式无效"}, status=400)
+
+        identity = str(payload.get("identity", "")).strip()
+        password = str(payload.get("password", "")).strip()
+        if not identity or not password:
+            return web.json_response({"error": "邮箱和密码不能为空"}, status=400)
+
+        try:
+            user = await self._pocketbase.login(identity, password)
+        except PocketBaseAuthError as exc:
+            return web.json_response({"error": str(exc) or "登录失败"}, status=401)
+        except Exception as exc:
+            return web.json_response({"error": f"登录失败: {exc}"}, status=502)
+
+        return web.json_response({
+            "token": user.token,
+            "user": {"id": user.id, "email": user.email, "role": user.role},
+        })
+
+    async def _handle_auth_logout(self, request: Any) -> Any:
+        from aiohttp import web
+
+        return web.json_response({"ok": True})
+
+    async def _handle_auth_me(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+        return web.json_response({
+            "token": user.token if user is not None else "",
+            "user": None if user is None else {"id": user.id, "email": user.email, "role": user.role},
+        })
 
     async def _handle_sessions(self, request: Any) -> Any:
         from aiohttp import web
@@ -410,16 +525,19 @@ class WebUIChannel(BaseChannel):
         if not self._runtime_attached:
             self._runtime_attached = self._ensure_runtime_attached()
 
-        allowed, resp = await self._authorize_request(request)
+        allowed, resp, user = await self._authorize_request(request)
         if not allowed:
             return resp
-        sessions = await asyncio.to_thread(self._sessions.list_sessions)
+        if user is not None and self._pocketbase.enabled:
+            sessions = await self._load_indexed_sessions(user)
+        else:
+            sessions = await asyncio.to_thread(self._sessions.list_sessions)
         return web.json_response(sessions)
 
     async def _handle_delete_session(self, request: Any) -> Any:
         from aiohttp import web
 
-        allowed, resp = await self._authorize_request(request)
+        allowed, resp, user = await self._authorize_request(request)
         if not allowed:
             return resp
 
@@ -427,8 +545,13 @@ class WebUIChannel(BaseChannel):
         if not chat_id or not is_valid_chat_id(chat_id):
             return web.json_response({"error": "无效的会话 ID"}, status=400)
 
+        if user is not None and self._pocketbase.enabled:
+            deleted_index = await self._session_index.delete_for_user(user, chat_id)
+            if not deleted_index:
+                return web.json_response({"error": "会话不存在或无权删除"}, status=404)
+
         deleted = await asyncio.to_thread(self._sessions.delete_session, chat_id)
-        if not deleted:
+        if not deleted and not (user is not None and self._pocketbase.enabled):
             return web.json_response({"error": "会话不存在"}, status=404)
 
         self._turns.clear(chat_id)
@@ -438,9 +561,12 @@ class WebUIChannel(BaseChannel):
     async def _handle_skills(self, request: Any) -> Any:
         from aiohttp import web
 
-        allowed, resp = await self._authorize_request(request)
+        allowed, resp, user = await self._authorize_request(request)
         if not allowed:
             return resp
+        admin_allowed, status, message = self._require_admin(user)
+        if not admin_allowed:
+            return web.json_response({"error": message}, status=status)
 
         skills = await asyncio.to_thread(self._management.list_skills)
         return web.json_response({"skills": skills})
@@ -448,9 +574,12 @@ class WebUIChannel(BaseChannel):
     async def _handle_skill_detail(self, request: Any) -> Any:
         from aiohttp import web
 
-        allowed, resp = await self._authorize_request(request)
+        allowed, resp, user = await self._authorize_request(request)
         if not allowed:
             return resp
+        admin_allowed, status, message = self._require_admin(user)
+        if not admin_allowed:
+            return web.json_response({"error": message}, status=status)
 
         name = request.match_info.get("name", "").strip()
         source = request.rel_url.query.get("source", "").strip() or None
@@ -465,9 +594,12 @@ class WebUIChannel(BaseChannel):
     async def _handle_skill_file(self, request: Any) -> Any:
         from aiohttp import web
 
-        allowed, resp = await self._authorize_request(request)
+        allowed, resp, user = await self._authorize_request(request)
         if not allowed:
             return resp
+        admin_allowed, status, message = self._require_admin(user)
+        if not admin_allowed:
+            return web.json_response({"error": message}, status=status)
 
         name = request.match_info.get("name", "").strip()
         source = request.rel_url.query.get("source", "").strip() or None
@@ -483,9 +615,12 @@ class WebUIChannel(BaseChannel):
     async def _handle_skill_toggle(self, request: Any) -> Any:
         from aiohttp import web
 
-        allowed, resp = await self._authorize_request(request)
+        allowed, resp, user = await self._authorize_request(request)
         if not allowed:
             return resp
+        admin_allowed, status, message = self._require_admin(user)
+        if not admin_allowed:
+            return web.json_response({"error": message}, status=status)
 
         name = request.match_info.get("name", "").strip()
         if not name:
@@ -507,9 +642,12 @@ class WebUIChannel(BaseChannel):
     async def _handle_config(self, request: Any) -> Any:
         from aiohttp import web
 
-        allowed, resp = await self._authorize_request(request)
+        allowed, resp, user = await self._authorize_request(request)
         if not allowed:
             return resp
+        admin_allowed, status, message = self._require_admin(user)
+        if not admin_allowed:
+            return web.json_response({"error": message}, status=status)
 
         snapshot = await asyncio.to_thread(self._management.config_snapshot)
         return web.json_response(snapshot)
@@ -517,9 +655,12 @@ class WebUIChannel(BaseChannel):
     async def _handle_save_config(self, request: Any) -> Any:
         from aiohttp import web
 
-        allowed, resp = await self._authorize_request(request)
+        allowed, resp, user = await self._authorize_request(request)
         if not allowed:
             return resp
+        admin_allowed, status, message = self._require_admin(user)
+        if not admin_allowed:
+            return web.json_response({"error": message}, status=status)
 
         try:
             payload = await request.json()
@@ -541,18 +682,21 @@ class WebUIChannel(BaseChannel):
     async def _handle_runtime(self, request: Any) -> Any:
         from aiohttp import web
 
-        allowed, resp = await self._authorize_request(request)
+        allowed, resp, user = await self._authorize_request(request)
         if not allowed:
             return resp
-
-        snapshot = await asyncio.to_thread(self._management.runtime_snapshot)
-        snapshot["session_count"] = len(await asyncio.to_thread(self._sessions.list_sessions))
+        session_count = len(await self._load_indexed_sessions(user)) if user is not None and self._pocketbase.enabled else len(await asyncio.to_thread(self._sessions.list_sessions))
+        snapshot = await asyncio.to_thread(
+            self._management.runtime_snapshot_for_user,
+            is_admin=user.is_admin if user is not None else True,
+            session_count=session_count,
+        )
         return web.json_response(snapshot)
 
     async def _handle_uploads(self, request: Any) -> Any:
         from aiohttp import web
 
-        allowed, resp = await self._authorize_request(request)
+        allowed, resp, user = await self._authorize_request(request)
         if not allowed:
             return resp
 
@@ -573,7 +717,12 @@ class WebUIChannel(BaseChannel):
             if not filename:
                 continue
 
-            destination = next_upload_path(self._sessions.workspace, chat_id, filename)
+            destination = next_upload_path(
+                self._sessions.workspace,
+                user.id if user is not None else "shared",
+                chat_id,
+                filename,
+            )
             with open(destination, "wb") as handle:
                 while chunk := await part.read_chunk():
                     handle.write(chunk)
@@ -594,7 +743,7 @@ class WebUIChannel(BaseChannel):
     async def _handle_media(self, request: Any) -> Any:
         from aiohttp import web
 
-        allowed, resp = await self._authorize_request(request)
+        allowed, resp, _user = await self._authorize_request(request)
         if not allowed:
             return resp
 
@@ -611,7 +760,7 @@ class WebUIChannel(BaseChannel):
         if not self._runtime_attached:
             self._runtime_attached = self._ensure_runtime_attached()
 
-        allowed, resp = await self._authorize_request(request)
+        allowed, resp, current_user = await self._authorize_request(request)
         if not allowed:
             return resp
 
@@ -620,24 +769,57 @@ class WebUIChannel(BaseChannel):
 
         requested = request.rel_url.query.get("chat_id", "").strip()
         requested_channel, requested_chat_id = parse_session_ref(requested)
-        if requested and requested_channel == CHANNEL_NAME and is_valid_chat_id(requested_chat_id):
-            chat_ref = [requested_chat_id]
-            logger.info("WebUI: resumed session {}", chat_ref[0][:32])
-        else:
-            chat_ref = [str(uuid.uuid4())]
-            logger.info("WebUI: new session {}", chat_ref[0][:8])
-
-        self._registry.mark_active(chat_ref[0])
-        self._registry.subscribe(ws, chat_ref[0])
-        await self._registry.emit_to_ws(ws, session_init_event(chat_ref[0]))
-
-        if requested and requested_channel == CHANNEL_NAME and is_valid_chat_id(requested_chat_id):
+        can_resume_requested = False
+        if (
+            requested
+            and requested_channel == CHANNEL_NAME
+            and is_valid_chat_id(requested_chat_id)
+            and await self._can_access_session(current_user, requested_chat_id)
+        ):
             history = await asyncio.to_thread(
                 self._sessions.load_history,
-                chat_ref[0],
+                requested_chat_id,
                 media_service=self._media,
             )
+            can_resume_requested = bool(history)
+
+        if (
+            can_resume_requested
+        ):
+            chat_ref: list[str | None] = [requested_chat_id]
+            logger.info("WebUI: resumed session {}", chat_ref[0][:32])
+        else:
+            chat_ref = [None]
+            logger.info("WebUI: draft session")
+
+        if chat_ref[0] is not None:
+            self._registry.mark_active(chat_ref[0])
+            self._registry.subscribe(ws, chat_ref[0])
+            await self._registry.emit_to_ws(ws, session_init_event(chat_ref[0]))
+        elif requested and requested_channel == CHANNEL_NAME and requested_chat_id:
+            await self._registry.emit_to_ws(ws, session_deleted_event(requested_chat_id))
+
+        if (
+            requested
+            and requested_channel == CHANNEL_NAME
+            and is_valid_chat_id(requested_chat_id)
+            and chat_ref[0] == requested_chat_id
+        ):
             await self._registry.emit_to_ws(ws, session_history_event(chat_ref[0], history))
+
+        async def create_active_chat() -> str:
+            old_chat = chat_ref[0]
+            chat_id = str(uuid.uuid4())
+            chat_ref[0] = chat_id
+            self._registry.mark_active(chat_id)
+            self._registry.subscribe(ws, chat_id)
+            if old_chat:
+                self._turns.clear(old_chat)
+                logger.info("WebUI: new chat {} → {}", old_chat[:8], chat_id[:8])
+            else:
+                logger.info("WebUI: new chat {}", chat_id[:8])
+            await self._registry.emit_to_ws(ws, session_init_event(chat_id))
+            return chat_id
 
         try:
             async for raw in ws:
@@ -652,11 +834,23 @@ class WebUIChannel(BaseChannel):
                     continue
 
                 if command.type == "message.send":
-                    if not is_valid_chat_id(chat_ref[0]):
+                    chat_id = chat_ref[0]
+                    if chat_id is None:
+                        chat_id = await create_active_chat()
+                    if not is_valid_chat_id(chat_id):
                         await self._registry.emit_to_ws(ws, error_event("当前会话为只读视图，不能继续发送消息", code="read_only_session"))
                         continue
                     attachments = command.attachments or []
                     content = command.content
+                    if current_user is not None and self._pocketbase.enabled:
+                        preview = self._preview_from_content(content, attachments)
+                        await self._session_index.touch_session(
+                            current_user,
+                            chat_id=chat_id,
+                            session_key=f"{CHANNEL_NAME}:{chat_id}",
+                            title=self._session_title_from_preview(preview),
+                            preview=preview,
+                        )
                     if attachments:
                         suffixes = [
                             attachment_prompt_suffix(item.path, name=item.name, mime=item.mime)
@@ -665,34 +859,30 @@ class WebUIChannel(BaseChannel):
                         extra = "\n\n".join(part for part in suffixes if part)
                         if extra:
                             content = f"{content}\n\n{extra}".strip() if content else extra
-                    await self._handle_message(
-                        sender_id="webui_browser",
-                        chat_id=chat_ref[0],
-                        content=content,
-                        media=[item.path for item in attachments] or None,
-                    )
+                    with bind_current_user(current_user):
+                        await self._handle_message(
+                            sender_id=f"webui_browser:{current_user.id}" if current_user is not None else "webui_browser",
+                            chat_id=chat_id,
+                            content=content,
+                            media=[item.path for item in attachments] or None,
+                        )
                     continue
 
                 if command.type == "message.cancel":
-                    if not is_valid_chat_id(chat_ref[0]):
+                    chat_id = chat_ref[0]
+                    if chat_id is None or not is_valid_chat_id(chat_id):
                         await self._registry.emit_to_ws(ws, error_event("当前会话为只读视图，不能发送停止命令", code="read_only_session"))
                         continue
-                    await self._handle_message(
-                        sender_id="webui_browser",
-                        chat_id=chat_ref[0],
-                        content="/stop",
-                    )
+                    with bind_current_user(current_user):
+                        await self._handle_message(
+                            sender_id=f"webui_browser:{current_user.id}" if current_user is not None else "webui_browser",
+                            chat_id=chat_id,
+                            content="/stop",
+                        )
                     continue
 
                 if command.type == "session.new":
-                    old_chat = chat_ref[0]
-                    chat_ref[0] = str(uuid.uuid4())
-                    self._registry.mark_active(chat_ref[0])
-                    self._registry.subscribe(ws, chat_ref[0])
-                    self._turns.clear(old_chat)
-                    logger.info("WebUI: new chat {} → {}", old_chat[:8], chat_ref[0][:8])
-                    await self._registry.emit_to_ws(ws, session_init_event(chat_ref[0]))
-                    await self._registry.emit_to_ws(ws, session_history_event(chat_ref[0], []))
+                    await create_active_chat()
                     continue
 
                 if command.type == "session.switch":
@@ -701,11 +891,17 @@ class WebUIChannel(BaseChannel):
                     if not target or target_channel != CHANNEL_NAME or not is_valid_chat_id(target_chat_id):
                         await self._registry.emit_to_ws(ws, error_event("无效的会话 ID", code="invalid_chat_id"))
                         continue
+                    if not await self._can_access_session(current_user, target_chat_id):
+                        await self._registry.emit_to_ws(ws, error_event("无权访问此会话", code="forbidden_session"))
+                        continue
                     old_chat = chat_ref[0]
                     chat_ref[0] = target_chat_id
                     self._registry.mark_active(chat_ref[0])
                     self._registry.subscribe(ws, chat_ref[0])
-                    logger.info("WebUI: switch {} → {}", old_chat[:8], chat_ref[0][:8])
+                    if old_chat:
+                        logger.info("WebUI: switch {} → {}", old_chat[:8], chat_ref[0][:8])
+                    else:
+                        logger.info("WebUI: switch draft → {}", chat_ref[0][:8])
                     history = await asyncio.to_thread(
                         self._sessions.load_history,
                         chat_ref[0],
@@ -716,6 +912,9 @@ class WebUIChannel(BaseChannel):
                     continue
         finally:
             self._registry.unsubscribe(ws)
-            logger.info("WebUI: session closed {}", chat_ref[0][:8])
+            if chat_ref[0]:
+                logger.info("WebUI: session closed {}", chat_ref[0][:8])
+            else:
+                logger.info("WebUI: draft session closed")
 
         return ws

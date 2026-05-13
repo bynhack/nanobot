@@ -2,21 +2,17 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-FRONTEND_DIR="$ROOT_DIR/frontend"
-STATIC_DIR="$ROOT_DIR/static"
-PACKAGE_STATIC_DIR="$ROOT_DIR/src/nanobot_channel_webui/static"
 DIST_DIR="$ROOT_DIR/dist"
 
-echo "[1/5] Building frontend assets"
-cd "$FRONTEND_DIR"
-npm run build
-
-echo "[2/5] Syncing static assets into Python package"
-mkdir -p "$PACKAGE_STATIC_DIR"
-rsync -a --delete "$STATIC_DIR/" "$PACKAGE_STATIC_DIR/"
-
-echo "[3/5] Building wheel"
+echo "[1/6] Running plugin verification"
 cd "$ROOT_DIR"
+"$ROOT_DIR/scripts/verify-local.sh"
+
+echo "[2/6] Syncing static assets into Python package"
+"$ROOT_DIR/scripts/sync-static-assets.sh"
+
+echo "[3/6] Building wheel"
+mkdir -p "$DIST_DIR"
 rm -f "$DIST_DIR"/*
 uv build
 
@@ -26,9 +22,14 @@ if [[ -z "${WHEEL_PATH:-}" ]]; then
   exit 1
 fi
 
-echo "[4/5] Installing plugin into global nanobot tool env"
+WHEEL_NAME="$(basename "$WHEEL_PATH")"
+
+echo "[4/6] Installing plugin into global nanobot tool env"
 uv tool install nanobot-ai --with "$WHEEL_PATH" --force
 
-echo "[5/5] Done"
-echo "Installed wheel: $WHEEL_PATH"
+echo "[5/6] Installed wheel details"
+echo "  wheel: $WHEEL_NAME"
+echo "  path:  $WHEEL_PATH"
+
+echo "[6/6] Done"
 echo "Start with: nanobot gateway --config ~/.nanobot/config.json"

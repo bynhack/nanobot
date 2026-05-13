@@ -1,4 +1,5 @@
 import type {
+  AuthResponse,
   SessionSummary,
   SettingsConfigSnapshot,
   SettingsRuntimeSnapshot,
@@ -10,6 +11,53 @@ import type {
 
 export function authHeaders(token: string): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+export async function login(identity: string, password: string): Promise<AuthResponse> {
+  const response = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identity, password }),
+  });
+  if (!response.ok) {
+    let detail = `登录失败（${response.status}）`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) {
+        detail = payload.error;
+      }
+    } catch {
+      // ignore
+    }
+    throw new Error(detail);
+  }
+  return response.json() as Promise<AuthResponse>;
+}
+
+export async function loadCurrentUser(token: string): Promise<AuthResponse> {
+  const response = await fetch('/api/auth/me', {
+    headers: authHeaders(token),
+  });
+  if (!response.ok) {
+    let detail = `读取登录状态失败（${response.status}）`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (payload.error) {
+        detail = payload.error;
+      }
+    } catch {
+      // ignore
+    }
+    throw new Error(detail);
+  }
+  return response.json() as Promise<AuthResponse>;
+}
+
+export async function logout(token: string): Promise<void> {
+  await fetch('/api/auth/logout', {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
 }
 
 export function withAuthQuery(url: string, token: string): string {

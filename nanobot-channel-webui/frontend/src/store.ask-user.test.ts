@@ -69,4 +69,34 @@ describe('ask_user store reducer', () => {
       buttons: [['确认', '取消']],
     });
   });
+
+  it('keeps the streamed assistant message id on completion', () => {
+    let state = baseState();
+    state.activeTurns['chat-1'] = {
+      phase: 'streaming',
+      waiting: true,
+      messageId: 'temp-stream-id',
+      streamBuffer: '| a | b |\n|---|---|\n| 1 | 2 |',
+      streamId: 's1',
+      pendingTools: null,
+      startedAtMs: 100,
+      lastDurationMs: null,
+    };
+
+    const next = reducer(state, {
+      type: 'server.event',
+      event: {
+        type: 'turn.completed',
+        chatId: 'chat-1',
+        content: '',
+      },
+    });
+
+    expect(next.messagesByChat['chat-1']).toHaveLength(1);
+    expect(next.messagesByChat['chat-1'][0]?.id).toBe('temp-stream-id');
+    expect(next.messagesByChat['chat-1'][0]).toMatchObject({
+      type: 'assistant',
+      content: '| a | b |\n|---|---|\n| 1 | 2 |',
+    });
+  });
 });

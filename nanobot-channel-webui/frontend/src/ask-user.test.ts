@@ -57,6 +57,7 @@ describe('findPendingAskUserPrompt', () => {
           buttons: [['确认', '取消']],
           kind: 'confirm',
         },
+        onAnswer: () => undefined,
       }),
     );
 

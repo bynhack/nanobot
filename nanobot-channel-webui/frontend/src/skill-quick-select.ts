@@ -4,8 +4,13 @@ export type SkillCandidate = {
   enabled: boolean;
 };
 
+export type SkillRunConfig = {
+  readonly custom?: Record<string, unknown>;
+};
+
 const SLASH_PATTERN = /^\/([^\s]*)/;
 const INVOCATION_PATTERN = /^\$([^\s]+)/;
+const SELECTED_SKILL_RUN_CONFIG_KEY = 'nanobotSelectedSkill';
 
 function leadingSlashToken(draft: string): string | null {
   const match = draft.match(SLASH_PATTERN);
@@ -45,12 +50,10 @@ export function applySkillSelection(draft: string, skillName: string): string {
 
   const match = draft.match(SLASH_PATTERN);
   if (!match || match.index !== 0) {
-    return `$${trimmedSkill} ${draft}`;
+    return draft;
   }
 
-  const replacement = `$${trimmedSkill}`;
-  const rest = draft.slice(match[0].length);
-  return rest.startsWith(' ') ? `${replacement}${rest}` : `${replacement} ${rest}`;
+  return draftTailAfterSlashSelection(draft);
 }
 
 export function activeSkillFromDraft(draft: string, skills: SkillCandidate[]): SkillCandidate | null {
@@ -68,4 +71,82 @@ export function draftTailAfterSlashSelection(draft: string): string {
     return draft;
   }
   return draft.slice(match[0].length).trimStart();
+}
+
+export function runConfigWithSelectedSkill(
+  runConfig: SkillRunConfig | undefined,
+  skillName: string,
+): SkillRunConfig {
+  const trimmedSkill = skillName.trim();
+  if (!trimmedSkill) {
+    return runConfig ?? {};
+  }
+
+  return {
+    ...runConfig,
+    custom: {
+      ...(runConfig?.custom ?? {}),
+      [SELECTED_SKILL_RUN_CONFIG_KEY]: trimmedSkill,
+    },
+  };
+}
+
+export function runConfigWithoutSelectedSkill(
+  runConfig: SkillRunConfig | undefined,
+): SkillRunConfig {
+  const { [SELECTED_SKILL_RUN_CONFIG_KEY]: _removed, ...custom } = runConfig?.custom ?? {};
+  return {
+    ...runConfig,
+    custom,
+  };
+}
+
+export function selectedSkillNameFromRunConfig(
+  runConfig: SkillRunConfig | undefined,
+): string | null {
+  const selected = runConfig?.custom?.[SELECTED_SKILL_RUN_CONFIG_KEY];
+  return typeof selected === 'string' && selected.trim() ? selected.trim() : null;
+}
+
+export function selectedSkillFromRunConfig(
+  runConfig: SkillRunConfig | undefined,
+  skills: SkillCandidate[],
+): SkillCandidate | null {
+  const selected = selectedSkillNameFromRunConfig(runConfig);
+  if (!selected) {
+    return null;
+  }
+
+  return skills.find((skill) => skill.name.toLowerCase() === selected.toLowerCase()) ?? null;
+}
+
+export function messageContentWithSelectedSkill(
+  content: string,
+  runConfig: SkillRunConfig | undefined,
+): string {
+  const selected = selectedSkillNameFromRunConfig(runConfig);
+  if (!selected) {
+    return content;
+  }
+
+  const trimmedContent = content.trim();
+  const legacyPrefix = `$${selected}`;
+  const displayPrefix = `使用 ${selected} 技能`;
+  const normalizedLower = trimmedContent.toLowerCase();
+  if (!trimmedContent) {
+    return displayPrefix;
+  }
+  if (normalizedLower.startsWith(`${displayPrefix.toLowerCase()} `)) {
+    return trimmedContent;
+  }
+  if (normalizedLower === displayPrefix.toLowerCase()) {
+    return trimmedContent;
+  }
+  if (normalizedLower.startsWith(`${legacyPrefix.toLowerCase()} `)) {
+    return `${displayPrefix} ${trimmedContent.slice(legacyPrefix.length).trimStart()}`;
+  }
+  if (normalizedLower === legacyPrefix.toLowerCase()) {
+    return displayPrefix;
+  }
+  return `${displayPrefix} ${trimmedContent}`;
 }

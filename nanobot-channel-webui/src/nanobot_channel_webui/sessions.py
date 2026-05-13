@@ -11,6 +11,13 @@ from nanobot.config.paths import get_workspace_path
 from nanobot.session.manager import Session, SessionManager
 
 from .config import CHANNEL_NAME
+from .history_projection import (
+    message_text,
+    parse_ask_user_tool_arguments,
+    project_session_messages,
+    tool_call_arguments,
+    tool_call_name,
+)
 
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -42,80 +49,11 @@ def canonical_session_key(value: str) -> str:
     return f"{CHANNEL_NAME}:{chat_id}" if channel == CHANNEL_NAME else value
 
 
-def _message_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        texts: list[str] = []
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                texts.append(str(block.get("text", "")))
-        return "\n".join(t for t in texts if t)
-    if content is None:
-        return ""
-    return json.dumps(content, ensure_ascii=False)
-
-
 def _preview_text(text: str) -> str:
     text = text.strip()
     if not text:
         return "(empty)"
     return text[:60] + ("…" if len(text) > 60 else "")
-
-
-def _extract_user_attachments(content: str) -> tuple[str, list[str]]:
-    attachments: list[str] = []
-    clean_lines: list[str] = []
-    for line in content.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("[image:") and stripped.endswith("]"):
-            path = stripped[7:-1].strip()
-            if path:
-                attachments.append(path)
-            continue
-        if stripped.startswith("[File: source:") and stripped.endswith("]"):
-            path = stripped[len("[File: source:"):-1].strip()
-            if path:
-                attachments.append(path)
-            continue
-        if stripped.startswith("[file:") and stripped.endswith("]"):
-            continue
-        clean_lines.append(line)
-
-    text = "\n".join(clean_lines).strip()
-    return text, attachments
-
-
-def parse_ask_user_tool_arguments(value: Any) -> tuple[str, list[list[str]]] | None:
-    try:
-        parsed = json.loads(value) if isinstance(value, str) else dict(value)
-    except Exception:
-        return None
-    if not isinstance(parsed, dict):
-        return None
-    question = str(parsed.get("question", "")).strip()
-    raw_options = parsed.get("options")
-    if not question or not isinstance(raw_options, list):
-        return None
-    options = [str(option).strip() for option in raw_options if str(option).strip()]
-    if not options:
-        return None
-    return question, [options]
-
-
-def _tool_call_name(tool_call: dict[str, Any]) -> str:
-    function = tool_call.get("function")
-    if isinstance(function, dict) and isinstance(function.get("name"), str):
-        return function["name"]
-    name = tool_call.get("name")
-    return name if isinstance(name, str) else ""
-
-
-def _tool_call_arguments(tool_call: dict[str, Any]) -> Any:
-    function = tool_call.get("function")
-    if isinstance(function, dict):
-        return function.get("arguments", "{}")
-    return tool_call.get("arguments", "{}")
 
 
 class SessionQueryService:
@@ -195,7 +133,7 @@ class SessionQueryService:
                 if isinstance(ts, str) and ts:
                     last_seen = ts
                 if role == "user" and not preview_text:
-                    preview_text = _message_text(message.get("content", ""))
+                    preview_text = message_text(message.get("content", ""))
             preview = _preview_text(preview_text)
             message_count = count
             last_ts = last_seen
@@ -253,100 +191,39 @@ class SessionQueryService:
         session = self._load_session(session_ref)
         if session is None:
             return []
+        return project_session_messages(session.messages, media_service=media_service)
 
-        raw = session.messages
-        result: list[dict[str, Any]] = []
-        index = 0
+    def summarize_session(
+        self,
+        chat_id: str,
+        *,
+        created_at: str | None = None,
+        last_ts: str | None = None,
+        preview: str | None = None,
+        session_key: str | None = None,
+    ) -> dict[str, Any]:
+        resolved_key = session_key or session_key_for(chat_id)
+        session = self._load_session(resolved_key)
+        if session is not None:
+            summary = self._summary_from_session(resolved_key, session)
+            if created_at:
+                summary["created_at"] = created_at
+            if last_ts:
+                summary["last_ts"] = last_ts
+            if preview:
+                summary["preview"] = preview
+            return summary
 
-        while index < len(raw):
-            message = raw[index]
-            role = message.get("role")
-
-            if role == "user":
-                content = _message_text(message.get("content", ""))
-                text, attachments = _extract_user_attachments(content)
-                if text.strip() or attachments:
-                    payload: dict[str, Any] = {"type": "user", "content": text}
-                    if attachments:
-                        payload["media"] = media_service.build_media_items(attachments)
-                    result.append(payload)
-                index += 1
-                continue
-
-            if role != "assistant":
-                index += 1
-                continue
-
-            content = _message_text(message.get("content", ""))
-            tool_calls = message.get("tool_calls") or []
-            if content.strip():
-                result.append({"type": "assistant", "content": content})
-
-            if not tool_calls:
-                index += 1
-                continue
-
-            tool_results: dict[str, str] = {}
-            cursor = index + 1
-            while cursor < len(raw) and raw[cursor].get("role") == "tool":
-                tool_message = raw[cursor]
-                tool_results[str(tool_message.get("tool_call_id", ""))] = _message_text(
-                    tool_message.get("content", "")
-                )
-                cursor += 1
-            index = cursor
-
-            tool_block: list[dict[str, Any]] = []
-            for tool_call in tool_calls:
-                if not isinstance(tool_call, dict):
-                    continue
-                name = _tool_call_name(tool_call)
-                raw_args = _tool_call_arguments(tool_call)
-                try:
-                    args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
-                except Exception:
-                    args = {}
-                result_text = tool_results.get(str(tool_call.get("id", "")), "")
-                status = "error" if isinstance(result_text, str) and result_text.startswith("Error") else "ok"
-
-                if name == "ask_user":
-                    parsed_ask = parse_ask_user_tool_arguments(raw_args)
-                    if parsed_ask is not None:
-                        question, buttons = parsed_ask
-                        result.append({
-                            "type": "assistant",
-                            "content": question,
-                            "buttons": buttons,
-                        })
-                    continue
-
-                if name == "message":
-                    media_value = args.get("media")
-                    media_paths = (
-                        media_value
-                        if isinstance(media_value, list)
-                        else [media_value]
-                        if isinstance(media_value, str) and media_value
-                        else []
-                    )
-                    result.append({
-                        "type": "outbound",
-                        "content": str(args.get("content", "")),
-                        "media": media_service.build_media_items(media_paths),
-                    })
-                    continue
-
-                tool_block.append({
-                    "name": name,
-                    "args": args,
-                    "result": result_text,
-                    "status": status,
-                })
-
-            if tool_block:
-                result.append({"type": "tools", "tools": tool_block})
-
-        return result
+        return {
+            "chat_id": chat_id,
+            "session_key": resolved_key,
+            "channel": CHANNEL_NAME,
+            "read_only": False,
+            "created_at": created_at,
+            "last_ts": last_ts,
+            "preview": preview or "(empty)",
+            "message_count": 0,
+        }
 
     def pending_ask_user_prompt(self, session_ref: str) -> tuple[str, list[list[str]]] | None:
         session = self._load_session(session_ref)
@@ -358,10 +235,10 @@ class SessionQueryService:
             role = message.get("role")
             if role == "assistant":
                 for tool_call in message.get("tool_calls") or []:
-                    if not isinstance(tool_call, dict) or _tool_call_name(tool_call) != "ask_user":
+                    if not isinstance(tool_call, dict) or tool_call_name(tool_call) != "ask_user":
                         continue
                     tool_call_id = str(tool_call.get("id", ""))
-                    parsed = parse_ask_user_tool_arguments(_tool_call_arguments(tool_call))
+                    parsed = parse_ask_user_tool_arguments(tool_call_arguments(tool_call))
                     if tool_call_id and parsed is not None:
                         pending[tool_call_id] = parsed
             elif role == "tool":

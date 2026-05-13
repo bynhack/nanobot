@@ -65,6 +65,10 @@ class WebUIManagementService:
         self.workspace_sessions_dir = workspace / "sessions"
         self.workspace_memory_dir = workspace / "memory"
         self.builtin_skills_dir = BUILTIN_SKILLS_DIR
+        self._runtime_observer: Any = None
+
+    def bind_runtime_observer(self, observer: Any) -> None:
+        self._runtime_observer = observer
 
     def _scan_skill_source(self, base: Path, source: str) -> list[dict[str, Any]]:
         if not base.exists():
@@ -224,11 +228,43 @@ class WebUIManagementService:
         if recent_logs:
             log_preview = _read_text(Path(recent_logs[0]["path"]), limit=8_000)
 
+        live_runtime: dict[str, Any] = {}
+        if self._runtime_observer is not None:
+            try:
+                live_runtime = dict(self._runtime_observer())
+            except Exception as exc:
+                live_runtime = {"observer_error": str(exc)}
+
         return {
             "workspace": str(self.workspace),
             "metrics": config_summary,
+            "live_runtime": live_runtime,
             "recent_logs": recent_logs,
             "recent_state_files": recent_state,
             "recent_plans": recent_plans,
             "latest_log_preview": log_preview,
+        }
+
+    def runtime_snapshot_for_user(self, *, is_admin: bool, session_count: int) -> dict[str, Any]:
+        snapshot = self.runtime_snapshot()
+        snapshot["session_count"] = session_count
+        if is_admin:
+            return snapshot
+
+        live_runtime = snapshot.get("live_runtime", {}) or {}
+        channel_info = live_runtime.get("channel", {}) or {}
+        return {
+            "session_count": session_count,
+            "metrics": {},
+            "workspace": "",
+            "live_runtime": {
+                "channel": {
+                    "name": channel_info.get("name"),
+                    "streaming_enabled": channel_info.get("streaming_enabled"),
+                }
+            },
+            "recent_logs": [],
+            "recent_state_files": [],
+            "recent_plans": [],
+            "latest_log_preview": "",
         }

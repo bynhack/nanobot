@@ -1,9 +1,23 @@
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'auth_required';
 export type TurnPhase = 'idle' | 'streaming' | 'running_tools' | 'finalizing' | 'completed';
+export type AuthStatus = 'anonymous' | 'authenticating' | 'authenticated';
+export type UserRole = 'admin' | 'user';
 
 export interface BootstrapConfig {
   title: string;
   authRequired: boolean;
+  authMode?: 'none' | 'token' | 'pocketbase';
+}
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  role: UserRole;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: AuthUser | null;
 }
 
 export interface SessionSummary {
@@ -128,6 +142,43 @@ export interface SettingsRuntimeSnapshot {
   workspace: string;
   session_count: number;
   metrics: Record<string, unknown>;
+  live_runtime: {
+    channel?: {
+      name?: string;
+      streaming_enabled?: boolean;
+      runtime_attached?: boolean;
+      runtime_attach_warned?: boolean;
+    };
+    runtime?: {
+      loop_found?: boolean;
+      runtime_attached?: boolean;
+      hook_count?: number;
+      attach_state?: {
+        is_wrapped?: boolean;
+        wrapper_name?: string;
+        wrap_count?: number;
+        hook_registered?: boolean;
+      };
+    };
+    connections?: {
+      active_chat_count?: number;
+      active_connection_count?: number;
+      blocked_chat_count?: number;
+      chat_connections?: Record<string, number>;
+    };
+    turns?: {
+      active_turn_count?: number;
+      turns?: Record<
+        string,
+        {
+          stream_id?: string | null;
+          had_stream_output?: boolean;
+          finished?: boolean;
+        }
+      >;
+    };
+    observer_error?: string;
+  };
   recent_logs: Array<{
     name: string;
     path: string;
@@ -157,5 +208,5 @@ export type ServerEvent =
   | { type: 'turn.delta'; chatId: string; delta: string; streamId?: string }
   | { type: 'tools.started'; chatId: string; tools: ToolCallStart[] }
   | { type: 'tools.finished'; chatId: string; durationMs: number; results: ToolCallResult[] }
-  | { type: 'turn.completed'; chatId: string; content?: string; media?: MediaItem[]; buttons?: string[][] }
+  | { type: 'turn.completed'; chatId: string; content?: string; media?: MediaItem[]; buttons?: string[][]; streamId?: string }
   | { type: 'error'; code: string; message: string; chatId?: string };

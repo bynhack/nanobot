@@ -9,6 +9,7 @@ import type {
   ServerEvent,
   SessionSummary,
 } from './types';
+import { applyTurnEvent, createEmptyTurnState, startLocalTurn } from './turn-state';
 
 export const STORAGE_KEYS = {
   authToken: 'nanobot_channel_webui_auth_token',
@@ -22,19 +23,6 @@ let localMessageCounter = 0;
 function nextMessageId(chatId: string, kind: string): string {
   localMessageCounter += 1;
   return `${chatId}-${kind}-${Date.now().toString(36)}-${localMessageCounter.toString(36)}`;
-}
-
-function createIdleTurn(): ActiveTurnState {
-  return {
-    phase: 'idle',
-    waiting: false,
-    messageId: null,
-    streamBuffer: '',
-    streamId: null,
-    pendingTools: null,
-    startedAtMs: null,
-    lastDurationMs: null,
-  };
 }
 
 export function createInitialState(
@@ -54,7 +42,7 @@ export function createInitialState(
 }
 
 function withActiveTurn(state: AppState, chatId: string): ActiveTurnState {
-  return state.activeTurns[chatId] ?? createIdleTurn();
+  return state.activeTurns[chatId] ?? createEmptyTurnState();
 }
 
 function replaceActiveTurn(state: AppState, chatId: string, turn: ActiveTurnState): AppState {
@@ -88,24 +76,6 @@ function appendMessage(state: AppState, chatId: string, message: HistoryMessage)
   };
 }
 
-function commitStreamBuffer(state: AppState, chatId: string): AppState {
-  const turn = withActiveTurn(state, chatId);
-  if (!turn.streamBuffer.trim()) {
-    return replaceActiveTurn(state, chatId, { ...turn, streamBuffer: '', streamId: null });
-  }
-  const nextState = appendMessage(state, chatId, {
-    id: turn.messageId ?? nextMessageId(chatId, 'assistant'),
-    type: 'assistant',
-    content: turn.streamBuffer,
-  });
-  return replaceActiveTurn(nextState, chatId, {
-    ...withActiveTurn(nextState, chatId),
-    messageId: null,
-    streamBuffer: '',
-    streamId: null,
-  });
-}
-
 function commitPendingTools(state: AppState, chatId: string): AppState {
   const turn = withActiveTurn(state, chatId);
   const pending = turn.pendingTools;
@@ -123,6 +93,38 @@ function commitPendingTools(state: AppState, chatId: string): AppState {
     ...withActiveTurn(nextState, chatId),
     pendingTools: null,
   });
+}
+
+function upsertAssistantMessage(
+  state: AppState,
+  chatId: string,
+  messageId: string,
+  transform: (current: Extract<HistoryMessage, { type: 'assistant' }> | null) => HistoryMessage,
+): AppState {
+  const messages = state.messagesByChat[chatId] ?? [];
+  const index = messages.findIndex((message) => message.id === messageId && message.type === 'assistant');
+  const current = index >= 0 ? (messages[index] as Extract<HistoryMessage, { type: 'assistant' }>) : null;
+  const nextMessage = ensureMessageId(chatId, transform(current));
+
+  if (index >= 0) {
+    const nextMessages = [...messages];
+    nextMessages[index] = nextMessage;
+    return {
+      ...state,
+      messagesByChat: {
+        ...state.messagesByChat,
+        [chatId]: nextMessages,
+      },
+    };
+  }
+
+  return {
+    ...state,
+    messagesByChat: {
+      ...state.messagesByChat,
+      [chatId]: [...messages, nextMessage],
+    },
+  };
 }
 
 function replaceLastMessage(
@@ -206,6 +208,7 @@ export type Action =
   | { type: 'auth.set'; token: string }
   | { type: 'connection.set'; connectionState: ConnectionState }
   | { type: 'sessions.loaded'; sessions: SessionSummary[] }
+  | { type: 'local.new_draft' }
   | { type: 'local.user_message'; chatId: string; content: string; media?: MediaItem[] }
   | { type: 'local.turn_started'; chatId: string }
   | { type: 'server.event'; event: ServerEvent };
@@ -222,6 +225,8 @@ export function reducer(state: AppState, action: Action): AppState {
       return { ...state, connectionState: action.connectionState };
     case 'sessions.loaded':
       return { ...state, sessions: action.sessions };
+    case 'local.new_draft':
+      return { ...state, currentChatId: null };
     case 'local.user_message': {
       const nextState = appendMessage(state, action.chatId, {
         type: 'user',
@@ -240,17 +245,21 @@ export function reducer(state: AppState, action: Action): AppState {
     }
     case 'local.turn_started': {
       const turn = withActiveTurn(state, action.chatId);
-      return replaceActiveTurn(state, action.chatId, {
-        ...turn,
-        phase: 'idle',
-        waiting: true,
-        messageId: nextMessageId(action.chatId, 'assistant'),
-        streamBuffer: '',
-        streamId: null,
-        pendingTools: null,
-        startedAtMs: Date.now(),
-        lastDurationMs: null,
-      });
+      const messageId = nextMessageId(action.chatId, 'assistant');
+      const nextState = upsertAssistantMessage(state, action.chatId, messageId, (current) => ({
+        id: current?.id ?? messageId,
+        type: 'assistant',
+        content: current?.content ?? '',
+        ...(current?.buttons?.length ? { buttons: current.buttons } : {}),
+      }));
+      return replaceActiveTurn(
+        nextState,
+        action.chatId,
+        startLocalTurn(turn, {
+          messageId,
+          startedAtMs: Date.now(),
+        }),
+      );
     }
     case 'server.event':
       return reduceServerEvent(state, action.event);
@@ -264,7 +273,6 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
     return {
       ...state,
       currentChatId: event.chatId,
-      sessions: ensureSessionSummary(state, event.chatId),
       messagesByChat: {
         ...state.messagesByChat,
         [event.chatId]: state.messagesByChat[event.chatId] ?? [],
@@ -273,21 +281,25 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
   }
 
   if (event.type === 'session.history') {
-    const preview = event.messages.find((message) => message.type === 'user')?.content ?? '新对话';
+    const preview = event.messages.find((message) => message.type === 'user')?.content ?? '';
+    const existingSession = state.sessions.find((session) => session.chat_id === event.chatId);
     return {
       ...state,
       currentChatId: event.chatId,
-      sessions: ensureSessionSummary(state, event.chatId, {
-        preview,
-        message_count: event.messages.length,
-      }),
+      sessions:
+        event.messages.length > 0 || existingSession
+          ? ensureSessionSummary(state, event.chatId, {
+              ...(preview ? { preview } : {}),
+              message_count: event.messages.length,
+            })
+          : state.sessions,
       messagesByChat: {
         ...state.messagesByChat,
         [event.chatId]: normalizeHistoryMessages(event.chatId, event.messages),
       },
       activeTurns: {
         ...state.activeTurns,
-        [event.chatId]: createIdleTurn(),
+        [event.chatId]: createEmptyTurnState(),
       },
     };
   }
@@ -300,7 +312,7 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
       messagesByChat: next,
       activeTurns: {
         ...state.activeTurns,
-        [event.chatId]: createIdleTurn(),
+        [event.chatId]: createEmptyTurnState(),
       },
       currentChatId: state.currentChatId === event.chatId ? null : state.currentChatId,
       sessions: state.sessions.filter((session) => session.chat_id !== event.chatId),
@@ -308,81 +320,81 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
   }
 
   if (event.type === 'turn.delta') {
-    const turn = withActiveTurn(state, event.chatId);
-    return replaceActiveTurn(state, event.chatId, {
-      ...turn,
-      waiting: true,
-      phase: 'streaming',
-      messageId: turn.messageId ?? event.streamId ?? nextMessageId(event.chatId, 'assistant'),
-      streamId: event.streamId ?? turn.streamId,
-      streamBuffer: `${turn.streamBuffer}${event.delta}`,
+    const currentTurn = withActiveTurn(state, event.chatId);
+    const nextTurn = applyTurnEvent(currentTurn, event, {
+      allocateMessageId: () => nextMessageId(event.chatId, 'assistant'),
+      nowMs: () => Date.now(),
     });
+    const messageId = nextTurn.messageId ?? currentTurn.messageId ?? nextMessageId(event.chatId, 'assistant');
+    const nextState = upsertAssistantMessage(state, event.chatId, messageId, (current) => ({
+      id: current?.id ?? messageId,
+      type: 'assistant',
+      content: `${current?.content ?? ''}${normalizeDeltaForStore(current?.content ?? '', event.delta)}`,
+      ...(current?.buttons?.length ? { buttons: current.buttons } : {}),
+    }));
+    return replaceActiveTurn(
+      nextState,
+      event.chatId,
+      {
+        ...nextTurn,
+        messageId,
+      },
+    );
   }
 
   if (event.type === 'turn.phase') {
-    let nextState = state;
-    if (event.phase === 'running_tools' || event.phase === 'finalizing') {
-      nextState = commitStreamBuffer(nextState, event.chatId);
-    }
-    const turn = withActiveTurn(nextState, event.chatId);
-    
-    // 如果已经完成，忽略后续的 phase 事件
-    if (turn.phase === 'completed' && turn.waiting === false) {
-      return nextState;
-    }
-    
-    return replaceActiveTurn(nextState, event.chatId, {
-      ...turn,
-      waiting: event.phase !== 'completed',
-      phase: event.phase,
-      streamId: event.streamId ?? turn.streamId,
-    });
+    return replaceActiveTurn(
+      state,
+      event.chatId,
+      applyTurnEvent(withActiveTurn(state, event.chatId), event, {
+        allocateMessageId: () => nextMessageId(event.chatId, 'assistant'),
+        nowMs: () => Date.now(),
+      }),
+    );
   }
 
   if (event.type === 'tools.started') {
-    const turn = withActiveTurn(state, event.chatId);
-    const pendingTools: PendingToolBlock = { tools: event.tools };
-    return replaceActiveTurn(state, event.chatId, {
-      ...turn,
-      waiting: true,
-      phase: 'running_tools',
-      pendingTools,
-    });
+    return replaceActiveTurn(
+      state,
+      event.chatId,
+      applyTurnEvent(withActiveTurn(state, event.chatId), event, {
+        allocateMessageId: () => nextMessageId(event.chatId, 'assistant'),
+        nowMs: () => Date.now(),
+      }),
+    );
   }
 
   if (event.type === 'tools.finished') {
-    const turn = withActiveTurn(state, event.chatId);
-    const nextState = replaceActiveTurn(state, event.chatId, {
-      ...turn,
-      waiting: true,
-      phase: 'running_tools',
-      pendingTools: turn.pendingTools
-        ? {
-            ...turn.pendingTools,
-            durationMs: event.durationMs,
-            results: event.results,
-          }
-        : null,
-    });
+    const nextState = replaceActiveTurn(
+      state,
+      event.chatId,
+      applyTurnEvent(withActiveTurn(state, event.chatId), event, {
+        allocateMessageId: () => nextMessageId(event.chatId, 'assistant'),
+        nowMs: () => Date.now(),
+      }),
+    );
     return commitPendingTools(nextState, event.chatId);
   }
 
   if (event.type === 'turn.completed') {
     const turn = withActiveTurn(state, event.chatId);
-    const streamedContent = turn.streamBuffer;
+    let nextState = commitPendingTools(state, event.chatId);
 
-    // Commit any in-flight stream buffer and pending tools before finalising.
-    let nextState = commitStreamBuffer(state, event.chatId);
-    nextState = commitPendingTools(nextState, event.chatId);
-
-    const hasStreamedContent = Boolean(streamedContent.trim());
+    const currentAssistantId = turn.messageId;
+    const currentAssistant = currentAssistantId
+      ? (nextState.messagesByChat[event.chatId] ?? []).find(
+          (message) => message.id === currentAssistantId && message.type === 'assistant',
+        ) as Extract<HistoryMessage, { type: 'assistant' }> | undefined
+      : undefined;
+    const currentContent = currentAssistant?.content ?? '';
     const completedContent = event.content?.trim() ? event.content : '';
+    const resolvedAssistantContent = completedContent || currentContent || turn.streamBuffer || '';
 
     if (event.media?.length) {
       if (completedContent.trim()) {
         nextState = mergeMediaIntoLatestAssistant(nextState, event.chatId, completedContent, event.media);
-      } else if (hasStreamedContent) {
-        nextState = mergeMediaIntoLatestAssistant(nextState, event.chatId, streamedContent, event.media);
+      } else if (currentContent.trim()) {
+        nextState = mergeMediaIntoLatestAssistant(nextState, event.chatId, currentContent, event.media);
       } else {
         nextState = appendMessage(nextState, event.chatId, {
           type: 'outbound',
@@ -390,22 +402,29 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
           media: event.media,
         });
       }
+    } else if (currentAssistantId) {
+      nextState = upsertAssistantMessage(nextState, event.chatId, currentAssistantId, (current) => ({
+        id: current?.id ?? currentAssistantId,
+        type: 'assistant',
+        content: resolvedAssistantContent,
+        ...(event.buttons?.length
+          ? { buttons: event.buttons }
+          : current?.buttons?.length
+            ? { buttons: current.buttons }
+            : {}),
+      }));
     } else if (completedContent.trim()) {
       const lastMessage = (nextState.messagesByChat[event.chatId] ?? []).at(-1);
-      const alreadyCommitted =
-        lastMessage?.type === 'assistant' && lastMessage.content.trim() === completedContent.trim();
-      if (alreadyCommitted) {
-        if (event.buttons?.length) {
-          nextState = replaceLastMessage(nextState, event.chatId, (message) => {
-            if (message.type !== 'assistant') {
-              return message;
-            }
-            return {
-              ...message,
-              buttons: event.buttons,
-            };
-          });
-        }
+      if (lastMessage?.type === 'assistant' && lastMessage.content.trim() === completedContent.trim()) {
+        nextState = replaceLastMessage(nextState, event.chatId, (message) => {
+          if (message.type !== 'assistant') {
+            return message;
+          }
+          return {
+            ...message,
+            ...(event.buttons?.length ? { buttons: event.buttons } : {}),
+          };
+        });
       } else {
         nextState = appendMessage(nextState, event.chatId, {
           type: 'assistant',
@@ -414,19 +433,22 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
         });
       }
     }
-    return replaceActiveTurn(nextState, event.chatId, {
-      phase: 'completed',
-      waiting: false,
-      messageId: null,
-      streamBuffer: '',
-      streamId: null,
-      pendingTools: null,
-      startedAtMs: turn.startedAtMs,
-      lastDurationMs: turn.startedAtMs ? Math.max(0, Date.now() - turn.startedAtMs) : null,
-    });
+    return replaceActiveTurn(
+      nextState,
+      event.chatId,
+      applyTurnEvent(turn, event, {
+        allocateMessageId: () => nextMessageId(event.chatId, 'assistant'),
+        nowMs: () => Date.now(),
+      }),
+    );
   }
 
   return state;
+}
+
+function normalizeDeltaForStore(current: string, incoming: string): string {
+  void current;
+  return incoming;
 }
 
 export function createStore(initialState: AppState) {

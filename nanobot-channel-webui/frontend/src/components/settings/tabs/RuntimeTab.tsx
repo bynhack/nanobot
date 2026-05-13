@@ -32,6 +32,12 @@ export function RuntimeTab({ token }: { token: string }) {
   if (error) return <div className="settings-error">{error}</div>;
   if (!data) return <div className="settings-empty">暂无运行状态</div>;
 
+  const channel = data.live_runtime?.channel;
+  const runtime = data.live_runtime?.runtime;
+  const connections = data.live_runtime?.connections;
+  const turns = data.live_runtime?.turns;
+  const attachState = runtime?.attach_state;
+
   return (
     <section className="settings-section">
       <SettingsSectionTitle 
@@ -44,6 +50,70 @@ export function RuntimeTab({ token }: { token: string }) {
       <SettingsRow label="活跃会话数" hint="当前存储在工作区中的对话总数。">
         <div className="font-semibold">{data.session_count}</div>
       </SettingsRow>
+
+      <div className="settings-header mt-8">
+        <h3 className="settings-header-title">实时运行视图</h3>
+        <p className="settings-header-subtitle">只读展示当前 channel、runtime attach、连接与 active turn 状态。</p>
+      </div>
+      <SettingsRow label="Channel 状态" hint="当前 WebUI 插件运行开关与 runtime 挂载结果。" vertical>
+        <pre className="settings-code-block">
+          {JSON.stringify(
+            {
+              name: channel?.name ?? 'webui_plugin',
+              streaming_enabled: channel?.streaming_enabled ?? false,
+              runtime_attached: channel?.runtime_attached ?? false,
+              runtime_attach_warned: channel?.runtime_attach_warned ?? false,
+            },
+            null,
+            2,
+          )}
+        </pre>
+      </SettingsRow>
+      <SettingsRow label="Runtime attach" hint="显示是否找到 AgentLoop、hook 数量与包装状态。" vertical>
+        <pre className="settings-code-block">
+          {JSON.stringify(
+            {
+              loop_found: runtime?.loop_found ?? false,
+              runtime_attached: runtime?.runtime_attached ?? false,
+              hook_count: runtime?.hook_count ?? 0,
+              attach_state: attachState ?? {},
+            },
+            null,
+            2,
+          )}
+        </pre>
+      </SettingsRow>
+      <SettingsRow label="连接统计" hint="当前 WebSocket 连接与每个 chat 的订阅数量。" vertical>
+        <pre className="settings-code-block">
+          {JSON.stringify(
+            {
+              active_chat_count: connections?.active_chat_count ?? 0,
+              active_connection_count: connections?.active_connection_count ?? 0,
+              blocked_chat_count: connections?.blocked_chat_count ?? 0,
+              chat_connections: connections?.chat_connections ?? {},
+            },
+            null,
+            2,
+          )}
+        </pre>
+      </SettingsRow>
+      <SettingsRow label="Active turn" hint="当前仍在追踪中的 turn 生命周期状态。" vertical>
+        <pre className="settings-code-block">
+          {JSON.stringify(
+            {
+              active_turn_count: turns?.active_turn_count ?? 0,
+              turns: turns?.turns ?? {},
+            },
+            null,
+            2,
+          )}
+        </pre>
+      </SettingsRow>
+      {data.live_runtime?.observer_error && (
+        <SettingsRow label="观测错误" hint="运行视图采集失败时的错误信息。" vertical>
+          <pre className="settings-code-block">{data.live_runtime.observer_error}</pre>
+        </SettingsRow>
+      )}
       
       <div className="settings-header mt-8">
         <h3 className="settings-header-title">性能指标 (Metrics)</h3>

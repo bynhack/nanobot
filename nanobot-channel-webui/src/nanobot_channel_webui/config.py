@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from nanobot.config.schema import Base
 
@@ -20,3 +20,14 @@ class WebUIConfig(Base):
     media_token_ttl_seconds: int = 300
     streaming: bool = True
     title: str = "Nanobot"
+    pocketbase_url: str = ""
+    pocketbase_users_collection: str = "users"
+    pocketbase_sessions_collection: str = "chat_sessions"
+
+    @field_validator("pocketbase_url")
+    @classmethod
+    def _normalize_pocketbase_url(cls, value: str) -> str:
+        raw = value.strip()
+        if not raw:
+            return ""
+        return raw if raw.endswith("/") else raw + "/"

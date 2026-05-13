@@ -3,17 +3,19 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProper
 
 import { AuthTokenModal } from './auth-token-modal';
 import { buildTextAppendMessage, readAppearanceMode, readUiTheme } from './app-helpers';
-import { bootstrap, DETAIL_PANEL_WIDTH_KEY, useAppSelector } from './app-state';
+import { appStore, bootstrap, DETAIL_PANEL_WIDTH_KEY, useAppSelector } from './app-state';
+import { loadSessionWorkspace } from './api';
 import { DetailPreviewContext, type ToolDetailPayload } from './components/chat/detail-preview-context';
 import { ChatSidebar } from './components/chat/sidebar';
 import { ChatThreadContent } from './components/chat/thread-content';
+import { WorkspacePanel } from './components/chat/workspace-panel';
 import { DEFAULT_UI_THEME } from './components/settings/types';
 import { DetailPreviewPane, type DetailView } from './detail-preview-pane';
 import { LoginPage } from './login-page';
 import { SettingsScreen, type AppearanceMode, type UiTheme } from './settings-page';
 import { STORAGE_KEYS } from './store';
 import './styles.css';
-import type { MediaItem } from './types';
+import type { MediaItem, SessionWorkspaceFile } from './types';
 import { useAuthSession } from './use-auth-session';
 import { useAvailableSkills } from './use-available-skills';
 import { useWebsocketSession } from './use-websocket-session';
@@ -266,6 +268,7 @@ export function App() {
           previewOpen={previewOpen}
           immersivePreview={immersivePreview}
           showFlash={showFlash}
+          onOpenMedia={openMedia}
         />
 
         <DetailPreviewPane
@@ -325,6 +328,7 @@ const ChatWorkspace = memo(function ChatWorkspace({
   previewOpen,
   immersivePreview,
   showFlash,
+  onOpenMedia,
 }: {
   authResolved: boolean;
   authToken: string;
@@ -337,9 +341,15 @@ const ChatWorkspace = memo(function ChatWorkspace({
   previewOpen: boolean;
   immersivePreview: boolean;
   showFlash: (message: string) => void;
+  onOpenMedia: (item: MediaItem) => void;
 }) {
+  const workspaceRequestCounterRef = useRef(0);
   const connectionState = useAppSelector((state) => state.connectionState);
   const currentChatId = useAppSelector((state) => state.currentChatId);
+  const workspacePanel = useAppSelector((state) => state.workspacePanel);
+  const workspaceByChat = useAppSelector((state) => state.workspaceByChat);
+  const currentWorkspace = currentChatId ? workspaceByChat[currentChatId] ?? null : null;
+  const panelWorkspace = workspacePanel.chatId ? workspaceByChat[workspacePanel.chatId] ?? null : null;
   const websocketSession = useWebsocketSession({
     authResolved,
     showFlash,
@@ -364,6 +374,35 @@ const ChatWorkspace = memo(function ChatWorkspace({
   const aui = useAui({
     suggestions: Suggestions(threadSuggestions),
   });
+  const workspaceFileCount = currentWorkspace?.files.length ?? 0;
+  const workspaceLoadingForCurrentChat = Boolean(
+    currentChatId && workspacePanel.loading && workspacePanel.chatId === currentChatId,
+  );
+  const handleOpenWorkspace = useCallback(() => {
+    if (!currentChatId) {
+      return;
+    }
+    const chatId = currentChatId;
+    workspaceRequestCounterRef.current += 1;
+    const requestId = workspaceRequestCounterRef.current;
+    appStore.dispatch({ type: 'workspace.open', chatId });
+    appStore.dispatch({ type: 'workspace.loading', chatId, requestId });
+    loadSessionWorkspace(chatId, authToken)
+      .then((workspace) => {
+        appStore.dispatch({ type: 'workspace.loaded', chatId, requestId, workspace });
+      })
+      .catch((error: unknown) => {
+        appStore.dispatch({
+          type: 'workspace.failed',
+          chatId,
+          requestId,
+          error: error instanceof Error ? error.message : '加载工作空间失败',
+        });
+      });
+  }, [authToken, currentChatId]);
+  const handleOpenWorkspaceFile = useCallback((file: SessionWorkspaceFile) => {
+    onOpenMedia({ url: file.url, name: file.name, mime: file.mime });
+  }, [onOpenMedia]);
 
   return (
     <AssistantRuntimeProvider runtime={runtime} aui={aui}>
@@ -393,6 +432,18 @@ const ChatWorkspace = memo(function ChatWorkspace({
           sidebarCollapsed={sidebarCollapsed}
           showSidebarToggle={previewOpen || sidebarCollapsed}
           onToggleSidebar={onToggleSidebar}
+          canOpenWorkspace={Boolean(currentChatId)}
+          workspaceFileCount={workspaceFileCount}
+          workspaceLoading={workspaceLoadingForCurrentChat}
+          onOpenWorkspace={handleOpenWorkspace}
+        />
+        <WorkspacePanel
+          open={workspacePanel.open}
+          loading={workspacePanel.loading}
+          error={workspacePanel.error}
+          workspace={panelWorkspace}
+          onClose={() => appStore.dispatch({ type: 'workspace.close' })}
+          onOpenFile={handleOpenWorkspaceFile}
         />
       </div>
     </AssistantRuntimeProvider>

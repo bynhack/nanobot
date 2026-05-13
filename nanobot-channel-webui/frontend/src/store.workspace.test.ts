@@ -28,15 +28,17 @@ describe('workspace store reducer', () => {
     const next = reducer(state, {
       type: 'workspace.loaded',
       chatId: 'chat-1',
+      requestId: 1,
       workspace,
     });
 
-    expect(next.workspaceByChat['chat-1']).toEqual(workspace);
+    expect(next.workspaceByChat['chat-1']).toBeUndefined();
     expect(next.workspacePanel).toEqual({
       open: false,
       loading: false,
       error: null,
       chatId: null,
+      requestId: null,
     });
   });
 
@@ -49,22 +51,30 @@ describe('workspace store reducer', () => {
       loading: false,
       error: null,
       chatId: 'chat-1',
+      requestId: null,
     });
 
-    state = reducer(state, { type: 'workspace.loading', chatId: 'chat-1' });
+    state = reducer(state, { type: 'workspace.loading', chatId: 'chat-1', requestId: 1 });
     expect(state.workspacePanel).toEqual({
       open: true,
       loading: true,
       error: null,
       chatId: 'chat-1',
+      requestId: 1,
     });
 
-    state = reducer(state, { type: 'workspace.failed', chatId: 'chat-1', error: '加载工作空间失败（500）' });
+    state = reducer(state, {
+      type: 'workspace.failed',
+      chatId: 'chat-1',
+      requestId: 1,
+      error: '加载工作空间失败（500）',
+    });
     expect(state.workspacePanel).toEqual({
       open: true,
       loading: false,
       error: '加载工作空间失败（500）',
       chatId: 'chat-1',
+      requestId: 1,
     });
 
     state = reducer(state, { type: 'workspace.close' });
@@ -73,13 +83,14 @@ describe('workspace store reducer', () => {
       loading: false,
       error: null,
       chatId: null,
+      requestId: null,
     });
   });
 
   it('keeps the current panel loading when an old chat load arrives after switching chats', () => {
     let state = createInitialState({ title: 'Nanobot', authRequired: false });
-    state = reducer(state, { type: 'workspace.loading', chatId: 'chat-1' });
-    state = reducer(state, { type: 'workspace.loading', chatId: 'chat-2' });
+    state = reducer(state, { type: 'workspace.loading', chatId: 'chat-1', requestId: 1 });
+    state = reducer(state, { type: 'workspace.loading', chatId: 'chat-2', requestId: 2 });
 
     const workspace: SessionWorkspace = {
       chatId: 'chat-1',
@@ -89,26 +100,79 @@ describe('workspace store reducer', () => {
     const next = reducer(state, {
       type: 'workspace.loaded',
       chatId: 'chat-1',
+      requestId: 1,
       workspace,
     });
 
-    expect(next.workspaceByChat['chat-1']).toEqual(workspace);
+    expect(next.workspaceByChat['chat-1']).toBeUndefined();
     expect(next.workspacePanel).toEqual({
       open: true,
       loading: true,
       error: null,
       chatId: 'chat-2',
+      requestId: 2,
+    });
+  });
+
+  it('ignores an older load for the same chat when a newer request is active', () => {
+    let state = createInitialState({ title: 'Nanobot', authRequired: false });
+    state = reducer(state, { type: 'workspace.loading', chatId: 'chat-1', requestId: 1 });
+    state = reducer(state, { type: 'workspace.loading', chatId: 'chat-1', requestId: 2 });
+
+    const workspace: SessionWorkspace = {
+      chatId: 'chat-1',
+      updatedAt: null,
+      files: [],
+    };
+    const next = reducer(state, {
+      type: 'workspace.loaded',
+      chatId: 'chat-1',
+      requestId: 1,
+      workspace,
+    });
+
+    expect(next.workspaceByChat['chat-1']).toBeUndefined();
+    expect(next.workspacePanel).toEqual({
+      open: true,
+      loading: true,
+      error: null,
+      chatId: 'chat-1',
+      requestId: 2,
+    });
+  });
+
+  it('closes the workspace panel when switching sessions', () => {
+    let state = createInitialState({ title: 'Nanobot', authRequired: false }, '', 'chat-1');
+    state = reducer(state, { type: 'workspace.loading', chatId: 'chat-1', requestId: 1 });
+
+    const next = reducer(state, {
+      type: 'server.event',
+      event: {
+        type: 'session.history',
+        chatId: 'chat-2',
+        messages: [],
+      },
+    });
+
+    expect(next.currentChatId).toBe('chat-2');
+    expect(next.workspacePanel).toEqual({
+      open: false,
+      loading: false,
+      error: null,
+      chatId: null,
+      requestId: null,
     });
   });
 
   it('ignores old failures after the workspace panel has closed', () => {
     let state = createInitialState({ title: 'Nanobot', authRequired: false });
-    state = reducer(state, { type: 'workspace.loading', chatId: 'chat-1' });
+    state = reducer(state, { type: 'workspace.loading', chatId: 'chat-1', requestId: 1 });
     state = reducer(state, { type: 'workspace.close' });
 
     const next = reducer(state, {
       type: 'workspace.failed',
       chatId: 'chat-1',
+      requestId: 1,
       error: '加载工作空间失败（500）',
     });
 
@@ -117,6 +181,7 @@ describe('workspace store reducer', () => {
       loading: false,
       error: null,
       chatId: null,
+      requestId: null,
     });
   });
 });

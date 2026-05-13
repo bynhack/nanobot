@@ -67,6 +67,7 @@ export interface WorkspacePanelState {
   loading: boolean;
   error: string | null;
   chatId: string | null;
+  requestId: number | null;
 }
 
 interface HistoryMessageBase {

@@ -1,0 +1,233 @@
+<style>
+  .page{display:flex;flex-direction:column;gap:18px}
+  .hero{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}
+  .hero h2{margin:0;font-size:28px;color:#101828}
+  .hero p{margin:10px 0 0;color:#667085;max-width:920px;line-height:1.6}
+  .badge-row{display:flex;gap:8px;flex-wrap:wrap}
+  .badge{padding:8px 12px;border-radius:999px;background:#eef4ff;color:#2455c3;font-weight:700;font-size:13px}
+  .shell{display:grid;grid-template-columns:280px minmax(0,1fr) 420px;gap:16px;min-height:860px}
+  .card{background:#fff;border:1px solid #e6eaf0;border-radius:14px;box-shadow:0 1px 3px rgba(15,23,42,.04)}
+  .left{padding:16px;display:flex;flex-direction:column;gap:14px}
+  .title{font-size:12px;color:#7c8597;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+  .case{padding:14px;border-radius:12px;background:#f8fbff;border:1px solid #dae4f3}
+  .case h3{margin:0;font-size:17px;color:#101828}
+  .case p{margin:8px 0 0;font-size:13px;color:#667085;line-height:1.7}
+  .row{padding:11px 0;border-bottom:1px solid #f1f4f8;display:flex;justify-content:space-between;gap:10px}
+  .row:last-child{border-bottom:0}
+  .label{font-size:14px;color:#344054}
+  .value{font-size:13px;color:#2455c3;font-weight:700}
+  .main{display:flex;flex-direction:column;gap:14px}
+  .tabs{display:flex;gap:10px}
+  .tabs button{padding:10px 16px;border-radius:10px;background:#f2f4f7;color:#475467;font-size:14px;font-weight:700}
+  .tabs button.active{background:#e9f0ff;color:#1d4ed8}
+  .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+  .kpi{padding:14px}
+  .kpi .k{font-size:12px;color:#667085;margin-bottom:8px}
+  .kpi .v{font-size:22px;font-weight:800;color:#101828}
+  .workbench{padding:16px;display:grid;grid-template-rows:auto 1fr;gap:14px}
+  .head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+  .head h3{margin:0;font-size:18px;color:#101828}
+  .ghosts{display:flex;gap:8px;flex-wrap:wrap}
+  .ghost{padding:8px 12px;border-radius:10px;background:#f8fafc;border:1px solid #e5e7eb;font-size:13px;color:#475467}
+  .graph-shell{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:14px}
+  .graph-card{padding:14px;display:grid;grid-template-rows:auto 1fr auto;gap:12px}
+  .graph-hint{font-size:13px;color:#667085;line-height:1.6}
+  .graph{position:relative;min-height:420px;border:1px solid #edf0f4;border-radius:14px;background:
+    linear-gradient(180deg,#fcfdff,#f8fafc),
+    linear-gradient(90deg,rgba(37,99,235,.03) 1px,transparent 1px),
+    linear-gradient(rgba(37,99,235,.03) 1px,transparent 1px);
+    background-size:auto,32px 32px,32px 32px;
+    overflow:hidden}
+  .bar{position:absolute;height:12px;border-radius:999px;background:rgba(59,130,246,.18)}
+  .edge{position:absolute;font-size:12px;color:#3159be;font-weight:700;padding:6px 10px;border-radius:999px;background:#eef4ff;border:1px solid #dbe7ff}
+  .node{position:absolute;padding:10px 12px;border-radius:12px;background:#fff;border:1px solid #d9e2f1;min-width:120px;box-shadow:0 8px 16px rgba(15,23,42,.06)}
+  .node.primary{background:#eef4ff;border-color:#88a8ff}
+  .node.active{box-shadow:0 0 0 3px rgba(37,99,235,.16),0 8px 16px rgba(15,23,42,.08)}
+  .node strong{display:block;font-size:13px;color:#0f172a}
+  .node span{display:block;font-size:12px;color:#667085;margin-top:4px}
+  .menu{position:absolute;left:518px;top:164px;width:170px;border-radius:12px;border:1px solid #dbe3f2;background:#fff;box-shadow:0 18px 36px rgba(15,23,42,.14);overflow:hidden}
+  .menu .item{padding:11px 12px;font-size:13px;color:#2648a4;border-bottom:1px solid #edf2f7;font-weight:700}
+  .menu .item:last-child{border-bottom:0}
+  .menu .item.muted{color:#475467;font-weight:600}
+  .history{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{padding:7px 10px;border-radius:999px;background:#f8fafc;border:1px solid #e9edf3;font-size:12px;color:#475467}
+  .side{padding:14px;display:flex;flex-direction:column;gap:12px}
+  .side h4{margin:0;font-size:15px;color:#101828}
+  .side p{margin:0;font-size:13px;color:#667085;line-height:1.6}
+  .subcard{padding:12px;border-radius:12px;background:#f8fafc;border:1px solid #edf0f4}
+  .subcard strong{display:block;font-size:13px;color:#101828;margin-bottom:6px}
+  .right{padding:16px;display:flex;flex-direction:column;gap:14px}
+  .right-head{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .switch{display:flex;gap:8px}
+  .switch span{padding:7px 10px;border-radius:999px;background:#f2f4f7;color:#667085;font-size:12px;font-weight:700}
+  .switch span.active{background:#e9f0ff;color:#1d4ed8}
+  .detail{padding:14px;border-radius:12px;background:#f8fbff;border:1px solid #dae4f3}
+  .detail h3{margin:0;font-size:17px;color:#101828}
+  .detail p{margin:8px 0 0;font-size:13px;color:#667085;line-height:1.7}
+  .table{overflow:hidden}
+  .thead,.trow{display:grid;grid-template-columns:118px 1fr 1fr 88px;gap:10px;padding:10px 12px}
+  .thead{background:#f8fafc;color:#667085;font-size:12px;font-weight:700;border-bottom:1px solid #edf0f4}
+  .trow{font-size:13px;color:#344054;border-bottom:1px solid #f3f5f7}
+  .trow:last-child{border-bottom:0}
+  .note{font-size:12px;color:#7c8597;line-height:1.6}
+</style>
+
+<div class="page">
+  <div class="hero">
+    <div>
+      <h2>工作台模式，按专业上图工具重排</h2>
+      <p>这一版只看工作台模式本身。主交互改成两条：一是节点右键唤起上钻、下钻和设为中心节点；二是先点交易连线，右侧默认进入这条边两端的交易明细，再决定是否继续筛选或带入对话。</p>
+    </div>
+    <div class="badge-row">
+      <span class="badge">节点右键</span>
+      <span class="badge">边先看明细</span>
+      <span class="badge">按主体钻取</span>
+      <span class="badge">图表联动</span>
+    </div>
+  </div>
+
+  <div class="shell">
+    <div class="card left">
+      <div>
+        <div class="title">当前案件</div>
+        <div class="case">
+          <h3>虚开链路 2026-临-017</h3>
+          <p>时间范围：近 90 天<br>涉案金额：¥ 12,840,000<br>观察层级：2 跳上下游</p>
+        </div>
+      </div>
+      <div>
+        <div class="title">全局筛选</div>
+        <div class="row"><span class="label">金额区间</span><span class="value">10万以上</span></div>
+        <div class="row"><span class="label">交易类型</span><span class="value">对公转账</span></div>
+        <div class="row"><span class="label">风险标签</span><span class="value">高频分拆</span></div>
+        <div class="row"><span class="label">排除交易</span><span class="value">12 笔</span></div>
+      </div>
+      <div>
+        <div class="title">已保存图谱</div>
+        <div class="row"><span class="label">主链路分析图</span><span class="value">当前</span></div>
+        <div class="row"><span class="label">张某下游扩散图</span><span class="value">查看</span></div>
+        <div class="row"><span class="label">A贸易团伙图</span><span class="value">查看</span></div>
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="tabs">
+        <button>对话模式</button>
+        <button class="active">工作台模式</button>
+      </div>
+
+      <div class="kpis">
+        <div class="card kpi"><div class="k">核心主体</div><div class="v">18</div></div>
+        <div class="card kpi"><div class="k">主链路交易</div><div class="v">3482</div></div>
+        <div class="card kpi"><div class="k">异常边</div><div class="v">27</div></div>
+        <div class="card kpi"><div class="k">已排除交易</div><div class="v">12</div></div>
+      </div>
+
+      <div class="card workbench">
+        <div class="head">
+          <h3>主画布：交易流向图</h3>
+          <div class="ghosts">
+            <button class="ghost">回退</button>
+            <button class="ghost">前进</button>
+            <button class="ghost">保存上图</button>
+            <button class="ghost">查看全量交易列表</button>
+          </div>
+        </div>
+
+        <div class="graph-shell">
+          <div class="card graph-card">
+            <div class="graph-hint">当前演示的是你说的两个关键点：A 贸易公司节点被右键后弹出操作菜单；同时选中了 “A 贸易公司 → B 个体户” 这条交易线，所以右侧先展示这条边的交易明细。</div>
+            <div class="graph">
+              <div class="bar" style="left:96px;top:88px;width:430px"></div>
+              <div class="bar" style="left:302px;top:204px;width:240px"></div>
+              <div class="bar" style="left:528px;top:136px;width:160px"></div>
+              <div class="node primary" style="left:44px;top:62px"><strong>张某个人户</strong><span>流出 ¥280万</span></div>
+              <div class="node active" style="left:312px;top:64px"><strong>A 贸易公司</strong><span>中转 43 笔</span></div>
+              <div class="node" style="left:610px;top:112px"><strong>B 个体户</strong><span>承接 17 笔</span></div>
+              <div class="node" style="left:250px;top:176px"><strong>陈某卡 6217</strong><span>分拆出款</span></div>
+              <div class="node" style="left:496px;top:252px"><strong>C 商贸</strong><span>末端归集</span></div>
+              <div class="edge" style="left:500px;top:118px">已选中边 · 17 笔 · ¥126万</div>
+              <div class="menu">
+                <div class="item">下钻该节点</div>
+                <div class="item">上钻该节点</div>
+                <div class="item">设为中心节点</div>
+                <div class="item muted">查看主体详情</div>
+              </div>
+            </div>
+            <div class="history">
+              <span class="chip">中心节点：张某个人户</span>
+              <span class="chip">右键节点进入钻取</span>
+              <span class="chip">单击边查看两端明细</span>
+              <span class="chip">双击节点可进入主体详情</span>
+            </div>
+          </div>
+
+          <div class="card side">
+            <div>
+              <h4>画布内的辅助联动</h4>
+              <p>不把所有东西都塞进右侧。工作台模式里，画布旁边先保留一块轻量联动区，用来显示当前边的汇总概况、当前节点的摘要和操作历史。</p>
+            </div>
+            <div class="subcard">
+              <strong>当前边汇总</strong>
+              A 贸易公司 -> B 个体户<br>
+              17 笔，起始 05-03，截止 05-15<br>
+              总金额 ¥1,260,000
+            </div>
+            <div class="subcard">
+              <strong>当前节点摘要</strong>
+              A 贸易公司关联 9 个主体，异常标签 3 个，当前可下钻下游 6 个节点。
+            </div>
+            <div class="subcard">
+              <strong>最近操作</strong>
+              已排除 2 笔重复交易，已固定当前布局，已保存上图 1 次。
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card right">
+      <div class="right-head">
+        <div class="title" style="margin:0">右侧详情区</div>
+        <div class="switch">
+          <span>主体详情</span>
+          <span class="active">边明细</span>
+          <span>案件列表</span>
+        </div>
+      </div>
+
+      <div class="detail">
+        <h3>A 贸易公司 -> B 个体户</h3>
+        <p>这里不是先看主体，而是因为用户先点中了交易线，所以右侧优先进入“边明细”。上面先给边汇总，下面直接给这条线两端的交易明细表。</p>
+      </div>
+
+      <div class="card table">
+        <div class="thead">
+          <div>时间</div><div>付款方</div><div>收款方</div><div>金额</div>
+        </div>
+        <div class="trow">
+          <div>05-03 09:21</div><div>A 贸易公司</div><div>B 个体户</div><div>400,000</div>
+        </div>
+        <div class="trow">
+          <div>05-05 15:43</div><div>A 贸易公司</div><div>B 个体户</div><div>260,000</div>
+        </div>
+        <div class="trow">
+          <div>05-09 10:12</div><div>A 贸易公司</div><div>B 个体户</div><div>180,000</div>
+        </div>
+        <div class="trow">
+          <div>05-11 19:37</div><div>A 贸易公司</div><div>B 个体户</div><div>420,000</div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:14px">
+        <div class="title">后续动作</div>
+        <div class="row"><span class="label">只保留这条边继续分析</span><span class="value">执行</span></div>
+        <div class="row"><span class="label">排除其中 2 笔交易</span><span class="value">执行</span></div>
+        <div class="row"><span class="label">将这条边带入对话研判</span><span class="value">执行</span></div>
+        <div class="row"><span class="label">切换到主体详情</span><span class="value">A 贸易公司</span></div>
+      </div>
+
+      <div class="note">这版的重点就是把“钻取”收回到节点右键，把“交易查看”收回到边级别，先看两端交易明细，再决定要不要进一步按主体展开。</div>
+    </div>
+  </div>
+</div>

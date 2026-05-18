@@ -1,0 +1,252 @@
+<style>
+  :root{
+    --bg:#f5f6f8;
+    --panel:#ffffff;
+    --panel-soft:#fafbfc;
+    --line:#e7ebf1;
+    --line-strong:#d8deea;
+    --text:#101828;
+    --sub:#667085;
+    --muted:#98a2b3;
+    --blue:#2f6fe4;
+    --blue-soft:#eef4ff;
+    --green:#5fa767;
+    --shadow:0 1px 3px rgba(16,24,40,.05),0 10px 24px rgba(16,24,40,.04);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);font-family:Inter,system-ui,sans-serif;color:var(--text)}
+  .app{padding:16px;display:grid;grid-template-rows:auto 1fr;gap:14px;min-height:100vh}
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 16px;border:1px solid var(--line);border-radius:14px;background:var(--panel);box-shadow:var(--shadow)}
+  .top-left{display:flex;align-items:center;gap:14px;min-width:0}
+  .badge{width:34px;height:34px;border-radius:10px;background:var(--blue);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800}
+  .title-wrap{min-width:0}
+  .title{font-size:17px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .subtitle{font-size:12px;color:var(--sub);margin-top:4px}
+  .top-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end}
+  .mode{display:flex;gap:8px;padding:4px;border-radius:12px;background:#f2f4f7}
+  .mode span{padding:8px 12px;border-radius:10px;font-size:13px;font-weight:700;color:var(--sub)}
+  .mode .active{background:var(--panel);box-shadow:0 1px 2px rgba(16,24,40,.08);color:var(--blue)}
+  .pill{padding:8px 12px;border-radius:999px;background:#f8fafc;border:1px solid var(--line);font-size:12px;color:#475467;font-weight:700}
+  .layout{display:grid;grid-template-columns:270px minmax(0,1fr) 400px;gap:14px;min-height:820px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
+  .left{padding:14px;display:flex;flex-direction:column;gap:12px}
+  .section{padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel-soft)}
+  .section-title{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
+  .case-name{font-size:16px;font-weight:800}
+  .case-meta{font-size:13px;color:var(--sub);line-height:1.7;margin-top:8px}
+  .kv{display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid #edf1f5}
+  .kv:last-child{border-bottom:0}
+  .kv span:first-child{font-size:13px;color:#475467}
+  .kv span:last-child{font-size:13px;color:var(--blue);font-weight:700;text-align:right}
+  .main{display:grid;grid-template-rows:auto 1fr;gap:14px}
+  .canvas-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px}
+  .canvas-title{font-size:16px;font-weight:800}
+  .canvas-sub{font-size:12px;color:var(--sub);margin-top:4px}
+  .tools{display:flex;gap:8px;flex-wrap:wrap}
+  .tool{padding:8px 12px;border-radius:10px;background:#f8fafc;border:1px solid var(--line);font-size:13px;color:#475467}
+  .canvas-body{padding:0 14px 14px;display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:14px}
+  .graph-wrap{display:grid;grid-template-rows:1fr auto;gap:12px}
+  .graph{position:relative;min-height:560px;border:1px solid var(--line);border-radius:14px;background:
+    linear-gradient(180deg,#fcfdff,#f8fafc),
+    linear-gradient(90deg,rgba(47,111,228,.03) 1px,transparent 1px),
+    linear-gradient(rgba(47,111,228,.03) 1px,transparent 1px);
+    background-size:auto,32px 32px,32px 32px;
+    overflow:hidden}
+  .lane{position:absolute;height:12px;border-radius:999px;background:rgba(47,111,228,.18)}
+  .node{position:absolute;padding:10px 12px;border-radius:12px;background:#fff;border:1px solid var(--line-strong);min-width:120px;box-shadow:0 8px 16px rgba(15,23,42,.06)}
+  .node.primary{background:var(--blue-soft);border-color:#8fb2ff}
+  .node.active{box-shadow:0 0 0 3px rgba(47,111,228,.16),0 8px 16px rgba(15,23,42,.08)}
+  .node strong{display:block;font-size:13px;color:#0f172a}
+  .node span{display:block;font-size:12px;color:var(--sub);margin-top:4px}
+  .edge-label{position:absolute;font-size:12px;color:#3159be;font-weight:700;padding:6px 10px;border-radius:999px;background:#eef4ff;border:1px solid #dbe7ff}
+  .menu{position:absolute;left:520px;top:172px;width:174px;border-radius:12px;border:1px solid var(--line-strong);background:#fff;box-shadow:0 18px 36px rgba(15,23,42,.14);overflow:hidden}
+  .menu div{padding:11px 12px;font-size:13px;border-bottom:1px solid #edf2f7;font-weight:700;color:#2648a4}
+  .menu div:last-child{border-bottom:0}
+  .mini-status{display:flex;gap:8px;flex-wrap:wrap}
+  .mini-status span{padding:7px 10px;border-radius:999px;background:#f8fafc;border:1px solid var(--line);font-size:12px;color:#475467}
+  .adjacent{display:flex;flex-direction:column;gap:12px}
+  .adj-card{padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel-soft)}
+  .adj-card h4{margin:0 0 8px;font-size:13px}
+  .adj-card p{margin:0;font-size:12px;color:var(--sub);line-height:1.6}
+  .adj-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+  .adj-item{padding:9px 10px;border-radius:10px;background:#fff;border:1px solid #edf1f5;font-size:12px;color:#475467}
+  .right{display:grid;grid-template-rows:auto auto 1fr auto;gap:12px;padding:14px}
+  .tabs{display:flex;gap:8px}
+  .tabs span{padding:8px 12px;border-radius:999px;background:#f2f4f7;font-size:12px;font-weight:700;color:var(--sub)}
+  .tabs .active{background:var(--blue-soft);color:var(--blue)}
+  .detail{padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel-soft)}
+  .detail h3{margin:0;font-size:16px}
+  .detail p{margin:8px 0 0;font-size:13px;color:var(--sub);line-height:1.6}
+  .summary-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .sum{padding:10px;border:1px solid var(--line);border-radius:12px;background:#fff}
+  .sum .k{font-size:12px;color:var(--muted)}
+  .sum .v{font-size:18px;font-weight:800;margin-top:6px}
+  .table{border:1px solid var(--line);border-radius:12px;overflow:hidden;background:#fff}
+  .thead,.trow{display:grid;grid-template-columns:112px 1fr 1fr 86px;gap:10px;padding:10px 12px}
+  .thead{background:#f8fafc;color:var(--sub);font-size:12px;font-weight:700;border-bottom:1px solid var(--line)}
+  .trow{font-size:13px;color:#344054;border-bottom:1px solid #f3f5f7}
+  .trow:last-child{border-bottom:0}
+  .actions{padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--panel-soft)}
+  .action{display:flex;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid #edf1f5}
+  .action:last-child{border-bottom:0}
+  .action span:first-child{font-size:13px;color:#475467}
+  .action span:last-child{font-size:13px;color:var(--blue);font-weight:700}
+</style>
+
+<div class="app">
+  <div class="topbar">
+    <div class="top-left">
+      <div class="badge">经</div>
+      <div class="title-wrap">
+        <div class="title">资金流分析助手 / 经侦工作台</div>
+        <div class="subtitle">当前案件：虚开链路 2026-临-017，工作台模式，交易流向图</div>
+      </div>
+    </div>
+    <div class="top-right">
+      <div class="mode">
+        <span>对话模式</span>
+        <span class="active">工作台模式</span>
+      </div>
+      <span class="pill">金额 10 万以上</span>
+      <span class="pill">近 90 天</span>
+      <span class="pill">2 跳上下游</span>
+    </div>
+  </div>
+
+  <div class="layout">
+    <div class="panel left">
+      <div class="section">
+        <div class="section-title">当前案件</div>
+        <div class="case-name">虚开链路 2026-临-017</div>
+        <div class="case-meta">涉案金额 ¥12,840,000<br>图谱状态 侦查中<br>当前中心节点 张某个人户</div>
+      </div>
+      <div class="section">
+        <div class="section-title">案件池</div>
+        <div class="kv"><span>虚开链路 2026-临-017</span><span>当前</span></div>
+        <div class="kv"><span>跑分团伙 2026-临-012</span><span>切换</span></div>
+        <div class="kv"><span>涉税套现 2026-临-009</span><span>切换</span></div>
+      </div>
+      <div class="section">
+        <div class="section-title">全局筛选</div>
+        <div class="kv"><span>交易类型</span><span>对公转账</span></div>
+        <div class="kv"><span>风险标签</span><span>高频分拆</span></div>
+        <div class="kv"><span>排除交易</span><span>12 笔</span></div>
+      </div>
+      <div class="section">
+        <div class="section-title">已保存图谱</div>
+        <div class="kv"><span>主链路分析图</span><span>打开</span></div>
+        <div class="kv"><span>张某下游扩散图</span><span>打开</span></div>
+        <div class="kv"><span>A贸易团伙图</span><span>打开</span></div>
+      </div>
+    </div>
+
+    <div class="panel main">
+      <div class="canvas-head">
+        <div>
+          <div class="canvas-title">主画布：交易流向图</div>
+          <div class="canvas-sub">保留专业上图工具语义，节点右键负责钻取，边点击负责交易证据查看</div>
+        </div>
+        <div class="tools">
+          <button class="tool">缩放</button>
+          <button class="tool">移动</button>
+          <button class="tool">回退</button>
+          <button class="tool">前进</button>
+          <button class="tool">导出图片</button>
+          <button class="tool">保存上图</button>
+        </div>
+      </div>
+
+      <div class="canvas-body">
+        <div class="graph-wrap">
+          <div class="graph">
+            <div class="lane" style="left:96px;top:88px;width:430px"></div>
+            <div class="lane" style="left:302px;top:204px;width:240px"></div>
+            <div class="lane" style="left:528px;top:136px;width:160px"></div>
+            <div class="node primary" style="left:44px;top:62px"><strong>张某个人户</strong><span>流出 ¥280万</span></div>
+            <div class="node active" style="left:312px;top:64px"><strong>A 贸易公司</strong><span>中转 43 笔</span></div>
+            <div class="node" style="left:610px;top:112px"><strong>B 个体户</strong><span>承接 17 笔</span></div>
+            <div class="node" style="left:250px;top:176px"><strong>陈某卡 6217</strong><span>分拆出款</span></div>
+            <div class="node" style="left:496px;top:252px"><strong>C 商贸</strong><span>末端归集</span></div>
+            <div class="edge-label" style="left:500px;top:118px">已选中边 · 17 笔 · ¥126万</div>
+            <div class="menu">
+              <div>下钻该节点</div>
+              <div>上钻该节点</div>
+              <div>上下钻设置</div>
+              <div>明细分析</div>
+            </div>
+          </div>
+          <div class="mini-status">
+            <span>中心节点：张某个人户</span>
+            <span>当前选中边：A 贸易公司 -> B 个体户</span>
+            <span>右键节点进入钻取</span>
+            <span>点击边查看交易明细</span>
+          </div>
+        </div>
+
+        <div class="adjacent">
+          <div class="adj-card">
+            <h4>画布联动摘要</h4>
+            <p>这一列只保留轻量信息，不抢右侧证据面板的角色，也不破坏中间主图的专注度。</p>
+          </div>
+          <div class="adj-card">
+            <h4>当前边汇总</h4>
+            <div class="adj-list">
+              <div class="adj-item">A 贸易公司 -> B 个体户</div>
+              <div class="adj-item">17 笔，05-03 到 05-15</div>
+              <div class="adj-item">总金额 ¥1,260,000</div>
+            </div>
+          </div>
+          <div class="adj-card">
+            <h4>当前节点摘要</h4>
+            <div class="adj-list">
+              <div class="adj-item">A 贸易公司关联 9 个主体</div>
+              <div class="adj-item">异常标签 3 个</div>
+              <div class="adj-item">可下钻下游 6 个节点</div>
+            </div>
+          </div>
+          <div class="adj-card">
+            <h4>最近操作</h4>
+            <div class="adj-list">
+              <div class="adj-item">已排除 2 笔重复交易</div>
+              <div class="adj-item">已固定当前布局</div>
+              <div class="adj-item">已保存上图 1 次</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel right">
+      <div class="tabs">
+        <span>主体详情</span>
+        <span class="active">边明细</span>
+        <span>案件列表</span>
+      </div>
+      <div class="detail">
+        <h3>A 贸易公司 -> B 个体户</h3>
+        <p>右侧不再堆很多卡片，而是收成一个证据面板。当前因为点中了交易线，所以优先展示边汇总和两端逐笔交易明细。</p>
+      </div>
+      <div class="summary-grid">
+        <div class="sum"><div class="k">交易次数</div><div class="v">17</div></div>
+        <div class="sum"><div class="k">交易总额</div><div class="v">126 万</div></div>
+        <div class="sum"><div class="k">最早交易</div><div class="v" style="font-size:14px">05-03</div></div>
+        <div class="sum"><div class="k">最晚交易</div><div class="v" style="font-size:14px">05-15</div></div>
+      </div>
+      <div class="table">
+        <div class="thead">
+          <div>时间</div><div>付款方</div><div>收款方</div><div>金额</div>
+        </div>
+        <div class="trow"><div>05-03 09:21</div><div>A 贸易公司</div><div>B 个体户</div><div>400,000</div></div>
+        <div class="trow"><div>05-05 15:43</div><div>A 贸易公司</div><div>B 个体户</div><div>260,000</div></div>
+        <div class="trow"><div>05-09 10:12</div><div>A 贸易公司</div><div>B 个体户</div><div>180,000</div></div>
+        <div class="trow"><div>05-11 19:37</div><div>A 贸易公司</div><div>B 个体户</div><div>420,000</div></div>
+      </div>
+      <div class="actions">
+        <div class="action"><span>只保留这条边继续分析</span><span>执行</span></div>
+        <div class="action"><span>排除其中 2 笔交易</span><span>执行</span></div>
+        <div class="action"><span>将这条边带入对话研判</span><span>执行</span></div>
+        <div class="action"><span>切回主体详情</span><span>A 贸易公司</span></div>
+      </div>
+    </div>
+  </div>
+</div>

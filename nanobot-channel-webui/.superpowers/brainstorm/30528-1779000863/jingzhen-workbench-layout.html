@@ -1,0 +1,208 @@
+<style>
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:18px}
+  .title-wrap{display:flex;flex-direction:column;gap:6px}
+  .eyebrow{font-size:12px;color:#7c8597;text-transform:uppercase;letter-spacing:.08em}
+  .title{font-size:28px;font-weight:700;color:#111827}
+  .subtitle{font-size:14px;color:#667085;max-width:880px}
+  .chips{display:flex;gap:8px;flex-wrap:wrap}
+  .chip{padding:7px 12px;border-radius:999px;background:#eef4ff;color:#2757c7;font-size:13px;font-weight:600}
+  .shell{display:grid;grid-template-columns:280px minmax(0,1fr) 360px;gap:16px;min-height:760px}
+  .panel{background:#fff;border:1px solid #e5e7eb;border-radius:14px;box-shadow:0 1px 3px rgba(15,23,42,.04)}
+  .left{padding:16px;display:flex;flex-direction:column;gap:14px}
+  .section-title{font-size:12px;color:#7c8597;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+  .case-card{padding:14px;border:1px solid #dbe3f2;border-radius:12px;background:#f8fbff}
+  .case-name{font-size:16px;font-weight:700;color:#0f172a;margin-bottom:6px}
+  .meta{font-size:13px;color:#5b6475;line-height:1.6}
+  .filter-group{padding:12px;border:1px solid #edf0f4;border-radius:12px}
+  .filter-row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid #f1f4f8}
+  .filter-row:last-child{border-bottom:0}
+  .filter-name{font-size:14px;color:#344054}
+  .filter-value{font-size:13px;color:#2563eb;font-weight:600}
+  .main{display:flex;flex-direction:column;gap:12px}
+  .tabs{display:flex;gap:8px}
+  .tab{padding:10px 14px;border-radius:10px;background:#f3f4f6;color:#475467;font-size:14px;font-weight:600}
+  .tab.active{background:#e9f0ff;color:#1d4ed8}
+  .kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+  .kpi{padding:14px 16px}
+  .kpi-label{font-size:12px;color:#667085;margin-bottom:8px}
+  .kpi-value{font-size:24px;font-weight:700;color:#101828}
+  .canvas{padding:16px;display:grid;grid-template-rows:auto 1fr auto;gap:14px;min-height:470px}
+  .canvas-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .canvas-title{font-size:18px;font-weight:700;color:#101828}
+  .canvas-actions{display:flex;gap:8px;flex-wrap:wrap}
+  .ghost{padding:8px 12px;border-radius:10px;background:#f8fafc;border:1px solid #e5e7eb;font-size:13px;color:#475467}
+  .graph{position:relative;border:1px solid #edf0f4;border-radius:14px;background:linear-gradient(180deg,#fcfdff,#f8fafc);overflow:hidden;min-height:290px}
+  .lane{position:absolute;height:10px;border-radius:999px;background:rgba(59,130,246,.18)}
+  .node{position:absolute;padding:10px 12px;border-radius:12px;background:#fff;border:1px solid #d9e2f1;box-shadow:0 8px 20px rgba(15,23,42,.06);min-width:108px}
+  .node.primary{border-color:#89a9ff;background:#eef4ff}
+  .node-title{font-size:13px;font-weight:700;color:#0f172a}
+  .node-sub{font-size:12px;color:#667085;margin-top:4px}
+  .link-label{position:absolute;font-size:12px;color:#3159be;font-weight:700}
+  .subviews{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .mini{padding:14px;min-height:160px}
+  .mini-title{font-size:14px;font-weight:700;color:#111827;margin-bottom:10px}
+  .timeline{display:flex;flex-direction:column;gap:10px}
+  .event{display:grid;grid-template-columns:72px 1fr;gap:10px;align-items:center}
+  .time{font-size:12px;color:#667085}
+  .bar{height:10px;border-radius:999px;background:linear-gradient(90deg,#bfd3ff,#5b8cff)}
+  .network{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+  .network-card{padding:10px;border-radius:10px;background:#f8fafc;border:1px solid #edf0f4;font-size:12px;color:#475467}
+  .right{padding:16px;display:flex;flex-direction:column;gap:12px}
+  .entity-card{padding:14px;border-radius:12px;background:#f8fbff;border:1px solid #dbe3f2}
+  .entity-title{font-size:17px;font-weight:700;color:#111827}
+  .entity-meta{font-size:13px;color:#5b6475;line-height:1.7;margin-top:8px}
+  .actions{display:grid;grid-template-columns:1fr;gap:8px}
+  .action{padding:10px 12px;border-radius:10px;background:#fff;border:1px solid #d9e2f1;color:#2648a4;font-size:13px;font-weight:600;text-align:left}
+  .list{padding:0;margin:0;list-style:none}
+  .list li{padding:10px 0;border-bottom:1px solid #f1f4f8;font-size:13px;color:#344054}
+  .list li:last-child{border-bottom:0}
+  .hint{margin-top:6px;font-size:12px;color:#7c8597;line-height:1.6}
+</style>
+
+<div class="topbar">
+  <div class="title-wrap">
+    <div class="eyebrow">Nanobot Channel WebUI / 经侦工作台</div>
+    <div class="title">案件工作台，聊天与资金流图双模协同</div>
+    <div class="subtitle">工作台模式下，以交易流向图为主画布，按主体钻取。右侧承接主体详情、快捷分析动作和交易明细入口，对话模式与当前案件共享上下文。</div>
+  </div>
+  <div class="chips">
+    <span class="chip">双模切换</span>
+    <span class="chip">按主体钻取</span>
+    <span class="chip">交易列表双角色</span>
+  </div>
+</div>
+
+<div class="shell">
+  <div class="panel left">
+    <div>
+      <div class="section-title">当前案件</div>
+      <div class="case-card">
+        <div class="case-name">虚开链路 2026-临-017</div>
+        <div class="meta">案件状态：侦查中<br>核心主体：张某、A贸易、B个体户<br>涉案金额：¥ 12,840,000</div>
+      </div>
+    </div>
+    <div>
+      <div class="section-title">筛选条件</div>
+      <div class="filter-group">
+        <div class="filter-row"><span class="filter-name">时间范围</span><span class="filter-value">近 90 天</span></div>
+        <div class="filter-row"><span class="filter-name">金额区间</span><span class="filter-value">10万以上</span></div>
+        <div class="filter-row"><span class="filter-name">交易类型</span><span class="filter-value">对公转账</span></div>
+        <div class="filter-row"><span class="filter-name">风险标签</span><span class="filter-value">高频分拆</span></div>
+        <div class="filter-row"><span class="filter-name">观察层级</span><span class="filter-value">2 跳上下游</span></div>
+      </div>
+    </div>
+    <div>
+      <div class="section-title">案件池切换</div>
+      <div class="filter-group">
+        <div class="filter-row"><span class="filter-name">虚开链路 2026-临-017</span><span class="filter-value">当前</span></div>
+        <div class="filter-row"><span class="filter-name">跑分团伙 2026-临-012</span><span class="filter-value">查看</span></div>
+        <div class="filter-row"><span class="filter-name">涉税套现 2026-临-009</span><span class="filter-value">查看</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="tabs">
+      <div class="tab">对话模式</div>
+      <div class="tab active">工作台模式</div>
+    </div>
+    <div class="kpis">
+      <div class="panel kpi"><div class="kpi-label">疑似核心账户</div><div class="kpi-value">18</div></div>
+      <div class="panel kpi"><div class="kpi-label">交易总笔数</div><div class="kpi-value">3,482</div></div>
+      <div class="panel kpi"><div class="kpi-label">疑似过桥金额</div><div class="kpi-value">¥ 8.3M</div></div>
+      <div class="panel kpi"><div class="kpi-label">异常交易簇</div><div class="kpi-value">27</div></div>
+    </div>
+
+    <div class="panel canvas">
+      <div class="canvas-head">
+        <div class="canvas-title">主视图：交易流向图</div>
+        <div class="canvas-actions">
+          <button class="ghost">按主体钻取</button>
+          <button class="ghost">展开上游</button>
+          <button class="ghost">展开下游</button>
+          <button class="ghost">查看交易列表</button>
+        </div>
+      </div>
+      <div class="graph">
+        <div class="lane" style="left:96px;top:84px;width:470px"></div>
+        <div class="lane" style="left:210px;top:178px;width:320px"></div>
+        <div class="lane" style="left:528px;top:126px;width:180px"></div>
+        <div class="node primary" style="left:44px;top:58px">
+          <div class="node-title">张某个人户</div>
+          <div class="node-sub">流出 ¥ 280 万</div>
+        </div>
+        <div class="node" style="left:294px;top:54px">
+          <div class="node-title">A 贸易公司</div>
+          <div class="node-sub">中转 43 笔</div>
+        </div>
+        <div class="node" style="left:598px;top:98px">
+          <div class="node-title">B 个体户</div>
+          <div class="node-sub">回流 17 笔</div>
+        </div>
+        <div class="node" style="left:204px;top:152px">
+          <div class="node-title">陈某卡 6217</div>
+          <div class="node-sub">分拆出款</div>
+        </div>
+        <div class="node" style="left:454px;top:214px">
+          <div class="node-title">C 商贸</div>
+          <div class="node-sub">末端归集</div>
+        </div>
+        <div class="link-label" style="left:184px;top:72px">¥ 180 万</div>
+        <div class="link-label" style="left:392px;top:112px">¥ 126 万</div>
+        <div class="link-label" style="left:318px;top:192px">¥ 74 万</div>
+      </div>
+      <div class="subviews">
+        <div class="panel mini">
+          <div class="mini-title">展开联动：时间序列流水</div>
+          <div class="timeline">
+            <div class="event"><span class="time">05-03</span><div class="bar" style="width:82%"></div></div>
+            <div class="event"><span class="time">05-06</span><div class="bar" style="width:55%"></div></div>
+            <div class="event"><span class="time">05-11</span><div class="bar" style="width:94%"></div></div>
+            <div class="event"><span class="time">05-15</span><div class="bar" style="width:38%"></div></div>
+          </div>
+        </div>
+        <div class="panel mini">
+          <div class="mini-title">展开联动：主体关系图</div>
+          <div class="network">
+            <div class="network-card">张某<br>控制人</div>
+            <div class="network-card">A 贸易<br>开户主体</div>
+            <div class="network-card">设备 IMEI<br>共用</div>
+            <div class="network-card">B 个体户<br>下游承接</div>
+            <div class="network-card">税号关联<br>2 家空壳</div>
+            <div class="network-card">手机号<br>复用 3 次</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel right">
+    <div>
+      <div class="section-title">当前选中主体</div>
+      <div class="entity-card">
+        <div class="entity-title">A 贸易公司</div>
+        <div class="entity-meta">角色：二级中转主体<br>入账 180 万，出账 200 万<br>关联账户 9 个，异常标签 3 个</div>
+      </div>
+    </div>
+    <div>
+      <div class="section-title">快捷分析</div>
+      <div class="actions">
+        <button class="action">分析该主体上下游异常流向</button>
+        <button class="action">总结与本案核心主体的关系</button>
+        <button class="action">生成该主体研判摘要</button>
+        <button class="action">把当前主体带入对话继续追问</button>
+      </div>
+      <div class="hint">这里对应你要的“双重方式”：选中主体后，聊天自动带上下文，同时保留显式动作。</div>
+    </div>
+    <div>
+      <div class="section-title">交易列表入口</div>
+      <ul class="list">
+        <li>查看当前主体相关交易 43 笔</li>
+        <li>只看异常交易 12 笔</li>
+        <li>切到案件总交易列表</li>
+        <li>导出当前筛选结果</li>
+      </ul>
+      <div class="hint">列表在这里既能做图谱佐证，也能升格成证据台账，不强迫用户一上来掉进表格海里。</div>
+    </div>
+  </div>
+</div>

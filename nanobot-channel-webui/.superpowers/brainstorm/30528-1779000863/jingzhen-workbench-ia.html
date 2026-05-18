@@ -1,0 +1,175 @@
+<style>
+  .page{display:flex;flex-direction:column;gap:18px}
+  .hero{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}
+  .hero h2{margin:0;font-size:30px;color:#101828}
+  .hero p{margin:10px 0 0;color:#667085;max-width:900px;line-height:1.6}
+  .badge-row{display:flex;gap:8px;flex-wrap:wrap}
+  .badge{padding:8px 12px;border-radius:999px;background:#eef4ff;color:#2455c3;font-weight:700;font-size:13px}
+  .grid{display:grid;grid-template-columns:320px minmax(0,1fr);gap:16px}
+  .card{background:#fff;border:1px solid #e6eaf0;border-radius:14px;box-shadow:0 1px 3px rgba(15,23,42,.04)}
+  .sidebar{padding:16px;display:flex;flex-direction:column;gap:14px}
+  .title{font-size:12px;color:#7c8597;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+  .row{padding:11px 0;border-bottom:1px solid #f1f4f8;display:flex;justify-content:space-between;gap:10px}
+  .row:last-child{border-bottom:0}
+  .label{font-size:14px;color:#344054}
+  .value{font-size:13px;color:#2455c3;font-weight:700}
+  .content{display:flex;flex-direction:column;gap:14px}
+  .switch{display:flex;gap:10px}
+  .switch button{padding:10px 16px;border-radius:10px;background:#f2f4f7;color:#475467;font-size:14px;font-weight:700}
+  .switch button.active{background:#e9f0ff;color:#1d4ed8}
+  .workspace{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:14px}
+  .canvas{padding:16px;display:flex;flex-direction:column;gap:14px}
+  .canvas-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+  .canvas-title{font-size:18px;font-weight:800;color:#101828}
+  .actions{display:flex;gap:8px;flex-wrap:wrap}
+  .ghost{padding:8px 12px;border-radius:10px;background:#f8fafc;border:1px solid #e5e7eb;font-size:13px;color:#475467}
+  .graph{position:relative;min-height:260px;border:1px solid #edf0f4;border-radius:14px;background:linear-gradient(180deg,#fcfdff,#f8fafc)}
+  .node{position:absolute;padding:10px 12px;border-radius:12px;background:#fff;border:1px solid #d9e2f1;min-width:110px;box-shadow:0 8px 16px rgba(15,23,42,.06)}
+  .node.primary{background:#eef4ff;border-color:#88a8ff}
+  .node strong{display:block;font-size:13px;color:#0f172a}
+  .node span{display:block;font-size:12px;color:#667085;margin-top:4px}
+  .bar{position:absolute;height:12px;border-radius:999px;background:rgba(59,130,246,.18)}
+  .tag{position:absolute;font-size:12px;color:#3159be;font-weight:700}
+  .subgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .panel{padding:14px}
+  .panel h3{margin:0 0 10px;font-size:14px;color:#111827}
+  .list{display:flex;flex-direction:column;gap:8px}
+  .item{padding:10px 12px;border-radius:10px;background:#f8fafc;border:1px solid #eef2f6;font-size:13px;color:#475467}
+  .right{padding:16px;display:flex;flex-direction:column;gap:14px}
+  .entity{padding:14px;border-radius:12px;background:#f8fbff;border:1px solid #dae4f3}
+  .entity h3{margin:0;font-size:18px;color:#101828}
+  .entity p{margin:8px 0 0;color:#667085;font-size:13px;line-height:1.7}
+  .cta{display:grid;gap:8px}
+  .cta button{padding:10px 12px;text-align:left;border-radius:10px;border:1px solid #d9e2f1;background:#fff;color:#2648a4;font-size:13px;font-weight:700}
+  .table{overflow:hidden}
+  .table-head,.table-row{display:grid;grid-template-columns:110px 1fr 1fr 100px 100px;gap:10px;padding:10px 12px}
+  .table-head{background:#f8fafc;color:#667085;font-size:12px;font-weight:700;border-bottom:1px solid #edf0f4}
+  .table-row{font-size:13px;color:#344054;border-bottom:1px solid #f3f5f7}
+  .table-row:last-child{border-bottom:0}
+  .note{font-size:12px;color:#7c8597;line-height:1.6}
+</style>
+
+<div class="page">
+  <div class="hero">
+    <div>
+      <h2>经侦工作台的推荐信息架构</h2>
+      <p>这是基于 `nanobot-channel-webui` 当前线程壳子，结合 `mysql-connector` 连真实库能力和 `skyable-cloud` 上图语义整理出来的一版结构。核心原则是，对话和工作台不是两套系统，而是围绕同一个案件上下文切换观察方式。</p>
+    </div>
+    <div class="badge-row">
+      <span class="badge">案件池 + 当前案件</span>
+      <span class="badge">双模切换</span>
+      <span class="badge">交易流向主画布</span>
+      <span class="badge">按主体钻取</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card sidebar">
+      <div>
+        <div class="title">左侧稳定区</div>
+        <div class="row"><span class="label">案件池</span><span class="value">先选案件</span></div>
+        <div class="row"><span class="label">当前案件摘要</span><span class="value">KPI 常驻</span></div>
+        <div class="row"><span class="label">筛选条件</span><span class="value">全局生效</span></div>
+        <div class="row"><span class="label">已保存图谱</span><span class="value">案件资产</span></div>
+      </div>
+      <div>
+        <div class="title">共享状态</div>
+        <div class="row"><span class="label">当前案件 ID</span><span class="value">caseId</span></div>
+        <div class="row"><span class="label">选中主体</span><span class="value">selection</span></div>
+        <div class="row"><span class="label">筛选器</span><span class="value">filters</span></div>
+        <div class="row"><span class="label">排除交易</span><span class="value">excludedTrades</span></div>
+        <div class="row"><span class="label">团伙分组</span><span class="value">groupMap</span></div>
+      </div>
+    </div>
+
+    <div class="content">
+      <div class="switch">
+        <button>对话模式</button>
+        <button class="active">工作台模式</button>
+      </div>
+
+      <div class="workspace">
+        <div class="card canvas">
+          <div class="canvas-head">
+            <div class="canvas-title">工作台主区</div>
+            <div class="actions">
+              <button class="ghost">上钻</button>
+              <button class="ghost">下钻</button>
+              <button class="ghost">回退</button>
+              <button class="ghost">保存上图</button>
+            </div>
+          </div>
+          <div class="graph">
+            <div class="bar" style="left:92px;top:78px;width:420px"></div>
+            <div class="bar" style="left:250px;top:164px;width:320px"></div>
+            <div class="node primary" style="left:38px;top:52px"><strong>张某个人户</strong><span>根主体</span></div>
+            <div class="node" style="left:280px;top:48px"><strong>A 贸易公司</strong><span>中转主体</span></div>
+            <div class="node" style="left:590px;top:102px"><strong>B 个体户</strong><span>下游承接</span></div>
+            <div class="node" style="left:220px;top:140px"><strong>陈某卡 6217</strong><span>分拆节点</span></div>
+            <div class="node" style="left:510px;top:204px"><strong>C 商贸</strong><span>归集节点</span></div>
+            <div class="tag" style="left:180px;top:66px">¥180万</div>
+            <div class="tag" style="left:392px;top:146px">¥74万</div>
+          </div>
+          <div class="subgrid">
+            <div class="card panel">
+              <h3>联动展开 1：时间序列流水</h3>
+              <div class="list">
+                <div class="item">05-03 09:21，A 贸易收款 ¥40万</div>
+                <div class="item">05-03 11:06，A 贸易向陈某卡分拆 6 笔</div>
+                <div class="item">05-05 15:43，A 贸易向 B 个体户转出 ¥26万</div>
+              </div>
+            </div>
+            <div class="card panel">
+              <h3>联动展开 2：主体关系图</h3>
+              <div class="list">
+                <div class="item">A 贸易与张某共用手机号</div>
+                <div class="item">B 个体户与陈某卡共享设备</div>
+                <div class="item">A 贸易关联 2 家空壳税号</div>
+              </div>
+            </div>
+          </div>
+          <div class="card panel table">
+            <div class="table-head">
+              <div>时间</div><div>付款方</div><div>收款方</div><div>金额</div><div>状态</div>
+            </div>
+            <div class="table-row">
+              <div>05-03 09:21</div><div>张某个人户</div><div>A 贸易公司</div><div>400,000</div><div>保留</div>
+            </div>
+            <div class="table-row">
+              <div>05-03 11:06</div><div>A 贸易公司</div><div>陈某卡 6217</div><div>120,000</div><div>异常</div>
+            </div>
+            <div class="table-row">
+              <div>05-05 15:43</div><div>A 贸易公司</div><div>B 个体户</div><div>260,000</div><div>保留</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card right">
+          <div class="entity">
+            <h3>右侧详情区</h3>
+            <p>默认展示当前选中主体，切换到边时则显示边详情。这里不只看片段信息，还要承接“带入对话”和“交易列表双角色”。</p>
+          </div>
+          <div>
+            <div class="title">快捷分析动作</div>
+            <div class="cta">
+              <button>分析该主体上下游异常流向</button>
+              <button>总结与本案核心主体关系</button>
+              <button>生成研判摘要并写入对话</button>
+              <button>只看该主体相关交易</button>
+            </div>
+          </div>
+          <div>
+            <div class="title">右侧切换区</div>
+            <div class="list">
+              <div class="item">主体详情</div>
+              <div class="item">边汇总 / 边明细</div>
+              <div class="item">案件总交易列表</div>
+              <div class="item">图谱操作记录</div>
+            </div>
+          </div>
+          <div class="note">设计重点是，交易列表不能单独漂成另一套后台页面，它必须既能作为图谱佐证，也能升级为证据台账。</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

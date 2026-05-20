@@ -1,3 +1,4 @@
+import { createCaseGraphState, reduceCaseGraphState, type CaseGraphAction } from './case-graph/store';
 import type {
   ActiveTurnState,
   AppState,
@@ -48,6 +49,7 @@ export function createInitialState(
       chatId: null,
       requestId: null,
     },
+    caseGraph: createCaseGraphState(),
   };
 }
 
@@ -226,9 +228,17 @@ export type Action =
   | { type: 'workspace.loaded'; chatId: string; requestId: number; workspace: SessionWorkspace }
   | { type: 'workspace.failed'; chatId: string; requestId: number; error: string }
   | { type: 'workspace.close' }
+  | CaseGraphAction
   | { type: 'server.event'; event: ServerEvent };
 
 export function reducer(state: AppState, action: Action): AppState {
+  if (action.type.startsWith('caseGraph.')) {
+    return {
+      ...state,
+      caseGraph: reduceCaseGraphState(state.caseGraph, action),
+    };
+  }
+
   switch (action.type) {
     case 'auth.set':
       return {

@@ -9,7 +9,9 @@ import { DetailPreviewContext, type ToolDetailPayload } from './components/chat/
 import { ChatSidebar } from './components/chat/sidebar';
 import { ChatThreadContent } from './components/chat/thread-content';
 import { WorkspacePanel } from './components/chat/workspace-panel';
+import { WorkspaceModeSwitch } from './components/workspace-mode-switch';
 import { DEFAULT_UI_THEME } from './components/settings/types';
+import { CaseGraphWorkbench } from './case-graph/workbench';
 import { DetailPreviewPane, type DetailView } from './detail-preview-pane';
 import { LoginPage } from './login-page';
 import { SettingsScreen, type AppearanceMode, type UiTheme } from './settings-page';
@@ -33,7 +35,7 @@ import {
   shouldUseImmersivePreview,
 } from './preview-layout';
 
-type AppView = 'chat' | 'settings';
+type AppView = 'chat' | 'settings' | 'case_graph';
 
 function clampDetailWidth(width: number, viewportWidth: number, immersive: boolean, sidebarOpen: boolean): number {
   if (!immersive) {
@@ -256,30 +258,46 @@ export function App() {
         }
       >
         {resizingDetailPanel ? <div className="detail-resize-overlay" aria-hidden="true" /> : null}
-        <ChatWorkspace
-          authResolved={authResolved}
-          authToken={authToken}
-          currentUser={currentUser}
-          title={bootstrap.title}
-          flashMessage={flashMessage}
-          onOpenSettings={handleOpenSettings}
-          sidebarCollapsed={effectiveSidebarCollapsed}
-          onToggleSidebar={handleToggleSidebar}
-          previewOpen={previewOpen}
-          immersivePreview={immersivePreview}
-          showFlash={showFlash}
-          onOpenMedia={openMedia}
-        />
+        {appView === 'case_graph' ? (
+          <CaseGraphWorkbench
+            token={authToken}
+            onBack={() => setAppView('chat')}
+            headerSlot={(
+              <WorkspaceModeSwitch
+                activeMode="case_graph"
+                onSelectChat={() => setAppView('chat')}
+              />
+            )}
+          />
+        ) : (
+          <>
+            <ChatWorkspace
+              authResolved={authResolved}
+              authToken={authToken}
+              currentUser={currentUser}
+              title={bootstrap.title}
+              flashMessage={flashMessage}
+              onOpenSettings={handleOpenSettings}
+              onOpenCaseGraph={() => setAppView('case_graph')}
+              sidebarCollapsed={effectiveSidebarCollapsed}
+              onToggleSidebar={handleToggleSidebar}
+              previewOpen={previewOpen}
+              immersivePreview={immersivePreview}
+              showFlash={showFlash}
+              onOpenMedia={openMedia}
+            />
 
-        <DetailPreviewPane
-          detailView={detailView}
-          immersive={immersivePreview}
-          open={Boolean(detailView)}
-          width={detailPanelWidth}
-          token={authToken}
-          onClose={() => setDetailView(null)}
-          onResizeStart={() => setResizingDetailPanel(true)}
-        />
+            <DetailPreviewPane
+              detailView={detailView}
+              immersive={immersivePreview}
+              open={Boolean(detailView)}
+              width={detailPanelWidth}
+              token={authToken}
+              onClose={() => setDetailView(null)}
+              onResizeStart={() => setResizingDetailPanel(true)}
+            />
+          </>
+        )}
 
         {appView === 'settings' ? (
           <SettingsScreen
@@ -323,6 +341,7 @@ const ChatWorkspace = memo(function ChatWorkspace({
   title,
   flashMessage,
   onOpenSettings,
+  onOpenCaseGraph,
   sidebarCollapsed,
   onToggleSidebar,
   previewOpen,
@@ -336,6 +355,7 @@ const ChatWorkspace = memo(function ChatWorkspace({
   title: string;
   flashMessage: string | null;
   onOpenSettings: () => void;
+  onOpenCaseGraph: () => void;
   sidebarCollapsed: boolean;
   onToggleSidebar: () => void;
   previewOpen: boolean;
@@ -414,6 +434,7 @@ const ChatWorkspace = memo(function ChatWorkspace({
           sessionsById={sessionsById}
           connectionState={connectionState}
           onOpenSettings={onOpenSettings}
+          onOpenCaseGraph={onOpenCaseGraph}
         />
 
         <ChatThreadContent

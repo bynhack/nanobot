@@ -9,6 +9,13 @@ import type {
   SessionWorkspace,
   UploadedAttachment,
 } from './types';
+export {
+  createCaseGraph,
+  drillDownCaseGraph,
+  loadCaseGraph,
+  loadCaseGraphTargetDetail,
+  queryCaseGraph,
+} from './case-graph/api';
 
 export function authHeaders(token: string): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};

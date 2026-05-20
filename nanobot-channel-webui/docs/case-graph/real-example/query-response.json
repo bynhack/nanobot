@@ -1,0 +1,2495 @@
+{
+    "result": {
+        "nodes": [
+            {
+                "id": "69",
+                "label": "彭爱琼",
+                "accountId": "69",
+                "suspectId": null,
+                "tradeCard": "6236330052728591641",
+                "accountName": "彭爱琼",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "27",
+                "label": "085e9858eb821a223412c393b@wx.tenpay.com",
+                "accountId": "27",
+                "suspectId": null,
+                "tradeCard": "085e9858eb821a223412c393b@wx.tenpay.com",
+                "accountName": "085e9858eb821a223412c393b@wx.tenpay.com",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "191",
+                "label": "085e9858e9196230276c9b2d7@wx.tenpay.com",
+                "accountId": "191",
+                "suspectId": null,
+                "tradeCard": "6212261818002989337",
+                "accountName": "085e9858e9196230276c9b2d7@wx.tenpay.com",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "151",
+                "label": "汉庭星空酒店管理有限公司",
+                "accountId": "151",
+                "suspectId": null,
+                "tradeCard": "htcw01@htinns.com",
+                "accountName": "汉庭星空酒店管理有限公司",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "152",
+                "label": "湖南佳宜企业管理有限公司",
+                "accountId": "152",
+                "suspectId": null,
+                "tradeCard": "1661338479",
+                "accountName": "湖南佳宜企业管理有限公司",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "111",
+                "label": "085e9858e25759b236b233eae@wx.tenpay.com",
+                "accountId": "111",
+                "suspectId": null,
+                "tradeCard": "6236330057060954554",
+                "accountName": "085e9858e25759b236b233eae@wx.tenpay.com",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "233",
+                "label": "085e9858e84c72119c343a181@wx.tenpay.com",
+                "accountId": "233",
+                "suspectId": null,
+                "tradeCard": "6236330053829564834",
+                "accountName": "085e9858e84c72119c343a181@wx.tenpay.com",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "134",
+                "label": "085e9858ea8c8b1a5d607bfb8@wx.tenpay.com",
+                "accountId": "134",
+                "suspectId": null,
+                "tradeCard": "085e9858ea8c8b1a5d607bfb8@wx.tenpay.com",
+                "accountName": "085e9858ea8c8b1a5d607bfb8@wx.tenpay.com",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "211",
+                "label": "徐浩",
+                "accountId": "211",
+                "suspectId": null,
+                "tradeCard": "085e9858e6b9a2c50f3d97849@wx.tenpay.com",
+                "accountName": "徐浩",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "113",
+                "label": "085e9858e24fe1da90cbaacfe@wx.tenpay.com",
+                "accountId": "113",
+                "suspectId": null,
+                "tradeCard": "6236330054079700557",
+                "accountName": "085e9858e24fe1da90cbaacfe@wx.tenpay.com",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "1_3_137",
+                "label": "伍华中",
+                "accountId": null,
+                "suspectId": null,
+                "tradeCard": null,
+                "accountName": null,
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "114",
+                "label": "085e9858e8fb355535d153b73@wx.tenpay.com",
+                "accountId": "114",
+                "suspectId": null,
+                "tradeCard": "6236330056981436154",
+                "accountName": "085e9858e8fb355535d153b73@wx.tenpay.com",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "115",
+                "label": "085e9858e16c14d4ae21d6e37@wx.tenpay.com",
+                "accountId": "115",
+                "suspectId": null,
+                "tradeCard": "085e9858e16c14d4ae21d6e37@wx.tenpay.com",
+                "accountName": "085e9858e16c14d4ae21d6e37@wx.tenpay.com",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "117",
+                "label": "085e9858ec94f90d086f097c3@wx.tenpay.com",
+                "accountId": "117",
+                "suspectId": null,
+                "tradeCard": "6236330052309755680",
+                "accountName": "085e9858ec94f90d086f097c3@wx.tenpay.com",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "216",
+                "label": "杨志号",
+                "accountId": "216",
+                "suspectId": null,
+                "tradeCard": "085e9858e445e43df78c7ae19@wx.tenpay.com",
+                "accountName": "杨志号",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "32",
+                "label": "赵引",
+                "accountId": "32",
+                "suspectId": null,
+                "tradeCard": "085e9858effc7bc66b630684b@wx.tenpay.com",
+                "accountName": "赵引",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "35",
+                "label": "冯燕青",
+                "accountId": "35",
+                "suspectId": null,
+                "tradeCard": "085e9858ee415e117f9003838@wx.tenpay.com",
+                "accountName": "冯燕青",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "37",
+                "label": "085e9858ee55c48e9dcecbba8@wx.tenpay.com",
+                "accountId": "37",
+                "suspectId": null,
+                "tradeCard": "085e9858ee55c48e9dcecbba8@wx.tenpay.com",
+                "accountName": "085e9858ee55c48e9dcecbba8@wx.tenpay.com",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "38",
+                "label": "085e9858e0d9bb512faa7a9f4@wx.tenpay.com",
+                "accountId": "38",
+                "suspectId": null,
+                "tradeCard": "6230760000919419165",
+                "accountName": "085e9858e0d9bb512faa7a9f4@wx.tenpay.com",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "39",
+                "label": "蔡金海",
+                "accountId": "39",
+                "suspectId": null,
+                "tradeCard": "085e9858e13a283c0aeecd192@wx.tenpay.com",
+                "accountName": "蔡金海",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "160",
+                "label": "费清霞",
+                "accountId": "160",
+                "suspectId": null,
+                "tradeCard": "085e9858e91df4d2a053cacc6@wx.tenpay.com",
+                "accountName": "费清霞",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "182",
+                "label": "李园菊",
+                "accountId": "182",
+                "suspectId": null,
+                "tradeCard": "6215581818008401424",
+                "accountName": "李园菊",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "127",
+                "label": "085e9858e2cbd46d2a8ecd2f7@wx.tenpay.com",
+                "accountId": "127",
+                "suspectId": null,
+                "tradeCard": "6236330054143601922",
+                "accountName": "085e9858e2cbd46d2a8ecd2f7@wx.tenpay.com",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "8",
+                "label": "雷桂莲",
+                "accountId": "8",
+                "suspectId": null,
+                "tradeCard": "085e9858ee0b48e5ec4d21361@wx.tenpay.com",
+                "accountName": "雷桂莲",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "107",
+                "label": "冯光彩",
+                "accountId": "107",
+                "suspectId": null,
+                "tradeCard": "085e9858e8a4c1d3a91f6301d@wx.tenpay.com",
+                "accountName": "冯光彩",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "9",
+                "label": "蔡召东",
+                "accountId": "9",
+                "suspectId": null,
+                "tradeCard": "085e9858e469268529bedfabe@wx.tenpay.com",
+                "accountName": "蔡召东",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "229",
+                "label": "冯多",
+                "accountId": "229",
+                "suspectId": null,
+                "tradeCard": "085e9858eddf705de9edafb72@wx.tenpay.com",
+                "accountName": "冯多",
+                "x": null,
+                "y": null,
+                "bank": null
+            },
+            {
+                "id": "136_140",
+                "label": "_",
+                "accountId": null,
+                "suspectId": null,
+                "tradeCard": null,
+                "accountName": null,
+                "x": null,
+                "y": null,
+                "bank": null
+            }
+        ],
+        "money": [
+            {
+                "from": "42",
+                "to": "35",
+                "amount": 500.0,
+                "count": 1,
+                "startDate": "2025-12-01 15:43:40",
+                "endDate": "2025-12-01 15:43:40"
+            },
+            {
+                "from": "35",
+                "to": "43",
+                "amount": 150.0,
+                "count": 2,
+                "startDate": "2025-12-01 15:47:44",
+                "endDate": "2026-01-11 19:16:58"
+            },
+            {
+                "from": "44",
+                "to": "35",
+                "amount": 1838.7,
+                "count": 19,
+                "startDate": "2025-12-02 13:32:02",
+                "endDate": "2026-01-18 19:28:10"
+            },
+            {
+                "from": "45",
+                "to": "35",
+                "amount": 2189.2,
+                "count": 6,
+                "startDate": "2025-12-02 13:33:59",
+                "endDate": "2026-01-10 16:44:23"
+            },
+            {
+                "from": "35",
+                "to": "46",
+                "amount": 5000.0,
+                "count": 1,
+                "startDate": "2025-12-02 16:49:47",
+                "endDate": "2025-12-02 16:49:47"
+            },
+            {
+                "from": "35",
+                "to": "47",
+                "amount": 10.0,
+                "count": 1,
+                "startDate": "2025-12-02 17:13:21",
+                "endDate": "2025-12-02 17:13:21"
+            },
+            {
+                "from": "35",
+                "to": "48",
+                "amount": 4.0,
+                "count": 1,
+                "startDate": "2025-12-03 07:26:53",
+                "endDate": "2025-12-03 07:26:53"
+            },
+            {
+                "from": "35",
+                "to": "49",
+                "amount": 228.04,
+                "count": 17,
+                "startDate": "2025-12-03 10:43:24",
+                "endDate": "2026-01-21 20:32:49"
+            },
+            {
+                "from": "35",
+                "to": "50",
+                "amount": 6.0,
+                "count": 1,
+                "startDate": "2025-12-03 12:34:29",
+                "endDate": "2025-12-03 12:34:29"
+            },
+            {
+                "from": "35",
+                "to": "51",
+                "amount": 6.0,
+                "count": 2,
+                "startDate": "2025-12-03 18:47:26",
+                "endDate": "2025-12-17 14:27:26"
+            },
+            {
+                "from": "35",
+                "to": "52",
+                "amount": 13980.0,
+                "count": 1,
+                "startDate": "2025-12-04 12:22:10",
+                "endDate": "2025-12-04 12:22:10"
+            },
+            {
+                "from": "35",
+                "to": "53",
+                "amount": 19.0,
+                "count": 1,
+                "startDate": "2025-12-04 17:21:32",
+                "endDate": "2025-12-04 17:21:32"
+            },
+            {
+                "from": "35",
+                "to": "54",
+                "amount": 60.0,
+                "count": 12,
+                "startDate": "2025-12-05 07:38:57",
+                "endDate": "2026-01-09 07:43:47"
+            },
+            {
+                "from": "35",
+                "to": "55",
+                "amount": 26000.0,
+                "count": 1,
+                "startDate": "2025-12-07 14:04:31",
+                "endDate": "2025-12-07 14:04:31"
+            },
+            {
+                "from": "35",
+                "to": "56",
+                "amount": 279.44,
+                "count": 2,
+                "startDate": "2025-12-08 08:10:36",
+                "endDate": "2026-01-08 07:38:47"
+            },
+            {
+                "from": "35",
+                "to": "57",
+                "amount": 6.0,
+                "count": 1,
+                "startDate": "2025-12-08 11:37:41",
+                "endDate": "2025-12-08 11:37:41"
+            },
+            {
+                "from": "35",
+                "to": "58",
+                "amount": 31.0,
+                "count": 1,
+                "startDate": "2025-12-08 17:34:02",
+                "endDate": "2025-12-08 17:34:02"
+            },
+            {
+                "from": "35",
+                "to": "59",
+                "amount": 14993.92,
+                "count": 1,
+                "startDate": "2025-12-08 17:56:30",
+                "endDate": "2025-12-08 17:56:30"
+            },
+            {
+                "from": "35",
+                "to": "60",
+                "amount": 18.3,
+                "count": 1,
+                "startDate": "2025-12-09 13:22:06",
+                "endDate": "2025-12-09 13:22:06"
+            },
+            {
+                "from": "35",
+                "to": "61",
+                "amount": 12.5,
+                "count": 5,
+                "startDate": "2025-12-09 16:48:33",
+                "endDate": "2026-01-10 17:12:30"
+            },
+            {
+                "from": "35",
+                "to": "62",
+                "amount": 3.0,
+                "count": 1,
+                "startDate": "2025-12-09 17:41:43",
+                "endDate": "2025-12-09 17:41:43"
+            },
+            {
+                "from": "35",
+                "to": "63",
+                "amount": 14.0,
+                "count": 1,
+                "startDate": "2025-12-10 14:22:56",
+                "endDate": "2025-12-10 14:22:56"
+            },
+            {
+                "from": "35",
+                "to": "64",
+                "amount": 50.0,
+                "count": 2,
+                "startDate": "2025-12-14 09:31:35",
+                "endDate": "2026-01-14 09:34:57"
+            },
+            {
+                "from": "35",
+                "to": "65",
+                "amount": 40.29,
+                "count": 1,
+                "startDate": "2025-12-14 14:37:00",
+                "endDate": "2025-12-14 14:37:00"
+            },
+            {
+                "from": "35",
+                "to": "66",
+                "amount": 4.0,
+                "count": 1,
+                "startDate": "2025-12-15 18:18:16",
+                "endDate": "2025-12-15 18:18:16"
+            },
+            {
+                "from": "35",
+                "to": "67",
+                "amount": 20.0,
+                "count": 1,
+                "startDate": "2025-12-15 18:26:19",
+                "endDate": "2025-12-15 18:26:19"
+            },
+            {
+                "from": "35",
+                "to": "68",
+                "amount": 22.0,
+                "count": 4,
+                "startDate": "2025-12-16 07:17:02",
+                "endDate": "2025-12-26 07:12:25"
+            },
+            {
+                "from": "69",
+                "to": "35",
+                "amount": 3162.8,
+                "count": 3,
+                "startDate": "2025-12-18 22:22:04",
+                "endDate": "2026-01-11 15:01:44"
+            },
+            {
+                "from": "35",
+                "to": "70",
+                "amount": 760.0,
+                "count": 1,
+                "startDate": "2025-12-19 13:52:16",
+                "endDate": "2025-12-19 13:52:16"
+            },
+            {
+                "from": "35",
+                "to": "71",
+                "amount": 25.0,
+                "count": 1,
+                "startDate": "2025-12-19 15:00:19",
+                "endDate": "2025-12-19 15:00:19"
+            },
+            {
+                "from": "35",
+                "to": "72",
+                "amount": 406.0,
+                "count": 1,
+                "startDate": "2025-12-23 11:18:31",
+                "endDate": "2025-12-23 11:18:31"
+            },
+            {
+                "from": "35",
+                "to": "73",
+                "amount": 30.0,
+                "count": 1,
+                "startDate": "2025-12-23 17:07:47",
+                "endDate": "2025-12-23 17:07:47"
+            },
+            {
+                "from": "35",
+                "to": "74",
+                "amount": 245.0,
+                "count": 1,
+                "startDate": "2025-12-23 18:06:28",
+                "endDate": "2025-12-23 18:06:28"
+            },
+            {
+                "from": "35",
+                "to": "75",
+                "amount": 5.0,
+                "count": 1,
+                "startDate": "2025-12-25 07:35:28",
+                "endDate": "2025-12-25 07:35:28"
+            },
+            {
+                "from": "35",
+                "to": "76",
+                "amount": 15.0,
+                "count": 1,
+                "startDate": "2025-12-25 18:47:53",
+                "endDate": "2025-12-25 18:47:53"
+            },
+            {
+                "from": "35",
+                "to": "77",
+                "amount": 51.0,
+                "count": 4,
+                "startDate": "2025-12-26 15:25:46",
+                "endDate": "2026-01-20 11:31:52"
+            },
+            {
+                "from": "35",
+                "to": "78",
+                "amount": 200.0,
+                "count": 1,
+                "startDate": "2025-12-27 22:01:57",
+                "endDate": "2025-12-27 22:01:57"
+            },
+            {
+                "from": "35",
+                "to": "79",
+                "amount": 328.0,
+                "count": 1,
+                "startDate": "2025-12-28 05:54:18",
+                "endDate": "2025-12-28 05:54:18"
+            },
+            {
+                "from": "35",
+                "to": "80",
+                "amount": 25.0,
+                "count": 1,
+                "startDate": "2025-12-28 10:13:48",
+                "endDate": "2025-12-28 10:13:48"
+            },
+            {
+                "from": "35",
+                "to": "81",
+                "amount": 38.7,
+                "count": 1,
+                "startDate": "2025-12-28 11:44:58",
+                "endDate": "2025-12-28 11:44:58"
+            },
+            {
+                "from": "82",
+                "to": "35",
+                "amount": 190.0,
+                "count": 1,
+                "startDate": "2025-12-28 15:07:03",
+                "endDate": "2025-12-28 15:07:03"
+            },
+            {
+                "from": "35",
+                "to": "33",
+                "amount": 50.0,
+                "count": 1,
+                "startDate": "2025-12-28 18:55:24",
+                "endDate": "2025-12-28 18:55:24"
+            },
+            {
+                "from": "35",
+                "to": "83",
+                "amount": 189.0,
+                "count": 1,
+                "startDate": "2025-12-29 17:54:17",
+                "endDate": "2025-12-29 17:54:17"
+            },
+            {
+                "from": "35",
+                "to": "84",
+                "amount": 38.72,
+                "count": 1,
+                "startDate": "2025-12-29 18:28:49",
+                "endDate": "2025-12-29 18:28:49"
+            },
+            {
+                "from": "35",
+                "to": "85",
+                "amount": 7.0,
+                "count": 1,
+                "startDate": "2025-12-30 07:33:06",
+                "endDate": "2025-12-30 07:33:06"
+            },
+            {
+                "from": "35",
+                "to": "86",
+                "amount": 5.0,
+                "count": 1,
+                "startDate": "2025-12-31 07:34:13",
+                "endDate": "2025-12-31 07:34:13"
+            },
+            {
+                "from": "87",
+                "to": "35",
+                "amount": 92.5,
+                "count": 1,
+                "startDate": "2025-12-31 13:03:52",
+                "endDate": "2025-12-31 13:03:52"
+            },
+            {
+                "from": "35",
+                "to": "88",
+                "amount": 145.65,
+                "count": 1,
+                "startDate": "2025-12-31 17:44:29",
+                "endDate": "2025-12-31 17:44:29"
+            },
+            {
+                "from": "35",
+                "to": "89",
+                "amount": 5000.0,
+                "count": 1,
+                "startDate": "2026-01-02 13:06:27",
+                "endDate": "2026-01-02 13:06:27"
+            },
+            {
+                "from": "35",
+                "to": "90",
+                "amount": 5000.0,
+                "count": 1,
+                "startDate": "2026-01-03 12:10:39",
+                "endDate": "2026-01-03 12:10:39"
+            },
+            {
+                "from": "91",
+                "to": "35",
+                "amount": 700.0,
+                "count": 1,
+                "startDate": "2026-01-03 16:53:02",
+                "endDate": "2026-01-03 16:53:02"
+            },
+            {
+                "from": "35",
+                "to": "69",
+                "amount": 670.0,
+                "count": 1,
+                "startDate": "2026-01-03 16:53:35",
+                "endDate": "2026-01-03 16:53:35"
+            },
+            {
+                "from": "35",
+                "to": "92",
+                "amount": 6.0,
+                "count": 1,
+                "startDate": "2026-01-04 12:58:19",
+                "endDate": "2026-01-04 12:58:19"
+            },
+            {
+                "from": "35",
+                "to": "93",
+                "amount": 6.0,
+                "count": 1,
+                "startDate": "2026-01-04 18:27:51",
+                "endDate": "2026-01-04 18:27:51"
+            },
+            {
+                "from": "35",
+                "to": "94",
+                "amount": 5.0,
+                "count": 1,
+                "startDate": "2026-01-05 07:41:50",
+                "endDate": "2026-01-05 07:41:50"
+            },
+            {
+                "from": "35",
+                "to": "95",
+                "amount": 2.5,
+                "count": 1,
+                "startDate": "2026-01-05 16:32:14",
+                "endDate": "2026-01-05 16:32:14"
+            },
+            {
+                "from": "35",
+                "to": "96",
+                "amount": 139.0,
+                "count": 1,
+                "startDate": "2026-01-05 18:27:41",
+                "endDate": "2026-01-05 18:27:41"
+            },
+            {
+                "from": "96",
+                "to": "35",
+                "amount": 139.0,
+                "count": 1,
+                "startDate": "2026-01-06 02:14:54",
+                "endDate": "2026-01-06 02:14:54"
+            },
+            {
+                "from": "35",
+                "to": "97",
+                "amount": 5.0,
+                "count": 1,
+                "startDate": "2026-01-06 07:51:14",
+                "endDate": "2026-01-06 07:51:14"
+            },
+            {
+                "from": "35",
+                "to": "98",
+                "amount": 780.0,
+                "count": 1,
+                "startDate": "2026-01-06 17:13:56",
+                "endDate": "2026-01-06 17:13:56"
+            },
+            {
+                "from": "35",
+                "to": "99",
+                "amount": 30.0,
+                "count": 1,
+                "startDate": "2026-01-06 17:20:50",
+                "endDate": "2026-01-06 17:20:50"
+            },
+            {
+                "from": "35",
+                "to": "100",
+                "amount": 5.0,
+                "count": 1,
+                "startDate": "2026-01-07 07:44:35",
+                "endDate": "2026-01-07 07:44:35"
+            },
+            {
+                "from": "35",
+                "to": "101",
+                "amount": 2.0,
+                "count": 1,
+                "startDate": "2026-01-07 10:46:46",
+                "endDate": "2026-01-07 10:46:46"
+            },
+            {
+                "from": "35",
+                "to": "102",
+                "amount": 5.0,
+                "count": 1,
+                "startDate": "2026-01-08 07:41:45",
+                "endDate": "2026-01-08 07:41:45"
+            },
+            {
+                "from": "35",
+                "to": "103",
+                "amount": 6.0,
+                "count": 1,
+                "startDate": "2026-01-08 17:21:18",
+                "endDate": "2026-01-08 17:21:18"
+            },
+            {
+                "from": "35",
+                "to": "104",
+                "amount": 28.44,
+                "count": 1,
+                "startDate": "2026-01-08 18:18:23",
+                "endDate": "2026-01-08 18:18:23"
+            },
+            {
+                "from": "35",
+                "to": "105",
+                "amount": 13.0,
+                "count": 1,
+                "startDate": "2026-01-10 08:55:45",
+                "endDate": "2026-01-10 08:55:45"
+            },
+            {
+                "from": "106",
+                "to": "35",
+                "amount": 6.0,
+                "count": 1,
+                "startDate": "2026-01-10 09:39:38",
+                "endDate": "2026-01-10 09:39:38"
+            },
+            {
+                "from": "9",
+                "to": "35",
+                "amount": 115000.0,
+                "count": 13,
+                "startDate": "2026-01-10 19:49:02",
+                "endDate": "2026-01-21 21:58:18"
+            },
+            {
+                "from": "35",
+                "to": "107",
+                "amount": 166100.0,
+                "count": 18,
+                "startDate": "2026-01-10 19:49:42",
+                "endDate": "2026-01-21 22:10:28"
+            },
+            {
+                "from": "35",
+                "to": "108",
+                "amount": 5.0,
+                "count": 1,
+                "startDate": "2026-01-11 10:17:32",
+                "endDate": "2026-01-11 10:17:32"
+            },
+            {
+                "from": "35",
+                "to": "109",
+                "amount": 3.0,
+                "count": 1,
+                "startDate": "2026-01-11 10:18:34",
+                "endDate": "2026-01-11 10:18:34"
+            },
+            {
+                "from": "35",
+                "to": "110",
+                "amount": 30.0,
+                "count": 1,
+                "startDate": "2026-01-11 10:21:38",
+                "endDate": "2026-01-11 10:21:38"
+            },
+            {
+                "from": "111",
+                "to": "35",
+                "amount": 15000.0,
+                "count": 2,
+                "startDate": "2026-01-12 03:57:37",
+                "endDate": "2026-01-19 01:50:31"
+            },
+            {
+                "from": "35",
+                "to": "9",
+                "amount": 20900.0,
+                "count": 4,
+                "startDate": "2026-01-12 04:04:37",
+                "endDate": "2026-01-14 02:32:33"
+            },
+            {
+                "from": "35",
+                "to": "112",
+                "amount": 5.0,
+                "count": 1,
+                "startDate": "2026-01-12 07:57:08",
+                "endDate": "2026-01-12 07:57:08"
+            },
+            {
+                "from": "113",
+                "to": "35",
+                "amount": 15000.0,
+                "count": 6,
+                "startDate": "2026-01-12 23:00:39",
+                "endDate": "2026-01-16 00:38:44"
+            },
+            {
+                "from": "114",
+                "to": "35",
+                "amount": 30000.0,
+                "count": 3,
+                "startDate": "2026-01-13 01:24:28",
+                "endDate": "2026-01-14 03:41:59"
+            },
+            {
+                "from": "115",
+                "to": "35",
+                "amount": 20000.0,
+                "count": 2,
+                "startDate": "2026-01-13 03:11:49",
+                "endDate": "2026-01-13 07:24:05"
+            },
+            {
+                "from": "35",
+                "to": "116",
+                "amount": 4.8,
+                "count": 1,
+                "startDate": "2026-01-13 20:21:07",
+                "endDate": "2026-01-13 20:21:07"
+            },
+            {
+                "from": "117",
+                "to": "35",
+                "amount": 2400.0,
+                "count": 2,
+                "startDate": "2026-01-14 00:08:15",
+                "endDate": "2026-01-14 00:32:06"
+            },
+            {
+                "from": "35",
+                "to": "118",
+                "amount": 89.0,
+                "count": 1,
+                "startDate": "2026-01-14 18:45:13",
+                "endDate": "2026-01-14 18:45:13"
+            },
+            {
+                "from": "35",
+                "to": "119",
+                "amount": 157.15,
+                "count": 1,
+                "startDate": "2026-01-14 21:15:20",
+                "endDate": "2026-01-14 21:15:20"
+            },
+            {
+                "from": "35",
+                "to": "120",
+                "amount": 5.0,
+                "count": 1,
+                "startDate": "2026-01-15 07:37:31",
+                "endDate": "2026-01-15 07:37:31"
+            },
+            {
+                "from": "35",
+                "to": "121",
+                "amount": 90.0,
+                "count": 1,
+                "startDate": "2026-01-15 14:39:24",
+                "endDate": "2026-01-15 14:39:24"
+            },
+            {
+                "from": "35",
+                "to": "122",
+                "amount": 110.0,
+                "count": 1,
+                "startDate": "2026-01-15 15:00:05",
+                "endDate": "2026-01-15 15:00:05"
+            },
+            {
+                "from": "35",
+                "to": "123",
+                "amount": 9.0,
+                "count": 1,
+                "startDate": "2026-01-16 02:46:11",
+                "endDate": "2026-01-16 02:46:11"
+            },
+            {
+                "from": "35",
+                "to": "124",
+                "amount": 40.0,
+                "count": 2,
+                "startDate": "2026-01-16 15:23:36",
+                "endDate": "2026-01-21 17:24:22"
+            },
+            {
+                "from": "35",
+                "to": "125",
+                "amount": 735.0,
+                "count": 1,
+                "startDate": "2026-01-16 20:03:58",
+                "endDate": "2026-01-16 20:03:58"
+            },
+            {
+                "from": "35",
+                "to": "126",
+                "amount": 10.0,
+                "count": 1,
+                "startDate": "2026-01-16 21:10:15",
+                "endDate": "2026-01-16 21:10:15"
+            },
+            {
+                "from": "127",
+                "to": "35",
+                "amount": 5000.0,
+                "count": 1,
+                "startDate": "2026-01-17 00:31:05",
+                "endDate": "2026-01-17 00:31:05"
+            },
+            {
+                "from": "35",
+                "to": "128",
+                "amount": 8.0,
+                "count": 1,
+                "startDate": "2026-01-18 00:02:21",
+                "endDate": "2026-01-18 00:02:21"
+            },
+            {
+                "from": "35",
+                "to": "30",
+                "amount": 3200.0,
+                "count": 3,
+                "startDate": "2026-01-18 04:45:29",
+                "endDate": "2026-01-20 01:48:43"
+            },
+            {
+                "from": "35",
+                "to": "129",
+                "amount": 182.12,
+                "count": 1,
+                "startDate": "2026-01-18 09:40:49",
+                "endDate": "2026-01-18 09:40:49"
+            },
+            {
+                "from": "35",
+                "to": "130",
+                "amount": 5.0,
+                "count": 1,
+                "startDate": "2026-01-19 08:26:25",
+                "endDate": "2026-01-19 08:26:25"
+            },
+            {
+                "from": "35",
+                "to": "131",
+                "amount": 198.0,
+                "count": 1,
+                "startDate": "2026-01-19 17:31:12",
+                "endDate": "2026-01-19 17:31:12"
+            },
+            {
+                "from": "35",
+                "to": "132",
+                "amount": 99.0,
+                "count": 1,
+                "startDate": "2026-01-19 17:31:48",
+                "endDate": "2026-01-19 17:31:48"
+            },
+            {
+                "from": "35",
+                "to": "133",
+                "amount": 3.0,
+                "count": 1,
+                "startDate": "2026-01-20 13:02:10",
+                "endDate": "2026-01-20 13:02:10"
+            },
+            {
+                "from": "134",
+                "to": "35",
+                "amount": 10000.0,
+                "count": 2,
+                "startDate": "2026-01-21 00:04:51",
+                "endDate": "2026-01-21 01:13:16"
+            },
+            {
+                "from": "35",
+                "to": "28",
+                "amount": 4.0,
+                "count": 1,
+                "startDate": "2026-01-21 22:22:43",
+                "endDate": "2026-01-21 22:22:43"
+            },
+            {
+                "from": "107",
+                "to": "35",
+                "amount": 4000.0,
+                "count": 1,
+                "startDate": "2026-01-21 22:29:08",
+                "endDate": "2026-01-21 22:29:08"
+            },
+            {
+                "from": "10",
+                "to": "1_3_137",
+                "amount": 170.0,
+                "count": 1,
+                "startDate": "2026-01-04 22:15:07",
+                "endDate": "2026-01-04 22:15:07"
+            },
+            {
+                "from": "1_3_137",
+                "to": "24",
+                "amount": 27.0,
+                "count": 1,
+                "startDate": "2026-01-12 05:30:21",
+                "endDate": "2026-01-12 05:30:21"
+            },
+            {
+                "from": "1_3_137",
+                "to": "190",
+                "amount": 20.0,
+                "count": 1,
+                "startDate": "2025-12-14 18:35:41",
+                "endDate": "2025-12-14 18:35:41"
+            },
+            {
+                "from": "1_3_137",
+                "to": "25",
+                "amount": 13.0,
+                "count": 2,
+                "startDate": "2025-12-11 07:29:04",
+                "endDate": "2026-01-12 06:13:36"
+            },
+            {
+                "from": "1_3_137",
+                "to": "22",
+                "amount": 27.0,
+                "count": 2,
+                "startDate": "2026-01-11 17:39:47",
+                "endDate": "2026-01-11 18:34:45"
+            },
+            {
+                "from": "27",
+                "to": "1_3_137",
+                "amount": 1200.0,
+                "count": 1,
+                "startDate": "2026-01-12 20:38:01",
+                "endDate": "2026-01-12 20:38:01"
+            },
+            {
+                "from": "1_3_137",
+                "to": "192",
+                "amount": 0.01,
+                "count": 1,
+                "startDate": "2026-01-15 20:36:36",
+                "endDate": "2026-01-15 20:36:36"
+            },
+            {
+                "from": "1_3_137",
+                "to": "23",
+                "amount": 12.0,
+                "count": 1,
+                "startDate": "2026-01-11 20:51:13",
+                "endDate": "2026-01-11 20:51:13"
+            },
+            {
+                "from": "1_3_137",
+                "to": "193",
+                "amount": 20.0,
+                "count": 1,
+                "startDate": "2025-12-16 21:37:01",
+                "endDate": "2025-12-16 21:37:01"
+            },
+            {
+                "from": "8",
+                "to": "1_3_137",
+                "amount": 1500.0,
+                "count": 2,
+                "startDate": "2025-12-22 13:55:54",
+                "endDate": "2026-01-03 13:37:43"
+            },
+            {
+                "from": "1_3_137",
+                "to": "20",
+                "amount": 7.0,
+                "count": 1,
+                "startDate": "2026-01-11 16:44:36",
+                "endDate": "2026-01-11 16:44:36"
+            },
+            {
+                "from": "1_3_137",
+                "to": "21",
+                "amount": 10.0,
+                "count": 1,
+                "startDate": "2026-01-11 16:55:39",
+                "endDate": "2026-01-11 16:55:39"
+            },
+            {
+                "from": "169",
+                "to": "1_3_137",
+                "amount": 285.0,
+                "count": 1,
+                "startDate": "2025-12-04 01:31:38",
+                "endDate": "2025-12-04 01:31:38"
+            },
+            {
+                "from": "1_3_137",
+                "to": "231",
+                "amount": 5.0,
+                "count": 1,
+                "startDate": "2025-12-26 18:18:12",
+                "endDate": "2025-12-26 18:18:12"
+            },
+            {
+                "from": "1_3_137",
+                "to": "198",
+                "amount": 20.0,
+                "count": 1,
+                "startDate": "2025-12-19 12:58:43",
+                "endDate": "2025-12-19 12:58:43"
+            },
+            {
+                "from": "1_3_137",
+                "to": "199",
+                "amount": 6.0,
+                "count": 1,
+                "startDate": "2025-12-09 16:05:58",
+                "endDate": "2025-12-09 16:05:58"
+            },
+            {
+                "from": "165",
+                "to": "1_3_137",
+                "amount": 4.02,
+                "count": 7,
+                "startDate": "2025-12-04 20:32:57",
+                "endDate": "2025-12-30 14:38:48"
+            },
+            {
+                "from": "1_3_137",
+                "to": "28",
+                "amount": 27.4,
+                "count": 10,
+                "startDate": "2025-12-01 20:11:37",
+                "endDate": "2026-01-14 22:32:59"
+            },
+            {
+                "from": "1_3_137",
+                "to": "194",
+                "amount": 0.01,
+                "count": 1,
+                "startDate": "2026-01-15 20:36:36",
+                "endDate": "2026-01-15 20:36:36"
+            },
+            {
+                "from": "1_3_137",
+                "to": "29",
+                "amount": 27.0,
+                "count": 1,
+                "startDate": "2026-01-12 22:01:54",
+                "endDate": "2026-01-12 22:01:54"
+            },
+            {
+                "from": "1_3_137",
+                "to": "195",
+                "amount": 300.0,
+                "count": 1,
+                "startDate": "2025-12-07 16:46:49",
+                "endDate": "2025-12-07 16:46:49"
+            },
+            {
+                "from": "1_3_137",
+                "to": "26",
+                "amount": 34.0,
+                "count": 1,
+                "startDate": "2026-01-12 16:28:35",
+                "endDate": "2026-01-12 16:28:35"
+            },
+            {
+                "from": "1_3_137",
+                "to": "196",
+                "amount": 13.0,
+                "count": 1,
+                "startDate": "2025-12-17 15:28:15",
+                "endDate": "2025-12-17 15:28:15"
+            },
+            {
+                "from": "1_3_137",
+                "to": "197",
+                "amount": 15.8,
+                "count": 1,
+                "startDate": "2026-01-12 14:58:52",
+                "endDate": "2026-01-12 14:58:52"
+            },
+            {
+                "from": "1_3_137",
+                "to": "230",
+                "amount": 2.0,
+                "count": 1,
+                "startDate": "2025-12-24 14:11:51",
+                "endDate": "2025-12-24 14:11:51"
+            },
+            {
+                "from": "1_3_137",
+                "to": "235",
+                "amount": 37.0,
+                "count": 1,
+                "startDate": "2025-12-27 17:19:47",
+                "endDate": "2025-12-27 17:19:47"
+            },
+            {
+                "from": "1_3_137",
+                "to": "116",
+                "amount": 1.0,
+                "count": 1,
+                "startDate": "2025-12-28 22:04:39",
+                "endDate": "2025-12-28 22:04:39"
+            },
+            {
+                "from": "36",
+                "to": "1_3_137",
+                "amount": 500.0,
+                "count": 1,
+                "startDate": "2026-01-14 22:28:47",
+                "endDate": "2026-01-14 22:28:47"
+            },
+            {
+                "from": "1_3_137",
+                "to": "238",
+                "amount": 20.0,
+                "count": 1,
+                "startDate": "2025-12-28 16:50:57",
+                "endDate": "2025-12-28 16:50:57"
+            },
+            {
+                "from": "152",
+                "to": "1_3_137",
+                "amount": 5.5,
+                "count": 1,
+                "startDate": "2025-12-29 23:34:06",
+                "endDate": "2025-12-29 23:34:06"
+            },
+            {
+                "from": "1_3_137",
+                "to": "33",
+                "amount": 100.0,
+                "count": 1,
+                "startDate": "2026-01-13 14:47:29",
+                "endDate": "2026-01-13 14:47:29"
+            },
+            {
+                "from": "1_3_137",
+                "to": "34",
+                "amount": 1.1,
+                "count": 1,
+                "startDate": "2026-01-13 18:55:11",
+                "endDate": "2026-01-13 18:55:11"
+            },
+            {
+                "from": "1_3_137",
+                "to": "31",
+                "amount": 27.0,
+                "count": 1,
+                "startDate": "2026-01-13 13:42:00",
+                "endDate": "2026-01-13 13:42:00"
+            },
+            {
+                "from": "1_3_137",
+                "to": "32",
+                "amount": 1400.0,
+                "count": 3,
+                "startDate": "2025-12-07 19:36:35",
+                "endDate": "2026-01-14 22:32:27"
+            },
+            {
+                "from": "233",
+                "to": "1_3_137",
+                "amount": 1900.0,
+                "count": 1,
+                "startDate": "2025-12-26 22:05:11",
+                "endDate": "2025-12-26 22:05:11"
+            },
+            {
+                "from": "237",
+                "to": "1_3_137",
+                "amount": 50.0,
+                "count": 1,
+                "startDate": "2025-12-28 15:32:39",
+                "endDate": "2025-12-28 15:32:39"
+            },
+            {
+                "from": "1_3_137",
+                "to": "39",
+                "amount": 4000.0,
+                "count": 1,
+                "startDate": "2026-01-16 03:37:00",
+                "endDate": "2026-01-16 03:37:00"
+            },
+            {
+                "from": "194",
+                "to": "1_3_137",
+                "amount": 2.0,
+                "count": 1,
+                "startDate": "2026-01-12 14:58:37",
+                "endDate": "2026-01-12 14:58:37"
+            },
+            {
+                "from": "1_3_137",
+                "to": "136_140",
+                "amount": 1025.88,
+                "count": 4,
+                "startDate": "2025-12-13 08:44:31",
+                "endDate": "2026-01-13 08:39:25"
+            },
+            {
+                "from": "166",
+                "to": "1_3_137",
+                "amount": 6.66,
+                "count": 1,
+                "startDate": "2026-01-01 08:50:33",
+                "endDate": "2026-01-01 08:50:33"
+            },
+            {
+                "from": "1_3_137",
+                "to": "138",
+                "amount": 22.4,
+                "count": 1,
+                "startDate": "2025-12-01 10:59:22",
+                "endDate": "2025-12-01 10:59:22"
+            },
+            {
+                "from": "149",
+                "to": "1_3_137",
+                "amount": 8.8,
+                "count": 1,
+                "startDate": "2025-12-29 20:04:02",
+                "endDate": "2025-12-29 20:04:02"
+            },
+            {
+                "from": "35",
+                "to": "1_3_137",
+                "amount": 40000.0,
+                "count": 2,
+                "startDate": "2026-01-14 03:46:33",
+                "endDate": "2026-01-14 03:46:34"
+            },
+            {
+                "from": "1_3_137",
+                "to": "13",
+                "amount": 50.0,
+                "count": 1,
+                "startDate": "2026-01-05 09:40:45",
+                "endDate": "2026-01-05 09:40:45"
+            },
+            {
+                "from": "1_3_137",
+                "to": "14",
+                "amount": 29.0,
+                "count": 1,
+                "startDate": "2026-01-05 12:21:33",
+                "endDate": "2026-01-05 12:21:33"
+            },
+            {
+                "from": "1_3_137",
+                "to": "11",
+                "amount": 39.8,
+                "count": 1,
+                "startDate": "2026-01-05 01:26:41",
+                "endDate": "2026-01-05 01:26:41"
+            },
+            {
+                "from": "1_3_137",
+                "to": "12",
+                "amount": 39.8,
+                "count": 1,
+                "startDate": "2026-01-05 01:34:19",
+                "endDate": "2026-01-05 01:34:19"
+            },
+            {
+                "from": "234",
+                "to": "1_3_137",
+                "amount": 0.36,
+                "count": 1,
+                "startDate": "2025-12-28 03:22:51",
+                "endDate": "2025-12-28 03:22:51"
+            },
+            {
+                "from": "174",
+                "to": "1_3_137",
+                "amount": 200.0,
+                "count": 1,
+                "startDate": "2026-01-05 15:02:26",
+                "endDate": "2026-01-05 15:02:26"
+            },
+            {
+                "from": "1_3_137",
+                "to": "19",
+                "amount": 9.0,
+                "count": 1,
+                "startDate": "2026-01-11 16:03:24",
+                "endDate": "2026-01-11 16:03:24"
+            },
+            {
+                "from": "1_3_137",
+                "to": "145",
+                "amount": 29.02,
+                "count": 1,
+                "startDate": "2025-12-26 21:41:54",
+                "endDate": "2025-12-26 21:41:54"
+            },
+            {
+                "from": "1_3_137",
+                "to": "17",
+                "amount": 3.0,
+                "count": 1,
+                "startDate": "2026-01-10 20:47:57",
+                "endDate": "2026-01-10 20:47:57"
+            },
+            {
+                "from": "32",
+                "to": "1_3_137",
+                "amount": 1300.0,
+                "count": 4,
+                "startDate": "2025-12-17 22:22:45",
+                "endDate": "2026-01-14 15:57:10"
+            },
+            {
+                "from": "1_3_137",
+                "to": "18",
+                "amount": 182.12,
+                "count": 1,
+                "startDate": "2026-01-11 00:48:26",
+                "endDate": "2026-01-11 00:48:26"
+            },
+            {
+                "from": "1_3_137",
+                "to": "15",
+                "amount": 1.0,
+                "count": 1,
+                "startDate": "2026-01-06 09:04:00",
+                "endDate": "2026-01-06 09:04:00"
+            },
+            {
+                "from": "1_3_137",
+                "to": "141",
+                "amount": 33.98,
+                "count": 18,
+                "startDate": "2025-12-29 09:08:55",
+                "endDate": "2026-01-17 23:00:48"
+            },
+            {
+                "from": "1_3_137",
+                "to": "16",
+                "amount": 110.0,
+                "count": 2,
+                "startDate": "2025-12-28 15:33:46",
+                "endDate": "2026-01-09 17:15:46"
+            },
+            {
+                "from": "1_3_137",
+                "to": "142",
+                "amount": 29.62,
+                "count": 2,
+                "startDate": "2025-12-26 18:38:52",
+                "endDate": "2025-12-29 06:39:26"
+            },
+            {
+                "from": "217",
+                "to": "1_3_137",
+                "amount": 1.08,
+                "count": 1,
+                "startDate": "2026-01-18 22:40:32",
+                "endDate": "2026-01-18 22:40:32"
+            },
+            {
+                "from": "1_3_137",
+                "to": "147",
+                "amount": 295.98,
+                "count": 1,
+                "startDate": "2025-12-27 01:26:31",
+                "endDate": "2025-12-27 01:26:31"
+            },
+            {
+                "from": "191",
+                "to": "1_3_137",
+                "amount": 4638.0,
+                "count": 1,
+                "startDate": "2025-12-07 13:55:12",
+                "endDate": "2025-12-07 13:55:12"
+            },
+            {
+                "from": "167",
+                "to": "1_3_137",
+                "amount": 33.7,
+                "count": 33,
+                "startDate": "2025-12-05 16:41:11",
+                "endDate": "2025-12-22 19:31:52"
+            },
+            {
+                "from": "1_3_137",
+                "to": "155",
+                "amount": 6.0,
+                "count": 1,
+                "startDate": "2025-12-02 13:52:20",
+                "endDate": "2025-12-02 13:52:20"
+            },
+            {
+                "from": "1_3_137",
+                "to": "157",
+                "amount": 17.7,
+                "count": 1,
+                "startDate": "2025-12-30 14:30:19",
+                "endDate": "2025-12-30 14:30:19"
+            },
+            {
+                "from": "182",
+                "to": "1_3_137",
+                "amount": 700.0,
+                "count": 1,
+                "startDate": "2025-12-24 21:29:37",
+                "endDate": "2025-12-24 21:29:37"
+            },
+            {
+                "from": "1_3_137",
+                "to": "151",
+                "amount": 592.84,
+                "count": 2,
+                "startDate": "2026-01-10 07:35:39",
+                "endDate": "2026-01-10 07:36:34"
+            },
+            {
+                "from": "1_3_137",
+                "to": "152",
+                "amount": 506.72,
+                "count": 23,
+                "startDate": "2025-12-29 23:30:44",
+                "endDate": "2026-01-18 22:39:57"
+            },
+            {
+                "from": "1_3_137",
+                "to": "153",
+                "amount": 2.2,
+                "count": 1,
+                "startDate": "2025-12-02 11:26:11",
+                "endDate": "2025-12-02 11:26:11"
+            },
+            {
+                "from": "148",
+                "to": "1_3_137",
+                "amount": 2.0,
+                "count": 1,
+                "startDate": "2025-12-02 00:07:39",
+                "endDate": "2025-12-02 00:07:39"
+            },
+            {
+                "from": "1_3_137",
+                "to": "158",
+                "amount": 27.29,
+                "count": 1,
+                "startDate": "2026-01-14 17:31:20",
+                "endDate": "2026-01-14 17:31:20"
+            },
+            {
+                "from": "225",
+                "to": "1_3_137",
+                "amount": 32.0,
+                "count": 1,
+                "startDate": "2025-12-19 21:50:19",
+                "endDate": "2025-12-19 21:50:19"
+            },
+            {
+                "from": "1_3_137",
+                "to": "159",
+                "amount": 22.0,
+                "count": 1,
+                "startDate": "2025-12-03 10:26:59",
+                "endDate": "2025-12-03 10:26:59"
+            },
+            {
+                "from": "144",
+                "to": "1_3_137",
+                "amount": 500.0,
+                "count": 1,
+                "startDate": "2025-12-01 20:09:41",
+                "endDate": "2025-12-01 20:09:41"
+            },
+            {
+                "from": "1_3_137",
+                "to": "160",
+                "amount": 146.35,
+                "count": 19,
+                "startDate": "2025-12-04 19:18:55",
+                "endDate": "2026-01-08 13:04:27"
+            },
+            {
+                "from": "1_3_137",
+                "to": "200",
+                "amount": 17.0,
+                "count": 2,
+                "startDate": "2025-12-21 14:47:31",
+                "endDate": "2026-01-12 22:21:22"
+            },
+            {
+                "from": "1_3_137",
+                "to": "167",
+                "amount": 56.0,
+                "count": 23,
+                "startDate": "2025-12-22 12:55:39",
+                "endDate": "2025-12-24 15:08:16"
+            },
+            {
+                "from": "1_3_137",
+                "to": "201",
+                "amount": 4.0,
+                "count": 1,
+                "startDate": "2025-12-09 16:08:43",
+                "endDate": "2025-12-09 16:08:43"
+            },
+            {
+                "from": "1_3_137",
+                "to": "168",
+                "amount": 29.51,
+                "count": 8,
+                "startDate": "2025-12-21 14:24:15",
+                "endDate": "2025-12-22 13:45:55"
+            },
+            {
+                "from": "1_3_137",
+                "to": "161",
+                "amount": 13.7,
+                "count": 2,
+                "startDate": "2026-01-14 17:33:19",
+                "endDate": "2026-01-14 17:53:24"
+            },
+            {
+                "from": "1_3_137",
+                "to": "163",
+                "amount": 7.5,
+                "count": 1,
+                "startDate": "2025-12-04 19:17:42",
+                "endDate": "2025-12-04 19:17:42"
+            },
+            {
+                "from": "1_3_137",
+                "to": "164",
+                "amount": 25.68,
+                "count": 1,
+                "startDate": "2025-12-03 10:39:36",
+                "endDate": "2025-12-03 10:39:36"
+            },
+            {
+                "from": "38",
+                "to": "1_3_137",
+                "amount": 2000.0,
+                "count": 1,
+                "startDate": "2026-01-16 02:22:20",
+                "endDate": "2026-01-16 02:22:20"
+            },
+            {
+                "from": "192",
+                "to": "1_3_137",
+                "amount": 2.0,
+                "count": 1,
+                "startDate": "2026-01-12 14:58:00",
+                "endDate": "2026-01-12 14:58:00"
+            },
+            {
+                "from": "1_3_137",
+                "to": "206",
+                "amount": 41.93,
+                "count": 1,
+                "startDate": "2025-12-09 17:12:16",
+                "endDate": "2025-12-09 17:12:16"
+            },
+            {
+                "from": "1_3_137",
+                "to": "208",
+                "amount": 5.0,
+                "count": 1,
+                "startDate": "2025-12-09 17:13:23",
+                "endDate": "2025-12-09 17:13:23"
+            },
+            {
+                "from": "1_3_137",
+                "to": "209",
+                "amount": 24.0,
+                "count": 1,
+                "startDate": "2025-12-21 16:29:06",
+                "endDate": "2025-12-21 16:29:06"
+            },
+            {
+                "from": "1_3_137",
+                "to": "202",
+                "amount": 4.0,
+                "count": 4,
+                "startDate": "2025-12-20 00:01:32",
+                "endDate": "2025-12-20 00:02:23"
+            },
+            {
+                "from": "1_3_137",
+                "to": "204",
+                "amount": 6.5,
+                "count": 1,
+                "startDate": "2025-12-09 16:11:10",
+                "endDate": "2025-12-09 16:11:10"
+            },
+            {
+                "from": "1_3_137",
+                "to": "205",
+                "amount": 0.01,
+                "count": 1,
+                "startDate": "2026-01-15 20:36:36",
+                "endDate": "2026-01-15 20:36:36"
+            },
+            {
+                "from": "2",
+                "to": "1_3_137",
+                "amount": 100.0,
+                "count": 1,
+                "startDate": "2026-01-01 17:12:07",
+                "endDate": "2026-01-01 17:12:07"
+            },
+            {
+                "from": "151",
+                "to": "1_3_137",
+                "amount": 340.08,
+                "count": 2,
+                "startDate": "2026-01-10 07:46:48",
+                "endDate": "2026-01-10 07:51:51"
+            },
+            {
+                "from": "1_3_137",
+                "to": "170",
+                "amount": 5.0,
+                "count": 2,
+                "startDate": "2025-12-08 13:37:14",
+                "endDate": "2025-12-08 13:39:27"
+            },
+            {
+                "from": "1_3_137",
+                "to": "171",
+                "amount": 11.9,
+                "count": 1,
+                "startDate": "2025-12-04 16:05:50",
+                "endDate": "2025-12-04 16:05:50"
+            },
+            {
+                "from": "1_3_137",
+                "to": "40",
+                "amount": 5.0,
+                "count": 1,
+                "startDate": "2026-01-16 21:08:23",
+                "endDate": "2026-01-16 21:08:23"
+            },
+            {
+                "from": "1_3_137",
+                "to": "41",
+                "amount": 3.0,
+                "count": 1,
+                "startDate": "2026-01-17 16:28:07",
+                "endDate": "2026-01-17 16:28:07"
+            },
+            {
+                "from": "1_3_137",
+                "to": "176",
+                "amount": 129.0,
+                "count": 2,
+                "startDate": "2025-12-08 18:57:11",
+                "endDate": "2025-12-28 03:35:07"
+            },
+            {
+                "from": "1_3_137",
+                "to": "210",
+                "amount": 14.57,
+                "count": 1,
+                "startDate": "2026-01-18 11:01:18",
+                "endDate": "2026-01-18 11:01:18"
+            },
+            {
+                "from": "1_3_137",
+                "to": "177",
+                "amount": 5.6,
+                "count": 1,
+                "startDate": "2025-12-04 16:55:18",
+                "endDate": "2025-12-04 16:55:18"
+            },
+            {
+                "from": "1_3_137",
+                "to": "178",
+                "amount": 49.8,
+                "count": 2,
+                "startDate": "2025-12-22 14:57:10",
+                "endDate": "2026-01-07 14:30:14"
+            },
+            {
+                "from": "1_3_137",
+                "to": "211",
+                "amount": 500.0,
+                "count": 1,
+                "startDate": "2025-12-13 14:59:50",
+                "endDate": "2025-12-13 14:59:50"
+            },
+            {
+                "from": "1_3_137",
+                "to": "179",
+                "amount": 6.0,
+                "count": 1,
+                "startDate": "2025-12-21 13:13:04",
+                "endDate": "2025-12-21 13:13:04"
+            },
+            {
+                "from": "1_3_137",
+                "to": "212",
+                "amount": 8.0,
+                "count": 1,
+                "startDate": "2025-12-21 16:29:45",
+                "endDate": "2025-12-21 16:29:45"
+            },
+            {
+                "from": "1_3_137",
+                "to": "172",
+                "amount": 71.0,
+                "count": 3,
+                "startDate": "2026-01-05 12:43:00",
+                "endDate": "2026-01-15 16:54:10"
+            },
+            {
+                "from": "1_3_137",
+                "to": "173",
+                "amount": 18.0,
+                "count": 1,
+                "startDate": "2025-12-08 16:09:08",
+                "endDate": "2025-12-08 16:09:08"
+            },
+            {
+                "from": "179",
+                "to": "1_3_137",
+                "amount": 2.39,
+                "count": 1,
+                "startDate": "2025-12-08 20:18:49",
+                "endDate": "2025-12-08 20:18:49"
+            },
+            {
+                "from": "1_3_137",
+                "to": "175",
+                "amount": 29.0,
+                "count": 1,
+                "startDate": "2025-12-04 16:28:44",
+                "endDate": "2025-12-04 16:28:44"
+            },
+            {
+                "from": "1_3_137",
+                "to": "218",
+                "amount": 200.0,
+                "count": 1,
+                "startDate": "2025-12-14 16:50:23",
+                "endDate": "2025-12-14 16:50:23"
+            },
+            {
+                "from": "224",
+                "to": "1_3_137",
+                "amount": 2.0,
+                "count": 1,
+                "startDate": "2025-12-19 20:13:51",
+                "endDate": "2025-12-19 20:13:51"
+            },
+            {
+                "from": "1_3_137",
+                "to": "219",
+                "amount": 10.0,
+                "count": 1,
+                "startDate": "2025-12-16 00:35:41",
+                "endDate": "2025-12-16 00:35:41"
+            },
+            {
+                "from": "1_3_137",
+                "to": "213",
+                "amount": 59.0,
+                "count": 1,
+                "startDate": "2026-01-18 11:06:56",
+                "endDate": "2026-01-18 11:06:56"
+            },
+            {
+                "from": "1_3_137",
+                "to": "214",
+                "amount": 500.0,
+                "count": 1,
+                "startDate": "2025-12-13 20:21:46",
+                "endDate": "2025-12-13 20:21:46"
+            },
+            {
+                "from": "1_3_137",
+                "to": "215",
+                "amount": 20.0,
+                "count": 1,
+                "startDate": "2025-12-21 17:29:18",
+                "endDate": "2025-12-21 17:29:18"
+            },
+            {
+                "from": "1_3_137",
+                "to": "216",
+                "amount": 500.0,
+                "count": 1,
+                "startDate": "2025-12-14 00:00:15",
+                "endDate": "2025-12-14 00:00:15"
+            },
+            {
+                "from": "1_3_137",
+                "to": "9",
+                "amount": 500.0,
+                "count": 1,
+                "startDate": "2026-01-03 13:38:02",
+                "endDate": "2026-01-03 13:38:02"
+            },
+            {
+                "from": "1_3_137",
+                "to": "8",
+                "amount": 580.0,
+                "count": 2,
+                "startDate": "2025-12-03 19:17:25",
+                "endDate": "2025-12-09 19:23:15"
+            },
+            {
+                "from": "168",
+                "to": "1_3_137",
+                "amount": 91.5,
+                "count": 13,
+                "startDate": "2025-12-14 18:35:15",
+                "endDate": "2026-01-03 11:07:41"
+            },
+            {
+                "from": "1_3_137",
+                "to": "5",
+                "amount": 10.0,
+                "count": 1,
+                "startDate": "2026-01-02 12:13:45",
+                "endDate": "2026-01-02 12:13:45"
+            },
+            {
+                "from": "1_3_137",
+                "to": "4",
+                "amount": 10.0,
+                "count": 1,
+                "startDate": "2026-01-02 11:47:03",
+                "endDate": "2026-01-02 11:47:03"
+            },
+            {
+                "from": "1_3_137",
+                "to": "7",
+                "amount": 28.0,
+                "count": 1,
+                "startDate": "2026-01-02 15:59:32",
+                "endDate": "2026-01-02 15:59:32"
+            },
+            {
+                "from": "1_3_137",
+                "to": "6",
+                "amount": 5.0,
+                "count": 1,
+                "startDate": "2026-01-02 12:20:26",
+                "endDate": "2026-01-02 12:20:26"
+            },
+            {
+                "from": "1_3_137",
+                "to": "180",
+                "amount": 7.0,
+                "count": 1,
+                "startDate": "2025-12-05 01:28:03",
+                "endDate": "2025-12-05 01:28:03"
+            },
+            {
+                "from": "1_3_137",
+                "to": "181",
+                "amount": 14.0,
+                "count": 1,
+                "startDate": "2025-12-10 22:13:25",
+                "endDate": "2025-12-10 22:13:25"
+            },
+            {
+                "from": "236",
+                "to": "1_3_137",
+                "amount": 0.37,
+                "count": 3,
+                "startDate": "2025-12-28 03:27:26",
+                "endDate": "2025-12-28 03:33:11"
+            },
+            {
+                "from": "1_3_137",
+                "to": "182",
+                "amount": 14.0,
+                "count": 2,
+                "startDate": "2026-01-07 23:00:43",
+                "endDate": "2025-12-24 11:47:33"
+            },
+            {
+                "from": "220",
+                "to": "1_3_137",
+                "amount": 1.5,
+                "count": 3,
+                "startDate": "2025-12-22 14:05:46",
+                "endDate": "2025-12-22 14:33:33"
+            },
+            {
+                "from": "1_3_137",
+                "to": "187",
+                "amount": 4.0,
+                "count": 1,
+                "startDate": "2025-12-12 13:44:01",
+                "endDate": "2025-12-12 13:44:01"
+            },
+            {
+                "from": "1_3_137",
+                "to": "220",
+                "amount": 5.5,
+                "count": 9,
+                "startDate": "2025-12-22 13:28:13",
+                "endDate": "2025-12-22 20:00:16"
+            },
+            {
+                "from": "1_3_137",
+                "to": "188",
+                "amount": 11.88,
+                "count": 1,
+                "startDate": "2025-12-05 05:39:14",
+                "endDate": "2025-12-05 05:39:14"
+            },
+            {
+                "from": "1_3_137",
+                "to": "221",
+                "amount": 40.0,
+                "count": 1,
+                "startDate": "2025-12-16 00:45:56",
+                "endDate": "2025-12-16 00:45:56"
+            },
+            {
+                "from": "1_3_137",
+                "to": "189",
+                "amount": 8.0,
+                "count": 1,
+                "startDate": "2025-12-06 14:01:24",
+                "endDate": "2025-12-06 14:01:24"
+            },
+            {
+                "from": "1_3_137",
+                "to": "222",
+                "amount": 102.0,
+                "count": 1,
+                "startDate": "2025-12-17 22:24:24",
+                "endDate": "2025-12-17 22:24:24"
+            },
+            {
+                "from": "1_3_137",
+                "to": "223",
+                "amount": 8.54,
+                "count": 1,
+                "startDate": "2025-12-18 18:23:01",
+                "endDate": "2025-12-18 18:23:01"
+            },
+            {
+                "from": "1_3_137",
+                "to": "183",
+                "amount": 6.66,
+                "count": 1,
+                "startDate": "2026-01-07 23:02:11",
+                "endDate": "2026-01-07 23:02:11"
+            },
+            {
+                "from": "37",
+                "to": "1_3_137",
+                "amount": 2000.0,
+                "count": 1,
+                "startDate": "2026-01-16 01:08:55",
+                "endDate": "2026-01-16 01:08:55"
+            },
+            {
+                "from": "1_3_137",
+                "to": "184",
+                "amount": 16.0,
+                "count": 1,
+                "startDate": "2025-12-11 16:31:04",
+                "endDate": "2025-12-11 16:31:04"
+            },
+            {
+                "from": "1_3_137",
+                "to": "185",
+                "amount": 374.0,
+                "count": 1,
+                "startDate": "2025-12-05 03:25:03",
+                "endDate": "2025-12-05 03:25:03"
+            },
+            {
+                "from": "207",
+                "to": "1_3_137",
+                "amount": 0.5,
+                "count": 1,
+                "startDate": "2025-12-21 14:28:44",
+                "endDate": "2025-12-21 14:28:44"
+            },
+            {
+                "from": "1_3_137",
+                "to": "186",
+                "amount": 8.88,
+                "count": 1,
+                "startDate": "2026-01-07 23:02:51",
+                "endDate": "2026-01-07 23:02:51"
+            },
+            {
+                "from": "232",
+                "to": "1_3_137",
+                "amount": 0.5,
+                "count": 1,
+                "startDate": "2025-12-28 03:16:36",
+                "endDate": "2025-12-28 03:16:36"
+            },
+            {
+                "from": "1_3_137",
+                "to": "228",
+                "amount": 20.0,
+                "count": 1,
+                "startDate": "2025-12-24 14:11:03",
+                "endDate": "2025-12-24 14:11:03"
+            },
+            {
+                "from": "1_3_137",
+                "to": "229",
+                "amount": 700.0,
+                "count": 1,
+                "startDate": "2025-12-24 21:30:39",
+                "endDate": "2025-12-24 21:30:39"
+            },
+            {
+                "from": "1_3_137",
+                "to": "226",
+                "amount": 25.0,
+                "count": 2,
+                "startDate": "2025-12-21 12:25:05",
+                "endDate": "2025-12-21 12:26:07"
+            },
+            {
+                "from": "30",
+                "to": "1_3_137",
+                "amount": 100.0,
+                "count": 1,
+                "startDate": "2026-01-13 01:18:37",
+                "endDate": "2026-01-13 01:18:37"
+            },
+            {
+                "from": "160",
+                "to": "1_3_137",
+                "amount": 1035.16,
+                "count": 30,
+                "startDate": "2025-12-04 19:06:16",
+                "endDate": "2026-01-17 23:32:37"
+            },
+            {
+                "from": "1_3_137",
+                "to": "227",
+                "amount": 25.0,
+                "count": 1,
+                "startDate": "2025-12-24 16:51:05",
+                "endDate": "2025-12-24 16:51:05"
+            },
+            {
+                "from": "203",
+                "to": "1_3_137",
+                "amount": 1.19,
+                "count": 2,
+                "startDate": "2026-01-15 20:20:15",
+                "endDate": "2026-01-15 22:47:16"
+            }
+        ],
+        "phone": [],
+        "excludedTrades": [],
+        "groups": {
+            "1": {
+                "groupId": "1_3_137",
+                "groupName": "伍华中",
+                "tradeCard": [
+                    {
+                        "accountId": "1",
+                        "accountName": "伍华中",
+                        "tradeCard": "085e9858e90527255ba312e91@wx.tenpay.com",
+                        "suspectId": "1",
+                        "suspectIdNumber": null,
+                        "accountStr": null,
+                        "accountBank": null,
+                        "countPartName": null
+                    },
+                    {
+                        "accountId": "3",
+                        "accountName": "伍华中",
+                        "tradeCard": "085e9858e9f61cf161163fdbf@wx.tenpay.com",
+                        "suspectId": "1",
+                        "suspectIdNumber": null,
+                        "accountStr": null,
+                        "accountBank": null,
+                        "countPartName": null
+                    },
+                    {
+                        "accountId": "137",
+                        "accountName": "伍华中",
+                        "tradeCard": "17371521349",
+                        "suspectId": "1",
+                        "suspectIdNumber": null,
+                        "accountStr": null,
+                        "accountBank": null,
+                        "countPartName": null
+                    }
+                ],
+                "tradeAmount": null
+            },
+            "3": {
+                "groupId": "1_3_137",
+                "groupName": "伍华中",
+                "tradeCard": [
+                    {
+                        "accountId": "1",
+                        "accountName": "伍华中",
+                        "tradeCard": "085e9858e90527255ba312e91@wx.tenpay.com",
+                        "suspectId": "1",
+                        "suspectIdNumber": null,
+                        "accountStr": null,
+                        "accountBank": null,
+                        "countPartName": null
+                    },
+                    {
+                        "accountId": "3",
+                        "accountName": "伍华中",
+                        "tradeCard": "085e9858e9f61cf161163fdbf@wx.tenpay.com",
+                        "suspectId": "1",
+                        "suspectIdNumber": null,
+                        "accountStr": null,
+                        "accountBank": null,
+                        "countPartName": null
+                    },
+                    {
+                        "accountId": "137",
+                        "accountName": "伍华中",
+                        "tradeCard": "17371521349",
+                        "suspectId": "1",
+                        "suspectIdNumber": null,
+                        "accountStr": null,
+                        "accountBank": null,
+                        "countPartName": null
+                    }
+                ],
+                "tradeAmount": null
+            },
+            "137": {
+                "groupId": "1_3_137",
+                "groupName": "伍华中",
+                "tradeCard": [
+                    {
+                        "accountId": "1",
+                        "accountName": "伍华中",
+                        "tradeCard": "085e9858e90527255ba312e91@wx.tenpay.com",
+                        "suspectId": "1",
+                        "suspectIdNumber": null,
+                        "accountStr": null,
+                        "accountBank": null,
+                        "countPartName": null
+                    },
+                    {
+                        "accountId": "3",
+                        "accountName": "伍华中",
+                        "tradeCard": "085e9858e9f61cf161163fdbf@wx.tenpay.com",
+                        "suspectId": "1",
+                        "suspectIdNumber": null,
+                        "accountStr": null,
+                        "accountBank": null,
+                        "countPartName": null
+                    },
+                    {
+                        "accountId": "137",
+                        "accountName": "伍华中",
+                        "tradeCard": "17371521349",
+                        "suspectId": "1",
+                        "suspectIdNumber": null,
+                        "accountStr": null,
+                        "accountBank": null,
+                        "countPartName": null
+                    }
+                ],
+                "tradeAmount": null
+            },
+            "136": {
+                "groupId": "136_140",
+                "groupName": "_",
+                "tradeCard": [
+                    {
+                        "accountId": "136",
+                        "accountName": "_",
+                        "tradeCard": "花呗",
+                        "suspectId": null,
+                        "suspectIdNumber": "-",
+                        "accountStr": null,
+                        "accountBank": "-",
+                        "countPartName": null
+                    },
+                    {
+                        "accountId": "140",
+                        "accountName": "_",
+                        "tradeCard": "借呗",
+                        "suspectId": null,
+                        "suspectIdNumber": "-",
+                        "accountStr": null,
+                        "accountBank": "-",
+                        "countPartName": null
+                    }
+                ],
+                "tradeAmount": null
+            },
+            "140": {
+                "groupId": "136_140",
+                "groupName": "_",
+                "tradeCard": [
+                    {
+                        "accountId": "136",
+                        "accountName": "_",
+                        "tradeCard": "花呗",
+                        "suspectId": null,
+                        "suspectIdNumber": "-",
+                        "accountStr": null,
+                        "accountBank": "-",
+                        "countPartName": null
+                    },
+                    {
+                        "accountId": "140",
+                        "accountName": "_",
+                        "tradeCard": "借呗",
+                        "suspectId": null,
+                        "suspectIdNumber": "-",
+                        "accountStr": null,
+                        "accountBank": "-",
+                        "countPartName": null
+                    }
+                ],
+                "tradeAmount": null
+            }
+        },
+        "sourceSelectId": [
+            "彭爱琼",
+            "085e9858eb821a223412c393b@wx.tenpay.com",
+            "085e9858e9196230276c9b2d7@wx.tenpay.com",
+            "汉庭星空酒店管理有限公司",
+            "湖南佳宜企业管理有限公司",
+            "085e9858e25759b236b233eae@wx.tenpay.com",
+            "085e9858e84c72119c343a181@wx.tenpay.com",
+            "085e9858ea8c8b1a5d607bfb8@wx.tenpay.com",
+            "徐浩",
+            "085e9858e24fe1da90cbaacfe@wx.tenpay.com",
+            "伍华中",
+            "085e9858e8fb355535d153b73@wx.tenpay.com",
+            "085e9858e16c14d4ae21d6e37@wx.tenpay.com",
+            "085e9858ec94f90d086f097c3@wx.tenpay.com",
+            "杨志号",
+            "赵引",
+            "冯燕青",
+            "085e9858ee55c48e9dcecbba8@wx.tenpay.com",
+            "085e9858e0d9bb512faa7a9f4@wx.tenpay.com",
+            "蔡金海",
+            "费清霞",
+            "李园菊",
+            "085e9858e2cbd46d2a8ecd2f7@wx.tenpay.com",
+            "雷桂莲",
+            "冯光彩",
+            "蔡召东",
+            "冯多",
+            "_",
+            "伍华中"
+        ]
+    },
+    "success": true,
+    "message": null,
+    "code": 200
+}

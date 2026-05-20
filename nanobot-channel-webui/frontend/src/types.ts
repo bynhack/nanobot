@@ -1,3 +1,5 @@
+import type { CaseGraphState } from './case-graph/types';
+
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'auth_required';
 export type TurnPhase = 'idle' | 'streaming' | 'running_tools' | 'finalizing' | 'completed';
 export type AuthStatus = 'anonymous' | 'authenticating' | 'authenticated';
@@ -119,6 +121,7 @@ export interface AppState {
   activeTurns: Record<string, ActiveTurnState>;
   workspaceByChat: Record<string, SessionWorkspace>;
   workspacePanel: WorkspacePanelState;
+  caseGraph: CaseGraphState;
 }
 
 export interface SettingsSkillSummary {

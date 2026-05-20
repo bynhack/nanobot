@@ -23,6 +23,11 @@ class WebUIConfig(Base):
     pocketbase_url: str = ""
     pocketbase_users_collection: str = "users"
     pocketbase_sessions_collection: str = "chat_sessions"
+    case_graph_db_host: str = ""
+    case_graph_db_port: int = 3306
+    case_graph_db_user: str = ""
+    case_graph_db_password: str = ""
+    case_graph_db_name: str = ""
 
     @field_validator("pocketbase_url")
     @classmethod

@@ -20,6 +20,9 @@ from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 
 from .auth import WebUIAccessControl
+from .case_graph.mysql_client import CaseGraphMySQLConfig, PyMySQLCaseGraphQueryClient
+from .case_graph.service import CaseGraphService
+from .case_graph.storage import CaseGraphCorruptError, CaseGraphStorage
 from .compat.runtime import attach_webui_runtime, current_route_context, runtime_snapshot
 from .config import CHANNEL_NAME, WebUIConfig
 from .connections import ConnectionRegistry
@@ -47,6 +50,55 @@ from .uploads import attachment_prompt_suffix, next_upload_path
 
 STATIC_DIR = Path(__file__).parent / "static"
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+
+
+class _CaseGraphQueryClientNotConfiguredError(RuntimeError):
+    """Raised when case-graph query endpoints are used without DB config."""
+
+
+class _UnconfiguredCaseGraphQueryClient:
+    def __init__(self, config: WebUIConfig) -> None:
+        self._config = config
+
+    def query_graph(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raise self._error()
+
+    def drill_down(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        raise self._error()
+
+    def drill_up(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        raise self._error()
+
+    def drill(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        raise self._error()
+
+    def target_detail(self, payload: dict[str, Any]) -> dict[str, Any]:
+        raise self._error()
+
+    def _error(self) -> _CaseGraphQueryClientNotConfiguredError:
+        missing = [
+            name for name, value in (
+                ("case_graph_db_host", self._config.case_graph_db_host),
+                ("case_graph_db_user", self._config.case_graph_db_user),
+                ("case_graph_db_name", self._config.case_graph_db_name),
+            )
+            if not str(value).strip()
+        ]
+        detail = ", ".join(missing) if missing else "case_graph_db_*"
+        return _CaseGraphQueryClientNotConfiguredError(
+            f"case-graph query client 未配置，请先补充数据库配置: {detail}"
+        )
+
+
+def _has_case_graph_db_config(config: WebUIConfig) -> bool:
+    return all(
+        str(value).strip()
+        for value in (
+            config.case_graph_db_host,
+            config.case_graph_db_user,
+            config.case_graph_db_name,
+        )
+    )
 
 
 def _hint(name: str, args: dict[str, Any]) -> str:
@@ -92,6 +144,56 @@ def _resolve_webui_title(config_title: str) -> str:
 
 def _is_control_tool(name: str) -> bool:
     return name == "ask_user"
+
+
+async def _read_json_object(request: Any) -> tuple[dict[str, Any] | None, Any | None]:
+    from aiohttp import web
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return None, web.json_response({"error": "请求体不是有效 JSON"}, status=400)
+    if not isinstance(payload, dict):
+        return None, web.json_response({"error": "请求体格式无效"}, status=400)
+    return payload, None
+
+
+def _missing_required_fields(payload: dict[str, Any], *names: str) -> list[str]:
+    missing: list[str] = []
+    for name in names:
+        value = payload.get(name)
+        if isinstance(value, str):
+            if not value.strip():
+                missing.append(name)
+            continue
+        if value is None:
+            missing.append(name)
+    return missing
+
+
+def _require_text_field(payload: dict[str, Any], name: str) -> str:
+    value = payload.get(name)
+    if not isinstance(value, str):
+        raise ValueError(name)
+    text = value.strip()
+    if not text:
+        raise ValueError(name)
+    return text
+
+
+def _is_dict_list(value: Any) -> bool:
+    return isinstance(value, list) and all(isinstance(item, dict) for item in value)
+
+
+def _case_graph_corrupt_response(web: Any, exc: CaseGraphCorruptError) -> Any:
+    return web.json_response(
+        {
+            "error": f"图数据损坏: {exc.graph_id}",
+            "kind": exc.kind,
+            "graphId": exc.graph_id,
+        },
+        status=409,
+    )
 
 
 def _ask_user_prompt_from_context(ctx: AgentHookContext) -> tuple[str, list[list[str]]] | None:
@@ -264,6 +366,11 @@ class WebUIChannel(BaseChannel):
         self._session_index = SessionIndexService(self._pocketbase)
         self._management = WebUIManagementService(self._sessions.workspace)
         self._management.bind_runtime_observer(self._runtime_observability_snapshot)
+        self._case_graph_storage = CaseGraphStorage()
+        self._case_graph_service = CaseGraphService(
+            storage=self._case_graph_storage,
+            query_client=self._build_case_graph_query_client(),
+        )
         self._hook = WebUIHook(self._registry, self._turns)
         self._runtime_attached = self._ensure_runtime_attached()
 
@@ -273,6 +380,19 @@ class WebUIChannel(BaseChannel):
 
     def get_hook(self) -> WebUIHook:
         return self._hook
+
+    def _build_case_graph_query_client(self) -> Any:
+        if not _has_case_graph_db_config(self.config):
+            return _UnconfiguredCaseGraphQueryClient(self.config)
+        return PyMySQLCaseGraphQueryClient(
+            CaseGraphMySQLConfig(
+                host=self.config.case_graph_db_host.strip(),
+                port=int(self.config.case_graph_db_port),
+                user=self.config.case_graph_db_user.strip(),
+                password=self.config.case_graph_db_password,
+                database=self.config.case_graph_db_name.strip(),
+            )
+        )
 
     def _ensure_runtime_attached(self) -> bool:
         attached = attach_webui_runtime(self.bus, self._hook)
@@ -319,6 +439,17 @@ class WebUIChannel(BaseChannel):
         app.router.add_get("/api/settings/config", self._handle_config)
         app.router.add_post("/api/settings/config", self._handle_save_config)
         app.router.add_get("/api/settings/runtime", self._handle_runtime)
+        app.router.add_post("/api/case-graph/graphs", self._handle_case_graph_create)
+        app.router.add_get("/api/case-graph/graphs", self._handle_case_graph_list)
+        app.router.add_get("/api/case-graph/cases", self._handle_case_graph_cases)
+        app.router.add_get("/api/case-graph/cases/{case_id}/accounts", self._handle_case_graph_accounts)
+        app.router.add_get("/api/case-graph/graph/{graph_id}", self._handle_case_graph_detail)
+        app.router.add_post("/api/case-graph/graph/{graph_id}", self._handle_case_graph_update)
+        app.router.add_post("/api/case-graph/query", self._handle_case_graph_query)
+        app.router.add_post("/api/case-graph/query/drilldown", self._handle_case_graph_drilldown)
+        app.router.add_post("/api/case-graph/query/drillup", self._handle_case_graph_drillup)
+        app.router.add_post("/api/case-graph/query/drill", self._handle_case_graph_drill)
+        app.router.add_post("/api/case-graph/target-detail", self._handle_case_graph_target_detail)
         app.router.add_get("/api/workspaces/{chat_id}", self._handle_workspace)
         app.router.add_post("/uploads/{chat_id}", self._handle_uploads)
         app.router.add_get("/media/{token}", self._handle_media)
@@ -698,6 +829,296 @@ class WebUIChannel(BaseChannel):
             session_count=session_count,
         )
         return web.json_response(snapshot)
+
+    async def _handle_case_graph_create(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            case_id = _require_text_field(payload, "caseId")
+            graph_name = _require_text_field(payload, "graphName")
+        except ValueError as exc:
+            return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
+        if not _is_dict_list(payload.get("tradeCards")):
+            return web.json_response({"error": "tradeCards 必须是对象数组"}, status=400)
+
+        try:
+            graph = await asyncio.to_thread(
+                self._case_graph_service.create_graph,
+                case_id,
+                graph_name,
+                list(payload["tradeCards"]),
+            )
+        except Exception as exc:
+            return web.json_response({"error": f"建图失败: {exc}"}, status=500)
+        return web.json_response(graph)
+
+    async def _handle_case_graph_cases(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        try:
+            result = await asyncio.to_thread(self._case_graph_service.list_cases)
+        except _CaseGraphQueryClientNotConfiguredError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        except Exception as exc:
+            return web.json_response({"error": f"案件列表读取失败: {exc}"}, status=502)
+        return web.json_response({"items": result})
+
+    async def _handle_case_graph_list(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        case_id = str(request.query.get("caseId") or "").strip() or None
+        try:
+            result = await asyncio.to_thread(self._case_graph_service.list_graphs, case_id)
+        except Exception as exc:
+            return web.json_response({"error": f"图列表读取失败: {exc}"}, status=502)
+        return web.json_response({"items": result})
+
+    async def _handle_case_graph_accounts(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        case_id = request.match_info.get("case_id", "").strip()
+        if not case_id:
+            return web.json_response({"error": "缺少 case_id"}, status=400)
+        keyword = str(request.query.get("keyword") or "").strip()
+
+        try:
+            result = await asyncio.to_thread(self._case_graph_service.list_accounts, case_id, keyword)
+        except _CaseGraphQueryClientNotConfiguredError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        except ValueError as exc:
+            return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
+        except Exception as exc:
+            return web.json_response({"error": f"主体列表读取失败: {exc}"}, status=502)
+        return web.json_response({"items": result})
+
+    async def _handle_case_graph_detail(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        graph_id = request.match_info.get("graph_id", "").strip()
+        if not graph_id:
+            return web.json_response({"error": "缺少 graph_id"}, status=400)
+
+        try:
+            graph = await asyncio.to_thread(self._case_graph_storage.get_graph, graph_id)
+        except CaseGraphCorruptError as exc:
+            return _case_graph_corrupt_response(web, exc)
+        except Exception as exc:
+            return web.json_response({"error": f"读取图失败: {exc}"}, status=500)
+        if graph is None:
+            return web.json_response({"error": "图不存在"}, status=404)
+        return web.json_response(graph)
+
+    async def _handle_case_graph_update(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        graph_id = request.match_info.get("graph_id", "").strip()
+        if not graph_id:
+            return web.json_response({"error": "缺少 graph_id"}, status=400)
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            graph = await asyncio.to_thread(
+                self._case_graph_service.update_graph,
+                graph_id,
+                dict(payload),
+            )
+        except KeyError as exc:
+            return web.json_response({"error": f"图不存在: {exc.args[0]}"}, status=404)
+        except CaseGraphCorruptError as exc:
+            return _case_graph_corrupt_response(web, exc)
+        except Exception as exc:
+            return web.json_response({"error": f"更新图失败: {exc}"}, status=500)
+        return web.json_response(graph)
+
+    async def _handle_case_graph_query(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            graph_id = _require_text_field(payload, "graphId")
+            case_id = _require_text_field(payload, "caseId")
+        except ValueError as exc:
+            return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
+        if not _is_dict_list(payload.get("tradeCards")):
+            return web.json_response({"error": "tradeCards 必须是对象数组"}, status=400)
+
+        try:
+            result = await asyncio.to_thread(
+                self._case_graph_service.query_graph,
+                graph_id,
+                case_id,
+                list(payload["tradeCards"]),
+                **{key: value for key, value in payload.items() if key not in {"graphId", "caseId", "tradeCards"}},
+            )
+        except KeyError as exc:
+            return web.json_response({"error": f"图不存在: {exc.args[0]}"}, status=404)
+        except CaseGraphCorruptError as exc:
+            return _case_graph_corrupt_response(web, exc)
+        except _CaseGraphQueryClientNotConfiguredError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        except Exception as exc:
+            return web.json_response({"error": f"查询图失败: {exc}"}, status=502)
+        return web.json_response(result)
+
+    async def _handle_case_graph_drilldown(self, request: Any) -> Any:
+        return await self._handle_case_graph_drill_request(request, service_method="drill_down", error_prefix="下钻")
+
+    async def _handle_case_graph_drillup(self, request: Any) -> Any:
+        return await self._handle_case_graph_drill_request(request, service_method="drill_up", error_prefix="上钻")
+
+    async def _handle_case_graph_drill(self, request: Any) -> Any:
+        return await self._handle_case_graph_drill_request(request, service_method="drill", error_prefix="双向钻取")
+
+    async def _handle_case_graph_drill_request(
+        self,
+        request: Any,
+        *,
+        service_method: str,
+        error_prefix: str,
+    ) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            graph_id = _require_text_field(payload, "graphId")
+            case_id = _require_text_field(payload, "caseId")
+        except ValueError as exc:
+            return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
+
+        try:
+            result = await asyncio.to_thread(
+                getattr(self._case_graph_service, service_method),
+                graph_id=graph_id,
+                case_id=case_id,
+                **{key: value for key, value in payload.items() if key not in {"graphId", "caseId"}},
+            )
+        except KeyError as exc:
+            return web.json_response({"error": f"图不存在: {exc.args[0]}"}, status=404)
+        except CaseGraphCorruptError as exc:
+            return _case_graph_corrupt_response(web, exc)
+        except _CaseGraphQueryClientNotConfiguredError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        except Exception as exc:
+            return web.json_response({"error": f"{error_prefix}失败: {exc}"}, status=502)
+        return web.json_response(result)
+
+    async def _handle_case_graph_target_detail(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            graph_id = _require_text_field(payload, "graphId")
+            case_id = _require_text_field(payload, "caseId")
+        except ValueError as exc:
+            return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
+
+        payer_cards = payload.get("payerCards")
+        payee_cards = payload.get("payeeCards")
+        if payer_cards is not None and not _is_dict_list(payer_cards):
+            return web.json_response({"error": "payerCards 必须是对象数组"}, status=400)
+        if payee_cards is not None and not _is_dict_list(payee_cards):
+            return web.json_response({"error": "payeeCards 必须是对象数组"}, status=400)
+
+        if payer_cards is None:
+            payer = payload.get("payer")
+            if payer is None:
+                return web.json_response({"error": "缺少或无效的必要字段: payerCards"}, status=400)
+            try:
+                payer = _require_text_field(payload, "payer")
+            except ValueError:
+                return web.json_response({"error": "缺少或无效的必要字段: payerCards"}, status=400)
+            payer_cards = [{"tradeCard": payer}]
+
+        if payee_cards is None:
+            payee = payload.get("payee")
+            if payee is None:
+                return web.json_response({"error": "缺少或无效的必要字段: payeeCards"}, status=400)
+            try:
+                payee = _require_text_field(payload, "payee")
+            except ValueError:
+                return web.json_response({"error": "缺少或无效的必要字段: payeeCards"}, status=400)
+            payee_cards = [{"tradeCard": payee}]
+
+        try:
+            result = await asyncio.to_thread(
+                self._case_graph_service.target_detail,
+                graph_id=graph_id,
+                case_id=case_id,
+                payer_cards=list(payer_cards),
+                payee_cards=list(payee_cards),
+                **{
+                    key: value
+                    for key, value in payload.items()
+                    if key
+                    not in {"graphId", "caseId", "payer", "payee", "payerCards", "payeeCards"}
+                },
+            )
+        except KeyError as exc:
+            return web.json_response({"error": f"图不存在: {exc.args[0]}"}, status=404)
+        except CaseGraphCorruptError as exc:
+            return _case_graph_corrupt_response(web, exc)
+        except _CaseGraphQueryClientNotConfiguredError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        except Exception as exc:
+            return web.json_response({"error": f"线详情查询失败: {exc}"}, status=502)
+        return web.json_response(result)
 
     def _record_workspace_media(self, chat_id: str, media: list[dict[str, Any]]) -> dict[str, Any]:
         delivered = []

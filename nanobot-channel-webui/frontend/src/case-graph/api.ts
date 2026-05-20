@@ -4,6 +4,7 @@ import type {
   CaseGraphSavedGraph,
   CaseGraphSelectableAccount,
   CaseGraphSnapshot,
+  CaseGraphConversationFocus,
   CaseGraphTargetDetailPayload,
   CaseGraphTargetDetailResult,
   CreateCaseGraphPayload,
@@ -132,4 +133,19 @@ export function loadCaseGraphTargetDetail(
   token: string,
 ): Promise<CaseGraphTargetDetailResult> {
   return postJson('/api/case-graph/target-detail', payload, token, '边明细加载失败');
+}
+
+export function updateCaseGraphContext(
+  graphId: string,
+  focus: Omit<CaseGraphConversationFocus, 'graphId' | 'caseId' | 'graphName'> | null,
+  token: string,
+): Promise<{
+  updatedAt: string;
+  graphId: string;
+  caseId: string;
+  graphName: string;
+  graphFile: string;
+  focus: Record<string, unknown> | null;
+}> {
+  return postJson('/api/case-graph/context', { graphId, focus }, token, '更新图上下文失败');
 }

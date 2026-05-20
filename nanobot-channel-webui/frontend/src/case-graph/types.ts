@@ -218,6 +218,35 @@ export interface CaseGraphRequestState {
   graphCreateLoading: boolean;
 }
 
+export type CaseGraphConversationFocus =
+  | {
+      type: 'graph';
+      graphId: string;
+      caseId: string;
+      graphName: string;
+    }
+  | {
+      type: 'node';
+      graphId: string;
+      caseId: string;
+      graphName: string;
+      nodeId: string;
+      label?: string;
+      accountId?: string | null;
+      accountName?: string;
+      tradeCard?: string;
+    }
+  | {
+      type: 'edge';
+      graphId: string;
+      caseId: string;
+      graphName: string;
+      from: string;
+      to: string;
+      fromName?: string;
+      toName?: string;
+    };
+
 export interface CaseGraphState {
   activeCaseId: string | null;
   activeGraphId: string | null;

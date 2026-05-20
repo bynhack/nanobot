@@ -5,7 +5,7 @@ import type { Graph as G6Graph } from '@antv/g6';
 import { buildCaseGraphViewModel, formatCompactAmount } from './graph-analysis';
 import type { CaseGraphNodeRole } from './graph-analysis';
 import { computeCaseGraphLayout } from './graph-layout';
-import type { CaseGraphData, CaseGraphTradeCard } from './types';
+import type { CaseGraphConversationFocus, CaseGraphData, CaseGraphTradeCard } from './types';
 
 interface GraphCanvasProps {
   graphData: CaseGraphData | null;
@@ -18,6 +18,7 @@ interface GraphCanvasProps {
   hasActiveTab: boolean;
   onDrillDown: (direction: 'in' | 'out' | 'both', tradeCard: CaseGraphTradeCard) => void;
   onOpenEdgeDetail: (edgeId: string) => void;
+  onFocusChange?: (focus: CaseGraphConversationFocus | null) => void;
 }
 
 interface ContextMenuState {
@@ -54,6 +55,7 @@ export function GraphCanvas({
   hasActiveTab,
   onOpenEdgeDetail,
   onDrillDown,
+  onFocusChange,
 }: GraphCanvasProps) {
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [activeRoleFilter, setActiveRoleFilter] = useState<Exclude<CaseGraphNodeRole, 'peripheral'> | null>(null);
@@ -66,6 +68,7 @@ export function GraphCanvas({
   const renderCycleRef = useRef(0);
   const graphRenderedRef = useRef(false);
   const onOpenEdgeDetailRef = useRef(onOpenEdgeDetail);
+  const onFocusChangeRef = useRef(onFocusChange);
   const nodesLengthRef = useRef(0);
   const activeNodeIdRef = useRef<string | null>(null);
   const activeNeighborhoodRef = useRef<{
@@ -143,6 +146,10 @@ export function GraphCanvas({
   useEffect(() => {
     onOpenEdgeDetailRef.current = onOpenEdgeDetail;
   }, [onOpenEdgeDetail]);
+
+  useEffect(() => {
+    onFocusChangeRef.current = onFocusChange;
+  }, [onFocusChange]);
 
   useEffect(() => {
     nodesLengthRef.current = nodes.length;
@@ -245,7 +252,9 @@ export function GraphCanvas({
         const nodeId = resolveEventId(event);
         setContextMenu(null);
         setActiveRoleFilter(null);
-        if (nodeId) setActiveNodeId(nodeId);
+        if (nodeId) {
+          setActiveNodeId(nodeId);
+        }
       });
 
       graph.on('node:contextmenu', (event: any) => {
@@ -406,6 +415,27 @@ export function GraphCanvas({
       setContextMenu(null);
     }
   }, [activeNodeId, nodeLookup]);
+
+  useEffect(() => {
+    if (!onFocusChangeRef.current) {
+      return;
+    }
+    if (selectedNode) {
+      onFocusChangeRef.current({
+        type: 'node',
+        graphId: '',
+        caseId: '',
+        graphName: '',
+        nodeId: String(selectedNode.id || '').trim(),
+        label: selectedNode.label || selectedNode.name,
+        accountId: selectedNode.accountId ?? null,
+        accountName: selectedNode.accountName || selectedNode.label || selectedNode.name,
+        tradeCard: selectedNode.tradeCard || undefined,
+      });
+      return;
+    }
+    onFocusChangeRef.current(null);
+  }, [selectedNode]);
 
   return (
     <section className="case-graph-canvas" aria-label="主图画布">

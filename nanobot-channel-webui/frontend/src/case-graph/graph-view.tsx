@@ -1,6 +1,9 @@
+import { useMemo } from 'react';
+
 import { GraphCanvas } from './graph-canvas';
 import { buildMergedNetworkGraph } from './graph-view-adapters';
 import type {
+  CaseGraphConversationFocus,
   CaseGraphData,
   CaseGraphGroupMap,
   CaseGraphTradeCard,
@@ -18,12 +21,18 @@ interface GraphViewProps {
   hasActiveTab: boolean;
   onDrillDown: (direction: 'in' | 'out' | 'both', tradeCard: CaseGraphTradeCard) => void;
   onOpenEdgeDetail: (edgeId: string) => void;
+  onFocusChange?: (focus: CaseGraphConversationFocus | null) => void;
 }
 
 export function GraphView(props: GraphViewProps) {
+  const mergedGraphData = useMemo(
+    () => buildMergedNetworkGraph(props.graphData, props.groupMap),
+    [props.graphData, props.groupMap],
+  );
+
   return (
     <GraphCanvas
-      graphData={buildMergedNetworkGraph(props.graphData, props.groupMap)}
+      graphData={mergedGraphData}
       graphContent={props.graphContent}
       tradeCards={props.tradeCards}
       focusAccountIds={props.focusAccountIds}
@@ -33,6 +42,7 @@ export function GraphView(props: GraphViewProps) {
       hasActiveTab={props.hasActiveTab}
       onDrillDown={props.onDrillDown}
       onOpenEdgeDetail={props.onOpenEdgeDetail}
+      onFocusChange={props.onFocusChange}
     />
   );
 }

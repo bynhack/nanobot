@@ -450,6 +450,7 @@ class WebUIChannel(BaseChannel):
         app.router.add_post("/api/case-graph/query/drillup", self._handle_case_graph_drillup)
         app.router.add_post("/api/case-graph/query/drill", self._handle_case_graph_drill)
         app.router.add_post("/api/case-graph/target-detail", self._handle_case_graph_target_detail)
+        app.router.add_post("/api/case-graph/context", self._handle_case_graph_context)
         app.router.add_get("/api/workspaces/{chat_id}", self._handle_workspace)
         app.router.add_post("/uploads/{chat_id}", self._handle_uploads)
         app.router.add_get("/media/{token}", self._handle_media)
@@ -1119,6 +1120,41 @@ class WebUIChannel(BaseChannel):
         except Exception as exc:
             return web.json_response({"error": f"线详情查询失败: {exc}"}, status=502)
         return web.json_response(result)
+
+    async def _handle_case_graph_context(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            graph_id = _require_text_field(payload, "graphId")
+        except ValueError as exc:
+            return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
+
+        focus = payload.get("focus")
+        if focus is not None and not isinstance(focus, dict):
+            return web.json_response({"error": "focus 必须是对象"}, status=400)
+
+        try:
+            context = await asyncio.to_thread(
+                self._case_graph_storage.write_current_context,
+                graph_id,
+                focus,
+            )
+        except KeyError as exc:
+            return web.json_response({"error": f"图不存在: {exc.args[0]}"}, status=404)
+        except CaseGraphCorruptError as exc:
+            return _case_graph_corrupt_response(web, exc)
+        except Exception as exc:
+            return web.json_response({"error": f"写入图上下文失败: {exc}"}, status=500)
+        return web.json_response(context)
 
     def _record_workspace_media(self, chat_id: str, media: list[dict[str, Any]]) -> dict[str, Any]:
         delivered = []

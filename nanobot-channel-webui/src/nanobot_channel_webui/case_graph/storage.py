@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -37,6 +38,7 @@ class CaseGraphStorage:
         self._workspace = workspace or get_workspace_path()
         self._root = self._workspace / ".nanobot_channel_webui" / "case_graphs"
         self._root.mkdir(parents=True, exist_ok=True)
+        self._context_path = self._workspace / ".nanobot_channel_webui" / "current_case_graph_context.json"
 
     @staticmethod
     def _file_key(graph_id: str) -> str:
@@ -111,8 +113,23 @@ class CaseGraphStorage:
             )
         return items
 
+    def write_current_context(self, graph_id: str, focus: Mapping[str, Any] | None = None) -> dict[str, Any]:
+        state = self.get_graph(graph_id)
+        if state is None:
+            raise KeyError(graph_id)
+        payload: dict[str, Any] = {
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "graphId": state["graph_id"],
+            "caseId": state["caseId"],
+            "graphName": state["graphName"],
+            "graphFile": str(self._path_for_graph(state["graph_id"]).resolve()),
+            "focus": dict(focus) if focus is not None else None,
+        }
+        self._write_atomic(self._context_path, payload)
+        return payload
+
     @staticmethod
-    def _write_atomic(path: Path, payload: CaseGraphState) -> None:
+    def _write_atomic(path: Path, payload: Mapping[str, Any]) -> None:
         temp_path = path.with_suffix(".json.tmp")
         temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         temp_path.replace(path)

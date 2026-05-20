@@ -28,6 +28,7 @@ export function ChatThreadContent({
   workspaceFileCount,
   workspaceLoading,
   onOpenWorkspace,
+  showWorkspaceButton = true,
 }: {
   title: string;
   flashMessage: string | null;
@@ -46,6 +47,7 @@ export function ChatThreadContent({
   workspaceFileCount: number;
   workspaceLoading: boolean;
   onOpenWorkspace: () => void;
+  showWorkspaceButton?: boolean;
 }) {
   return (
     <main className={`chat${compact ? ' compact' : ''}`}>
@@ -78,15 +80,17 @@ export function ChatThreadContent({
             </button>
           )
         ) : null}
-        <button
-          className="workspace-open-button"
-          type="button"
-          disabled={!canOpenWorkspace || workspaceLoading}
-          onClick={onOpenWorkspace}
-        >
-          {workspaceLoading ? '读取中' : '查看工作空间'}
-          {workspaceFileCount > 0 ? <span>{workspaceFileCount}</span> : null}
-        </button>
+        {showWorkspaceButton ? (
+          <button
+            className="workspace-open-button"
+            type="button"
+            disabled={!canOpenWorkspace || workspaceLoading}
+            onClick={onOpenWorkspace}
+          >
+            {workspaceLoading ? '读取中' : '查看工作空间'}
+            {workspaceFileCount > 0 ? <span>{workspaceFileCount}</span> : null}
+          </button>
+        ) : null}
       </div>
 
       {flashMessage ? <div className="flash">{flashMessage}</div> : null}

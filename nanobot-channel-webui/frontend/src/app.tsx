@@ -262,6 +262,10 @@ export function App() {
           <CaseGraphWorkbench
             token={authToken}
             onBack={() => setAppView('chat')}
+            title={bootstrap.title}
+            authResolved={authResolved}
+            currentUser={currentUser}
+            showFlash={showFlash}
             headerSlot={(
               <WorkspaceModeSwitch
                 activeMode="case_graph"

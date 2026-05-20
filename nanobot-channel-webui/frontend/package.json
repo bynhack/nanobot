@@ -8,6 +8,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@antv/g6": "^5.1.1",
     "@assistant-ui/react": "^0.14.0",
     "@assistant-ui/react-streamdown": "^0.3.0",
     "@mertdeveci55/univer-import-export": "^0.2.1",

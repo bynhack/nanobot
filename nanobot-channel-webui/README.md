@@ -174,9 +174,11 @@ Not migrated yet:
 - dedicated tests for the standalone project
 - hardening around upstream runtime drift beyond the current compat shim
 
-The migration plan is documented in:
+Current documentation entry points:
 
-- [docs/MIGRATION_PLAN.md](/Users/brian/Documents/Project/nanobot/nanobot-channel-webui/docs/MIGRATION_PLAN.md)
+- [docs/README.md](/Users/brian/Documents/Project/nanobot/nanobot-channel-webui/docs/README.md)
+- [PRODUCT.md](/Users/brian/Documents/Project/nanobot/nanobot-channel-webui/PRODUCT.md)
+- [DESIGN.md](/Users/brian/Documents/Project/nanobot/nanobot-channel-webui/DESIGN.md)
 
 ## Planned package layout
 

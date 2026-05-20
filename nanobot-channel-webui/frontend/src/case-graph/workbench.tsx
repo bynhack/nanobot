@@ -1,7 +1,15 @@
-import { ArrowLeft, AlertCircle, Plus, Settings2, X } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { AssistantRuntimeProvider, Suggestions, useAui } from '@assistant-ui/react';
+import { ArrowLeft, AlertCircle, Bot, Maximize2, MessageSquarePlus, Minimize2, Plus, Settings2, Sparkles, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { appStore } from '../app-state';
+import { buildTextAppendMessage } from '../app-helpers';
+import { appStore, useAppSelector } from '../app-state';
+import { loadSessionWorkspace } from '../api';
+import { DetailPreviewContext, type ToolDetailPayload } from '../components/chat/detail-preview-context';
+import { ChatThreadContent } from '../components/chat/thread-content';
+import { WorkspacePanel } from '../components/chat/workspace-panel';
+import { DetailPreviewPane, type DetailView } from '../detail-preview-pane';
+import { DEFAULT_THREAD_SUGGESTIONS } from '../assistant-ui-runtime';
 import {
   mergeTradeCards,
   normalizeCaseGraphGroupMap,
@@ -20,6 +28,7 @@ import {
   loadCaseGraphTargetDetail,
   loadSavedCaseGraphs,
   queryCaseGraph,
+  updateCaseGraphContext,
   updateCaseGraphConfig,
 } from './api';
 import { CaseRail } from './case-rail';
@@ -28,6 +37,7 @@ import { GraphView } from './graph-view';
 import { isGroupNodeId, parseGroupEdgeId } from './graph-view-adapters';
 import type {
   CaseGraphCaseOption,
+  CaseGraphConversationFocus,
   CaseGraphData,
   CaseGraphGroupMap,
   CaseGraphOriginData,
@@ -37,6 +47,14 @@ import type {
   CaseGraphTargetDetailResult,
   CaseGraphTradeCard,
 } from './types';
+import type { SkillCandidate } from '../skill-quick-select';
+import { runConfigWithSelectedSkill } from '../skill-quick-select';
+import type { MediaItem, SessionWorkspaceFile } from '../types';
+import { useAuthSession } from '../use-auth-session';
+import { useAvailableSkills } from '../use-available-skills';
+import { useWebsocketSession } from '../use-websocket-session';
+import { useWebuiRuntime } from '../use-webui-runtime';
+import { DETAIL_PANEL_MAX_WIDTH, DETAIL_PANEL_MIN_WIDTH, getPreferredDetailPanelWidth } from '../preview-layout';
 
 interface GraphTabState {
   graphId: string;
@@ -66,14 +84,29 @@ interface FocusLabelSource {
   tradeCard?: string;
 }
 
+function clampDetailWidth(width: number, viewportWidth: number): number {
+  return Math.min(
+    DETAIL_PANEL_MAX_WIDTH,
+    Math.max(DETAIL_PANEL_MIN_WIDTH, Math.min(width, Math.max(DETAIL_PANEL_MIN_WIDTH, viewportWidth - 360))),
+  );
+}
+
 export function CaseGraphWorkbench({
   token,
   onBack,
   headerSlot,
+  title,
+  authResolved,
+  currentUser,
+  showFlash,
 }: {
   token: string;
   onBack: () => void;
   headerSlot?: ReactNode;
+  title: string;
+  authResolved: boolean;
+  currentUser: ReturnType<typeof useAuthSession>['currentUser'];
+  showFlash: (message: string) => void;
 }) {
   const [cases, setCases] = useState<CaseGraphCaseOption[]>([]);
   const [casesLoading, setCasesLoading] = useState(true);
@@ -112,11 +145,97 @@ export function CaseGraphWorkbench({
     () => graphTabs.find((tab) => tab.graphId === activeTabId) ?? null,
     [activeTabId, graphTabs],
   );
+  const connectionState = useAppSelector((state) => state.connectionState);
+  const currentChatId = useAppSelector((state) => state.currentChatId);
+  const workspacePanel = useAppSelector((state) => state.workspacePanel);
+  const workspaceByChat = useAppSelector((state) => state.workspaceByChat);
+  const websocketSession = useWebsocketSession({
+    authResolved,
+    showFlash,
+  });
+  const availableSkills = useAvailableSkills({
+    authResolved,
+    authToken: token,
+    currentUser,
+  });
+  const {
+    runtime,
+    isReadOnlySession,
+    pendingAskUserPrompt,
+    activeTurn,
+    sendAppendMessage,
+  } = useWebuiRuntime({
+    showFlash,
+    actions: websocketSession,
+  });
+  const threadSuggestions = useMemo(() => [...DEFAULT_THREAD_SUGGESTIONS], []);
+  const aui = useAui({
+    suggestions: Suggestions(threadSuggestions),
+  });
+  const [conversationFocus, setConversationFocus] = useState<CaseGraphConversationFocus | null>(null);
+  const [chatFullscreen, setChatFullscreen] = useState(false);
+  const [detailView, setDetailView] = useState<DetailView | null>(null);
+  const [detailPanelWidth, setDetailPanelWidth] = useState(() =>
+    clampDetailWidth(getPreferredDetailPanelWidth(window.innerWidth), window.innerWidth),
+  );
+  const [resizingDetailPanel, setResizingDetailPanel] = useState(false);
+  const workspaceRequestCounterRef = useRef(0);
 
   const graphNodesById = useMemo(
     () => new Map((activeTab?.graphData?.nodes ?? []).map((node) => [node.id, node])),
     [activeTab?.graphData],
   );
+  const currentWorkspace = currentChatId ? workspaceByChat[currentChatId] ?? null : null;
+  const panelWorkspace = workspacePanel.chatId ? workspaceByChat[workspacePanel.chatId] ?? null : null;
+  const workspaceFileCount = currentWorkspace?.files.length ?? 0;
+  const workspaceLoadingForCurrentChat = Boolean(
+    currentChatId && workspacePanel.loading && workspacePanel.chatId === currentChatId,
+  );
+
+  useEffect(() => {
+    const onResize = () => {
+      setDetailPanelWidth((current) => clampDetailWidth(current, window.innerWidth));
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    if (!resizingDetailPanel) {
+      return;
+    }
+    const onMouseMove = (event: MouseEvent) => {
+      const nextWidth = window.innerWidth - event.clientX;
+      setDetailPanelWidth(clampDetailWidth(nextWidth, window.innerWidth));
+    };
+    const onMouseUp = () => {
+      setResizingDetailPanel(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [resizingDetailPanel]);
+
+  useEffect(() => {
+    if (!chatFullscreen) {
+      setDetailView(null);
+      appStore.dispatch({ type: 'workspace.close' });
+    }
+  }, [chatFullscreen]);
+
+  useEffect(() => {
+    setDetailView(null);
+    appStore.dispatch({ type: 'workspace.close' });
+  }, [currentChatId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -253,6 +372,132 @@ export function CaseGraphWorkbench({
       activeTab.selectedAccountIds,
     );
   }, [activeTab, selectedTradeCards]);
+
+  const caseGraphSkill = useMemo(
+    () => findCaseGraphSkill(availableSkills),
+    [availableSkills],
+  );
+  const caseGraphSkillLabel = useMemo(
+    () => formatCaseGraphSkillLabel(caseGraphSkill),
+    [caseGraphSkill],
+  );
+  const activeCaseLabel = useMemo(() => {
+    if (!activeTab) {
+      return null;
+    }
+    const matchedCase = cases.find((item) => item.id === activeTab.caseId);
+    return matchedCase?.caseName || matchedCase?.caseCode || activeTab.caseId;
+  }, [activeTab, cases]);
+
+  const syncGraphContext = useCallback((focus: CaseGraphConversationFocus | null) => {
+    if (!activeTab) {
+      return;
+    }
+    const nextFocus = focus
+      ? { ...focus, graphId: activeTab.graphId, caseId: activeTab.caseId, graphName: activeTab.graphName }
+      : {
+          type: 'graph' as const,
+          graphId: activeTab.graphId,
+          caseId: activeTab.caseId,
+          graphName: activeTab.graphName,
+        };
+    setConversationFocus(nextFocus);
+    const payload =
+      nextFocus.type === 'graph'
+        ? null
+        : { ...nextFocus, graphId: undefined, caseId: undefined, graphName: undefined };
+    void updateCaseGraphContext(activeTab.graphId, payload, token).catch(() => {});
+  }, [activeTab, token]);
+
+  useEffect(() => {
+    if (!activeTab) {
+      setConversationFocus(null);
+      return;
+    }
+    syncGraphContext(null);
+  }, [activeTab?.graphId, activeTab?.graphName, activeTab?.caseId, syncGraphContext]);
+
+  const sendGraphPrompt = useCallback((text: string) => {
+    const message = buildTextAppendMessage(text);
+    if (caseGraphSkill?.name) {
+      message.runConfig = runConfigWithSelectedSkill(message.runConfig, caseGraphSkill.name);
+    }
+    void sendAppendMessage(message).catch((error: unknown) => {
+      showFlash(error instanceof Error ? error.message : '发送图谱研判消息失败');
+    });
+  }, [caseGraphSkill?.name, sendAppendMessage, showFlash]);
+
+  const handleOpenWorkspace = useCallback(() => {
+    if (!currentChatId) {
+      return;
+    }
+    workspaceRequestCounterRef.current += 1;
+    const requestId = workspaceRequestCounterRef.current;
+    appStore.dispatch({ type: 'workspace.open', chatId: currentChatId });
+    appStore.dispatch({ type: 'workspace.loading', chatId: currentChatId, requestId });
+    loadSessionWorkspace(currentChatId, token)
+      .then((workspace) => {
+        appStore.dispatch({ type: 'workspace.loaded', chatId: currentChatId, requestId, workspace });
+      })
+      .catch((error: unknown) => {
+        appStore.dispatch({
+          type: 'workspace.failed',
+          chatId: currentChatId,
+          requestId,
+          error: error instanceof Error ? error.message : '加载工作空间失败',
+        });
+      });
+  }, [currentChatId, token]);
+
+  const openMedia = useCallback((item: MediaItem) => {
+    setChatFullscreen(true);
+    setDetailPanelWidth((current) => clampDetailWidth(Math.max(current, getPreferredDetailPanelWidth(window.innerWidth)), window.innerWidth));
+    setDetailView({ type: 'media', item });
+  }, []);
+
+  const openTool = useCallback((titleText: string, payload: ToolDetailPayload) => {
+    setChatFullscreen(true);
+    setDetailPanelWidth((current) => clampDetailWidth(Math.max(current, getPreferredDetailPanelWidth(window.innerWidth)), window.innerWidth));
+    setDetailView({ type: 'tool', title: titleText, payload });
+  }, []);
+
+  const previewActions = useMemo(
+    () => ({ openMedia, openTool }),
+    [openMedia, openTool],
+  );
+
+  const handleOpenWorkspaceFile = useCallback((file: SessionWorkspaceFile) => {
+    openMedia({ url: file.url, name: file.name, mime: file.mime });
+  }, [openMedia]);
+
+  const quickPrompts = useMemo(() => {
+    const prompts = [];
+    if (activeTab) {
+      prompts.push({
+        key: 'summary',
+        label: '总结整图',
+        icon: Sparkles,
+        prompt: `请基于当前案件图做一轮图谱研判：总结关键资金路径、异常点，并给出下一步建议方向。`,
+      });
+    }
+    if (conversationFocus?.type === 'node') {
+      prompts.push({
+        key: 'node',
+        label: '分析当前主体',
+        icon: Bot,
+        prompt: `请基于当前选中的账户/主体做分析，重点说明它的上下游结构、资金角色、异常点，以及下一步建议核查什么。`,
+      });
+    }
+    if (conversationFocus?.type === 'edge') {
+      prompts.push({
+        key: 'edge',
+        label: '分析当前交易线',
+        icon: MessageSquarePlus,
+        prompt: `请基于当前选中的交易线做分析，重点说明这两端的资金往来特征、异常模式，以及建议进一步核查的明细方向。`,
+      });
+    }
+    return prompts;
+  }, [activeTab, conversationFocus]);
 
   const openNewGraphDialog = useCallback(() => {
     if (!caseIdDraft) {
@@ -503,6 +748,16 @@ export function CaseGraphWorkbench({
     if (!activeTab) return;
     const groupedEdge = parseGroupEdgeId(edgeId);
     if (groupedEdge) {
+      syncGraphContext({
+        type: 'edge',
+        graphId: activeTab.graphId,
+        caseId: activeTab.caseId,
+        graphName: activeTab.graphName,
+        from: groupedEdge.sourceId,
+        to: groupedEdge.targetId,
+        fromName: resolveNodeDisplayName(graphNodesById.get(groupedEdge.sourceId), groupedEdge.sourceId, activeTab.groupMap),
+        toName: resolveNodeDisplayName(graphNodesById.get(groupedEdge.targetId), groupedEdge.targetId, activeTab.groupMap),
+      });
       const payerCards = resolveNodePartyCardsById(groupedEdge.sourceId, activeTab);
       const payeeCards = resolveNodePartyCardsById(groupedEdge.targetId, activeTab);
       if (!payerCards.length || !payeeCards.length) {
@@ -535,6 +790,16 @@ export function CaseGraphWorkbench({
     }
     const edge = (activeTab.graphData?.edges ?? []).find((item) => item.id === edgeId);
     if (!edge) return;
+    syncGraphContext({
+      type: 'edge',
+      graphId: activeTab.graphId,
+      caseId: activeTab.caseId,
+      graphName: activeTab.graphName,
+      from: edge.source,
+      to: edge.target,
+      fromName: resolveNodeDisplayName(graphNodesById.get(edge.source), edge.source, activeTab.groupMap),
+      toName: resolveNodeDisplayName(graphNodesById.get(edge.target), edge.target, activeTab.groupMap),
+    });
     const source = graphNodesById.get(edge.source);
     const target = graphNodesById.get(edge.target);
     const payerCards = resolveNodePartyCards(source, activeTab);
@@ -565,7 +830,7 @@ export function CaseGraphWorkbench({
       .finally(() => {
         setEdgeDetailLoading(false);
       });
-  }, [activeTab, graphNodesById, token]);
+  }, [activeTab, graphNodesById, syncGraphContext, token]);
 
   const handleCloseEdgeDetail = useCallback(() => {
     setEdgeDetailOpen(false);
@@ -643,6 +908,41 @@ export function CaseGraphWorkbench({
         setRequests((current) => ({ ...current, querying: false }));
       });
   }, [activeTab, graphConfigForm, token]);
+
+  const chatContextBlock = (
+    <div className="case-graph-chat-context">
+      <div className="case-graph-chat-context-title">当前上下文</div>
+      <div className="case-graph-chat-context-tags">
+        {activeCaseLabel ? <span>{activeCaseLabel}</span> : null}
+        {activeTab ? <span>{activeTab.graphName}</span> : null}
+        {conversationFocus?.type === 'node' ? (
+          <span>主体: {conversationFocus.accountName || conversationFocus.label || conversationFocus.nodeId}</span>
+        ) : null}
+        {conversationFocus?.type === 'edge' ? (
+          <span>交易线: {conversationFocus.fromName || conversationFocus.from} → {conversationFocus.toName || conversationFocus.to}</span>
+        ) : null}
+        {!activeTab ? <span>未选中图</span> : null}
+      </div>
+      {quickPrompts.length ? (
+        <div className="case-graph-chat-quick-actions">
+          {quickPrompts.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.key}
+                type="button"
+                className="case-graph-chat-quick-action"
+                onClick={() => sendGraphPrompt(item.prompt)}
+              >
+                <Icon size={14} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
 
   return (
     <section className="case-graph-shell">
@@ -744,9 +1044,85 @@ export function CaseGraphWorkbench({
               hasActiveTab={Boolean(activeTab)}
               onDrillDown={handleDrill}
               onOpenEdgeDetail={handleOpenEdgeDetail}
+              onFocusChange={(focus) => {
+                if (!activeTab) {
+                  return;
+                }
+                if (!focus || focus.type !== 'node') {
+                  syncGraphContext(null);
+                  return;
+                }
+                const node = graphNodesById.get(focus.nodeId);
+                syncGraphContext({
+                  type: 'node',
+                  graphId: activeTab.graphId,
+                  caseId: activeTab.caseId,
+                  graphName: activeTab.graphName,
+                  nodeId: focus.nodeId,
+                  label: node?.label || node?.name || focus.label,
+                  accountId: node?.accountId ?? focus.accountId ?? null,
+                  accountName: node?.accountName || node?.label || node?.name || focus.accountName,
+                  tradeCard: node?.tradeCard || focus.tradeCard,
+                });
+              }}
             />
           </div>
         </section>
+
+        <aside className="case-graph-detail case-graph-chat-panel">
+          <div className="case-graph-chat-header">
+            <div className="case-graph-chat-heading">
+              <strong>图谱研判对话</strong>
+              <span>{currentChatId ? `会话 ${currentChatId.slice(0, 8)}` : '将自动创建会话'}</span>
+            </div>
+            <div className="case-graph-chat-header-actions">
+              {caseGraphSkill ? (
+                <div className="case-graph-chat-skill-chip">{caseGraphSkillLabel}</div>
+              ) : (
+                <div className="case-graph-chat-skill-chip is-muted">未检测到图谱研判技能</div>
+              )}
+              <button
+                type="button"
+                className="case-graph-chat-expand-button"
+                onClick={() => setChatFullscreen(true)}
+              >
+                <Maximize2 size={14} />
+                <span>全屏</span>
+              </button>
+            </div>
+          </div>
+
+          {chatContextBlock}
+
+          <DetailPreviewContext.Provider value={previewActions}>
+            <AssistantRuntimeProvider runtime={runtime} aui={aui}>
+              <div className="case-graph-chat-thread">
+                <ChatThreadContent
+                  title={title}
+                  flashMessage={null}
+                  activeTurn={activeTurn}
+                  pendingAskUserPrompt={pendingAskUserPrompt}
+                  connectionState={connectionState}
+                  currentChatId={currentChatId}
+                  isReadOnlySession={isReadOnlySession}
+                  onAnswer={(answer) => {
+                    void sendAppendMessage(buildTextAppendMessage(answer));
+                  }}
+                  availableSkills={availableSkills}
+                  compact={true}
+                  sidebarCollapsed={true}
+                  showSidebarToggle={false}
+                  onToggleSidebar={() => {}}
+                  canOpenWorkspace={false}
+                  workspaceFileCount={0}
+                  workspaceLoading={false}
+                  onOpenWorkspace={() => {}}
+                  showWorkspaceButton={false}
+                />
+              </div>
+            </AssistantRuntimeProvider>
+          </DetailPreviewContext.Provider>
+        </aside>
 
       </div>
 
@@ -756,6 +1132,89 @@ export function CaseGraphWorkbench({
         open={edgeDetailOpen}
         onClose={handleCloseEdgeDetail}
       />
+
+      {chatFullscreen ? (
+        <div className="case-graph-chat-fullscreen-mask" role="presentation">
+          {resizingDetailPanel ? <div className="detail-resize-overlay" aria-hidden="true" /> : null}
+          <div className="case-graph-chat-fullscreen-shell">
+            <div className={`case-graph-chat-fullscreen-main${detailView ? ' has-detail' : ''}`}>
+              <div className="case-graph-chat-fullscreen-content">
+                <div className="case-graph-chat-fullscreen-header">
+                  <div className="case-graph-chat-heading">
+                    <strong>图谱研判对话</strong>
+                    <span>{currentChatId ? `会话 ${currentChatId.slice(0, 8)}` : '将自动创建会话'}</span>
+                  </div>
+                  <div className="case-graph-chat-header-actions">
+                    {caseGraphSkill ? (
+                      <div className="case-graph-chat-skill-chip">{caseGraphSkillLabel}</div>
+                    ) : (
+                      <div className="case-graph-chat-skill-chip is-muted">未检测到图谱研判技能</div>
+                    )}
+                    <button
+                      type="button"
+                      className="case-graph-chat-expand-button"
+                      onClick={() => setChatFullscreen(false)}
+                    >
+                      <Minimize2 size={14} />
+                      <span>退出全屏</span>
+                    </button>
+                  </div>
+                </div>
+
+                <DetailPreviewContext.Provider value={previewActions}>
+                  <AssistantRuntimeProvider runtime={runtime} aui={aui}>
+                    <div className="chat-workspace case-graph-chat-fullscreen-workspace">
+                      <div className="case-graph-chat-fullscreen-thread">
+                        <ChatThreadContent
+                          title={title}
+                          flashMessage={null}
+                          activeTurn={activeTurn}
+                          pendingAskUserPrompt={pendingAskUserPrompt}
+                          connectionState={connectionState}
+                          currentChatId={currentChatId}
+                          isReadOnlySession={isReadOnlySession}
+                          onAnswer={(answer) => {
+                            void sendAppendMessage(buildTextAppendMessage(answer));
+                          }}
+                          availableSkills={availableSkills}
+                          compact={false}
+                          sidebarCollapsed={false}
+                          showSidebarToggle={false}
+                          onToggleSidebar={() => {}}
+                          canOpenWorkspace={Boolean(currentChatId)}
+                          workspaceFileCount={workspaceFileCount}
+                          workspaceLoading={workspaceLoadingForCurrentChat}
+                          onOpenWorkspace={handleOpenWorkspace}
+                        />
+                      </div>
+                      <WorkspacePanel
+                        open={workspacePanel.open}
+                        loading={workspacePanel.loading}
+                        error={workspacePanel.error}
+                        workspace={panelWorkspace}
+                        onClose={() => appStore.dispatch({ type: 'workspace.close' })}
+                        onOpenFile={handleOpenWorkspaceFile}
+                      />
+                    </div>
+                  </AssistantRuntimeProvider>
+                </DetailPreviewContext.Provider>
+              </div>
+
+              {detailView ? (
+                <DetailPreviewPane
+                  detailView={detailView}
+                  immersive={true}
+                  open={true}
+                  width={detailPanelWidth}
+                  token={token}
+                  onClose={() => setDetailView(null)}
+                  onResizeStart={() => setResizingDetailPanel(true)}
+                />
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {newGraphDialogOpen ? (
         <div className="case-graph-modal-mask" role="presentation">
@@ -990,6 +1449,49 @@ function resolveNodePartyCards(
       accountName: node.accountName || node.label || node.name,
     },
   ].filter((item) => item.accountId || item.tradeCard || item.accountName);
+}
+
+function resolveNodeDisplayName(
+  node: CaseGraphData['nodes'][number] | undefined,
+  fallbackId: string,
+  groupMap: CaseGraphGroupMap,
+): string {
+  if (node?.accountName || node?.label || node?.name) {
+    return String(node.accountName || node.label || node.name || fallbackId).trim();
+  }
+  const directGroup = groupMap[fallbackId];
+  if (directGroup?.groupName) {
+    return String(directGroup.groupName).trim();
+  }
+  const byGroupId = Object.values(groupMap).find((item) => String(item.groupId || '').trim() === fallbackId);
+  if (byGroupId?.groupName) {
+    return String(byGroupId.groupName).trim();
+  }
+  return fallbackId;
+}
+
+function findCaseGraphSkill(skills: SkillCandidate[]): SkillCandidate | null {
+  return skills.find((skill) => {
+    const normalized = skill.name.trim().toLowerCase();
+    return normalized === 'case graph analyst'
+      || normalized === 'case-graph-analyst'
+      || normalized.includes('graph analyst');
+  }) ?? null;
+}
+
+function formatCaseGraphSkillLabel(skill: SkillCandidate | null): string {
+  if (!skill) {
+    return '';
+  }
+  const normalized = skill.name.trim().toLowerCase();
+  if (
+    normalized === 'case graph analyst'
+    || normalized === 'case-graph-analyst'
+    || normalized.includes('graph analyst')
+  ) {
+    return '图谱研判助手';
+  }
+  return skill.name;
 }
 
 function resolveNodePartyCardsById(

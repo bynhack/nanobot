@@ -26,6 +26,15 @@ For case-graph parity work, also read:
 4. `docs/case-graph/real-example/query-payload.json`
 5. `docs/case-graph/real-example/query-response.json`
 
+For case-graph layout, drill, relation-extension, persistence, or replay work, also inspect the
+current process files under:
+
+1. `~/.nanobot/workspace/.nanobot_channel_webui/case_graphs/**/graph.json`
+2. `~/.nanobot/workspace/.nanobot_channel_webui/case_graphs/**/steps/*.json`
+
+These files are the best local evidence for how every analysis step preserves the graph structure
+and layout positions over time.
+
 Do not rely on deleted dated plan/design notes. The current docs directory is an index plus durable facts only.
 
 ## Project Layout
@@ -51,6 +60,19 @@ Do not rely on deleted dated plan/design notes. The current docs directory is an
 
 ## Build And Test
 
+Testing is risk-based, not mechanical. Do not run Python or frontend tests after every edit by
+default; choose the smallest useful verification based on the change.
+
+Skip tests for simple documentation, copy, comment-only, README, AGENTS, PRODUCT, or docs index
+changes that do not affect installed runtime behavior.
+
+Use targeted tests when a change affects a specific Python service, frontend component, adapter,
+store, or case-graph workflow. Prefer the narrowest relevant test command over the full suite.
+
+Use broader verification when a change touches cross-cutting contracts, persistence formats,
+case-graph layout/state, frontend build output, package data, auth/session behavior, or release
+scripts.
+
 From `nanobot-channel-webui/`:
 
 ```bash
@@ -75,13 +97,20 @@ Full local verification flow:
 ./scripts/publish-local.sh
 ```
 
-When a change is complete and ready to hand back to the user for review or use, run:
+When a complete feature implementation, behavior change, frontend change, backend change,
+packaging change, or static-asset change is ready to hand back to the user for review or use, run:
 
 ```bash
 ./scripts/publish-local.sh
 ```
 
-Treat this as the default final verification and local release step for completed work in this plugin, not an optional extra.
+Treat this as the default final verification and local release step for completed work in this
+plugin, not an optional extra. After it succeeds, explicitly tell the user that the local publish
+has completed and that they can test it locally.
+
+Do not run extra standalone test passes before `publish-local.sh` unless the risk justifies it;
+the publish script already includes local verification. For small documentation-only changes,
+state that no runtime tests or local publish were needed.
 
 ## Static Asset Rules
 
@@ -93,6 +122,20 @@ Treat this as the default final verification and local release step for complete
 ## Case-Graph Ground Truth
 
 The earlier "simplified graph only" understanding is stale. Current code has a much closer parity baseline.
+
+### Case-graph layout invariant
+
+This is a hard product rule: graph node positions are part of the user's saved investigation work,
+not disposable render output.
+
+- Every case-graph structure and every relation-analysis step must preserve existing graph layout positions.
+- Future code changes must not move, normalize, re-center, reflow, or recompute positions for existing nodes during load, refresh, query, drill, filter, merge, render, publish, or replay.
+- Stored positions from `graph.layout.nodePositions`, node-level `x/y`, and legacy `graphContent` coordinates are authoritative for existing nodes.
+- Layout logic may only assign coordinates to newly added nodes or nodes with genuinely missing/invalid coordinates.
+- Existing nodes may be moved only by an explicit user action whose purpose is to change layout, such as dragging a node or invoking a future manual relayout/reset-layout command.
+- If an official G6 layout is introduced, it must be used in an incremental/fixed-node mode: existing nodes are fixed anchors, and only new/missing-position nodes are placed around the current graph.
+- Drill and relation-completion flows must carry the current rendered `nodePositions` into the request and must merge results without changing any previously positioned node.
+- Tests for graph extension or layout changes should assert that pre-existing node `x/y` coordinates remain unchanged after the operation.
 
 ### Current verified facts
 
@@ -121,6 +164,13 @@ The earlier "simplified graph only" understanding is stale. Current code has a m
   - `/api/case-graph/query/drillup`
   - `/api/case-graph/query/drill`
 - target detail now supports `payerCards` and `payeeCards`
+- relation graph state uses `case_graphs/{caseId}/{graphId}/graph.json` as the authoritative current projection
+- every relation graph operation appends a complete step snapshot under `steps/*.json`
+- graph layout positions are stored in `graph.layout.nodePositions`
+- `graphStateToCanvasData(...)` applies stored layout positions back onto canvas nodes during load
+- `computeCaseGraphLayout(...)` prefers persisted positions when coverage is sufficient, before falling back to structured layout
+- normal layout callbacks must not persist a full graph layout operation; explicit drag persists through `/operations/layout`
+- after relation operations, the latest step layout can be patched through `/operations/latest-step-layout` so the step snapshot reflects the rendered positions
 
 ### Current verified gaps
 
@@ -137,9 +187,10 @@ These are still real unless code and docs are updated together:
    - summary analysis
    - fund relation graph
 5. group support exists for query/render/detail resolution, but not the full original regroup/ungroup interaction model
-6. graph layout persistence is partial
-   - `graphContent` is stored
-   - current canvas rendering still prefers recomputed layout over persisted positions
+6. original full canvas serialization is still partial
+   - current relation graph state already persists `graph.layout.nodePositions`
+   - current canvas load path can restore persisted node coordinates
+   - original `graphContent`-based full canvas cell serialization, complex canvas elements, and arbitrary-step replay/reset are not fully replicated yet
 
 ### Important implementation details
 
@@ -156,6 +207,11 @@ These are still real unless code and docs are updated together:
   1. call drill API
   2. merge returned `tradeCards`
   3. re-run main query
+- Relation-analysis flows are currently:
+  1. send current `nodePositions` in relation request options
+  2. merge returned graph data into the current positioned graph
+  3. persist/patch the latest step layout after render
+  4. keep existing node coordinates stable while positioning new nodes
 
 ## Editing Guidance
 
@@ -168,6 +224,10 @@ These are still real unless code and docs are updated together:
 - When changing case-graph behavior, verify both:
   - persisted graph snapshot shape
   - query response shape
+- When changing case-graph layout, drill, relation-extension, restore, filter, or load behavior, verify:
+  - existing node coordinates are preserved across the operation
+  - only new or missing-position nodes receive generated coordinates
+  - `graph.json` and the latest relevant `steps/*.json` retain the expected `graph.layout.nodePositions`
 - Prefer updating durable docs when facts change:
   - facts -> `docs/case-graph/current-ga-implementation.md`
   - remaining differences -> `docs/case-graph/nanobot-gap-notes.md`
@@ -179,4 +239,7 @@ These are still real unless code and docs are updated together:
 - This plugin is packaged as a standalone `nanobot.channels` entry-point plugin
 - Local install target is still the same upstream `nanobot-ai` tool environment
 - If you change frontend assets or package data, make sure the wheel-shipped static directory is updated before calling the work done
-- Before presenting a completed modification to the user, run `./scripts/publish-local.sh`
+- Before presenting a completed feature implementation or runtime/UI behavior modification to the user, run `./scripts/publish-local.sh`
+- After local publish succeeds, say so directly so the user knows they can perform manual acceptance testing
+- If the change is documentation-only and does not affect the installed runtime, say that explicitly; otherwise publish locally before handing back
+- Do not mechanically run Python/frontend tests for simple changes; use judgment and pick targeted verification only when it provides real confidence

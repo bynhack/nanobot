@@ -2,6 +2,11 @@
 
 `nanobot-channel-webui` is a standalone channel plugin project for `nanobot-ai`.
 
+It is currently positioned as a browser-based investigation workbench: the WebUI keeps the
+upstream nanobot gateway flow, while the main product surface now centers on case analysis,
+case-graph visualization, graph drilling, transaction detail review, and AI-assisted work around
+that investigation context.
+
 ## Goal
 
 Keep the upstream `nanobot-ai` installation and startup flow unchanged:
@@ -68,6 +73,10 @@ This flow now does 3 things in order:
 1. verify the plugin locally
 2. sync static assets into the Python package
 3. build and install the latest wheel into the `nanobot-ai` tool environment
+
+For completed feature implementations or runtime/UI behavior changes, this local publish step is
+part of the definition of done. After `publish-local.sh` succeeds, the change is ready for local
+manual testing through `nanobot gateway`.
 
 If you already built a wheel and only want to reinstall the latest one:
 
@@ -168,6 +177,14 @@ Recommended order before you test a local release:
 ```
 
 If you use `publish-local.sh`, the verify and sync steps are already included.
+
+For normal completed work in this plugin, use `publish-local.sh` as the handoff point instead of
+stopping after a dev-server check or a build-only verification.
+
+Testing should stay proportional to risk. Documentation-only or copy/index changes normally do not
+need Python or frontend test runs. For code changes, prefer targeted tests that cover the touched
+service, component, adapter, store, or workflow. Reserve the full local publish flow for completed
+runtime/UI behavior changes, package/static asset changes, and handoff-ready feature work.
 
 Not migrated yet:
 

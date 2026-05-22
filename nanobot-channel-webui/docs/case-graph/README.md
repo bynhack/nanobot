@@ -6,6 +6,10 @@
 2. `nanobot` 当前实现与原版之间仍成立的差异
 3. 已经被代码直接证明、后续仍待修复的问题
 
+当前上图分析已经是产品主路径之一。关系图不只是渲染结果，而是案件研判过程资产：
+`graph.json` 保存当前投影，`steps/*.json` 保存每次关系分析后的完整步骤快照，
+`graph.layout.nodePositions` 保存布局位置。
+
 当前应优先阅读：
 
 - [current-ga-implementation.md](./current-ga-implementation.md)
@@ -21,6 +25,11 @@
 - [real-example/query-response.json](./real-example/query-response.json)
   - 原版 `/trade/query` 的真实返回样本
 
+本地过程文件也必须作为布局和步骤事实来源：
+
+- `~/.nanobot/workspace/.nanobot_channel_webui/case_graphs/**/graph.json`
+- `~/.nanobot/workspace/.nanobot_channel_webui/case_graphs/**/steps/*.json`
+
 已清理：
 
 - 过程型重建计划文档
@@ -32,3 +41,4 @@
 - 差异写进 `nanobot-gap-notes.md`
 - 待修复问题写进 `pending-fixes.md`
 - 不再保留独立的过程计划文档作为当前事实来源
+- 涉及扩图、钻取、补关系、恢复和回放的文档，必须写清楚已有节点坐标不可被自动重排；只有用户显式拖拽或未来明确的手动重布局动作才能改变已有位置

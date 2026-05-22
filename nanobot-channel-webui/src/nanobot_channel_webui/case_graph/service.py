@@ -19,6 +19,8 @@ class CaseGraphStateStore(Protocol):
 
     def update_graph(self, graph_id: str, patch: dict[str, Any]) -> CaseGraphState: ...
 
+    def delete_graph(self, graph_id: str) -> bool: ...
+
 
 class CaseGraphService:
     def __init__(
@@ -55,6 +57,7 @@ class CaseGraphService:
                 "drillType": 1,
                 "minAmount": None,
                 "maxAmount": None,
+                "chatId": "",
             }
         )
 
@@ -69,6 +72,9 @@ class CaseGraphService:
 
     def update_graph(self, graph_id: str, patch: dict[str, Any]) -> CaseGraphState:
         return self._storage.update_graph(graph_id, patch)
+
+    def delete_graph(self, graph_id: str) -> bool:
+        return self._storage.delete_graph(graph_id)
 
     def query_graph(
         self,

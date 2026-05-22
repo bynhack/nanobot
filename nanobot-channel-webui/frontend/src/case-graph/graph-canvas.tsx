@@ -1,11 +1,11 @@
-import { ArrowDownToLine, ArrowUpToLine, LocateFixed } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { LocateFixed, MousePointer2, Network, Scan, Settings2 } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Graph as G6Graph } from '@antv/g6';
 
 import { buildCaseGraphViewModel, formatCompactAmount } from './graph-analysis';
 import type { CaseGraphNodeRole } from './graph-analysis';
 import { computeCaseGraphLayout } from './graph-layout';
-import type { CaseGraphConversationFocus, CaseGraphData, CaseGraphTradeCard } from './types';
+import type { CaseGraphConversationFocus, CaseGraphData, CaseGraphExcludedNode, CaseGraphNode, CaseGraphTradeCard } from './types';
 
 interface GraphCanvasProps {
   graphData: CaseGraphData | null;
@@ -15,17 +15,39 @@ interface GraphCanvasProps {
   focusLabels: string[];
   loading: boolean;
   drilldownLoading: boolean;
+  excluding: boolean;
   hasActiveTab: boolean;
-  onDrillDown: (direction: 'in' | 'out' | 'both', tradeCard: CaseGraphTradeCard) => void;
-  onOpenEdgeDetail: (edgeId: string) => void;
+  onChooseInvestigationOrigin: () => void;
+  onCompleteGraphRelations: () => void;
+  onOpenGraphConfig: () => void;
+  onDrillDown: (direction: 'in' | 'out' | 'both', node: CaseGraphNode, tradeCard: CaseGraphTradeCard | null) => void;
+  onExcludeNode: (node: CaseGraphExcludedNode) => void;
+  onExcludeNodes: (nodes: CaseGraphExcludedNode[]) => void;
+  onOpenEdgeDetail: (edgeId: string, edgeFocus?: CaseGraphConversationFocus) => void;
   onFocusChange?: (focus: CaseGraphConversationFocus | null) => void;
+  onNodePositionsChange?: (positions: Record<string, { x: number; y: number }>, reason: NodePositionsChangeReason) => void;
 }
 
-interface ContextMenuState {
-  nodeId: string;
+type NodePositionsChangeReason = 'layout' | 'drag';
+
+interface CanvasContextMenuState {
   x: number;
   y: number;
 }
+
+interface BrushSelectionState {
+  startX: number;
+  startY: number;
+  currentX: number;
+  currentY: number;
+}
+
+interface NodeContextMenuItem {
+  name: string;
+  value: 'drill:both' | 'drill:in' | 'drill:out' | 'exclude';
+}
+
+type GraphSelectionStates = Record<string, string | string[]>;
 
 const GRAPH_WIDTH = 1028;
 const GRAPH_HEIGHT = 620;
@@ -36,6 +58,10 @@ const ROW_GAP = 88;
 const GRAPH_PADDING: [number, number, number, number] = [24, 24, 132, 24];
 const MINIMAP_SIZE: [number, number] = [176, 108];
 const GRAPH_EDGE_TYPE = 'quadratic';
+const CONTEXT_MENU_WIDTH = 210;
+const CONTEXT_MENU_ROW_HEIGHT = 48;
+const CONTEXT_MENU_PADDING = 10;
+const BRUSH_MIN_DISTANCE = 6;
 const ROLE_CHIPS: Array<{ role: Exclude<CaseGraphNodeRole, 'peripheral'>; label: string; className: string }> = [
   { role: 'upstream', label: '来款', className: 'is-upstream' },
   { role: 'core', label: '核心', className: 'is-core' },
@@ -52,14 +78,25 @@ export function GraphCanvas({
   focusLabels,
   loading,
   drilldownLoading,
+  excluding,
   hasActiveTab,
+  onChooseInvestigationOrigin,
+  onCompleteGraphRelations,
+  onOpenGraphConfig,
   onOpenEdgeDetail,
   onDrillDown,
+  onExcludeNode,
+  onExcludeNodes,
   onFocusChange,
+  onNodePositionsChange,
 }: GraphCanvasProps) {
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [activeEdgeId, setActiveEdgeId] = useState<string | null>(null);
   const [activeRoleFilter, setActiveRoleFilter] = useState<Exclude<CaseGraphNodeRole, 'peripheral'> | null>(null);
-  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [canvasContextMenu, setCanvasContextMenu] = useState<CanvasContextMenuState | null>(null);
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [brushMode, setBrushMode] = useState(false);
+  const [brushSelection, setBrushSelection] = useState<BrushSelectionState | null>(null);
   const [graphReadyNonce, setGraphReadyNonce] = useState(0);
   const [graphViewport, setGraphViewport] = useState({ width: GRAPH_WIDTH, height: GRAPH_HEIGHT });
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -69,8 +106,21 @@ export function GraphCanvas({
   const graphRenderedRef = useRef(false);
   const onOpenEdgeDetailRef = useRef(onOpenEdgeDetail);
   const onFocusChangeRef = useRef(onFocusChange);
+  const onNodePositionsChangeRef = useRef(onNodePositionsChange);
+  const lastEmittedFocusKeyRef = useRef<string | null>(null);
+  const brushSelectionRef = useRef<BrushSelectionState | null>(null);
   const nodesLengthRef = useRef(0);
   const activeNodeIdRef = useRef<string | null>(null);
+  const selectedNodeIdsRef = useRef<string[]>([]);
+  const contextMenuNodeIdRef = useRef<string | null>(null);
+  const contextMenuSelectionIdsRef = useRef<string[]>([]);
+  const nodeLookupRef = useRef<Map<string, CaseGraphData['nodes'][number]>>(new Map());
+  const tradeCardByNodeIdRef = useRef<Map<string, CaseGraphTradeCard>>(new Map());
+  const drilldownLoadingRef = useRef(drilldownLoading);
+  const excludingRef = useRef(excluding);
+  const onDrillDownRef = useRef(onDrillDown);
+  const onExcludeNodeRef = useRef(onExcludeNode);
+  const onExcludeNodesRef = useRef(onExcludeNodes);
   const activeNeighborhoodRef = useRef<{
     relatedNodeIds: Set<string>;
     relatedEdgeIds: Set<string>;
@@ -79,6 +129,7 @@ export function GraphCanvas({
   const nodes = graphData?.nodes ?? [];
   const edges = graphData?.edges ?? [];
   const nodeLookup = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const edgeLookup = useMemo(() => new Map(edges.map((edge) => [resolveEdgeId(edge), edge])), [edges]);
   const parallelOffsets = useMemo(() => computeParallelEdgeOffsets(edges), [edges]);
   const graphView = useMemo(
     () =>
@@ -113,7 +164,6 @@ export function GraphCanvas({
         rowGap: ROW_GAP,
         focusAccountIds,
         focusLabels,
-        preferPersistedPositions: false,
         viewModel: graphView,
       },
     );
@@ -123,33 +173,70 @@ export function GraphCanvas({
     if (activeRoleFilter) {
       return buildRoleNeighborhood(activeRoleFilter, nodes, edges, graphView.nodeMetricsById);
     }
-    if (!activeNodeId) {
+    if (!activeNodeId && !activeEdgeId) {
       return null;
     }
-    const relatedNodeIds = new Set<string>([activeNodeId]);
+    const relatedNodeIds = new Set<string>(activeNodeId ? [activeNodeId] : []);
     const relatedEdgeIds = new Set<string>();
+    if (activeEdgeId) {
+      const activeEdge = edgeLookup.get(activeEdgeId);
+      if (activeEdge) {
+        relatedEdgeIds.add(activeEdgeId);
+        relatedNodeIds.add(activeEdge.source);
+        relatedNodeIds.add(activeEdge.target);
+      }
+    }
     for (const edge of edges) {
-      if (edge.source === activeNodeId || edge.target === activeNodeId) {
+      if (activeNodeId && (edge.source === activeNodeId || edge.target === activeNodeId)) {
         relatedNodeIds.add(edge.source);
         relatedNodeIds.add(edge.target);
         relatedEdgeIds.add(resolveEdgeId(edge));
       }
     }
     return { relatedNodeIds, relatedEdgeIds };
-  }, [activeNodeId, activeRoleFilter, edges, graphView.nodeMetricsById, nodes]);
+  }, [activeEdgeId, activeNodeId, activeRoleFilter, edgeLookup, edges, graphView.nodeMetricsById, nodes]);
 
   const selectedNode = activeNodeId ? nodeLookup.get(activeNodeId) ?? null : null;
-  const selectedTradeCard = selectedNode ? resolveTradeCard(selectedNode, tradeCardByNodeId) : null;
+  const selectedEdge = activeEdgeId ? edgeLookup.get(activeEdgeId) ?? null : null;
   const selectedNodeMetrics = activeNodeId ? graphView.nodeMetricsById.get(activeNodeId) ?? null : null;
   const activeRoleCount = activeRoleFilter ? graphView.roleCounts[activeRoleFilter] : 0;
+  const selectedNodes = useMemo(
+    () => selectedNodeIds.map((nodeId) => nodeLookup.get(nodeId)).filter((node): node is CaseGraphData['nodes'][number] => Boolean(node)),
+    [nodeLookup, selectedNodeIds],
+  );
 
   useEffect(() => {
     onOpenEdgeDetailRef.current = onOpenEdgeDetail;
   }, [onOpenEdgeDetail]);
 
   useEffect(() => {
+    nodeLookupRef.current = nodeLookup;
+    tradeCardByNodeIdRef.current = tradeCardByNodeId;
+    drilldownLoadingRef.current = drilldownLoading;
+    excludingRef.current = excluding;
+    onDrillDownRef.current = onDrillDown;
+    onExcludeNodeRef.current = onExcludeNode;
+    onExcludeNodesRef.current = onExcludeNodes;
+  }, [drilldownLoading, excluding, nodeLookup, onDrillDown, onExcludeNode, onExcludeNodes, tradeCardByNodeId]);
+
+  useEffect(() => {
     onFocusChangeRef.current = onFocusChange;
   }, [onFocusChange]);
+
+  useEffect(() => {
+    onNodePositionsChangeRef.current = onNodePositionsChange;
+  }, [onNodePositionsChange]);
+
+  useEffect(() => {
+    if (!onNodePositionsChange || !graphLayout.size) {
+      return;
+    }
+    const positions: Record<string, { x: number; y: number }> = {};
+    for (const [nodeId, point] of graphLayout) {
+      positions[nodeId] = { x: point.x, y: point.y };
+    }
+    onNodePositionsChange(positions, 'layout');
+  }, [graphLayout, onNodePositionsChange]);
 
   useEffect(() => {
     nodesLengthRef.current = nodes.length;
@@ -158,7 +245,25 @@ export function GraphCanvas({
   useEffect(() => {
     activeNodeIdRef.current = activeNodeId;
     activeNeighborhoodRef.current = activeNeighborhood;
-  }, [activeNeighborhood, activeNodeId]);
+    selectedNodeIdsRef.current = selectedNodeIds;
+  }, [activeNeighborhood, activeNodeId, selectedNodeIds]);
+
+  useEffect(() => {
+    brushSelectionRef.current = brushSelection;
+  }, [brushSelection]);
+
+  const syncSelectedNodeIdsFromGraph = (states: GraphSelectionStates) => {
+    const selectedIds = nodes
+      .map((node) => node.id)
+      .filter((nodeId) => {
+        const state = states[nodeId];
+        return Array.isArray(state) ? state.includes('selected') : state === 'selected';
+      });
+    setSelectedNodeIds(selectedIds);
+    setActiveNodeId(selectedIds[0] ?? null);
+    setActiveEdgeId(null);
+    setActiveRoleFilter(null);
+  };
 
   useEffect(() => {
     if (activeRoleFilter && graphView.roleCounts[activeRoleFilter] === 0) {
@@ -167,9 +272,24 @@ export function GraphCanvas({
   }, [activeRoleFilter, graphView.roleCounts]);
 
   useEffect(() => {
-    const closeMenu = () => setContextMenu(null);
+    const closeMenu = () => {
+      setCanvasContextMenu(null);
+    };
     window.addEventListener('click', closeMenu);
     return () => window.removeEventListener('click', closeMenu);
+  }, []);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const suppressNativeContextMenu = (event: MouseEvent) => {
+      if (!shouldSuppressNativeContextMenu(event.target)) return;
+      event.preventDefault();
+    };
+    stage.addEventListener('contextmenu', suppressNativeContextMenu, { capture: true });
+    return () => {
+      stage.removeEventListener('contextmenu', suppressNativeContextMenu, { capture: true });
+    };
   }, []);
 
   useEffect(() => {
@@ -207,6 +327,7 @@ export function GraphCanvas({
             stroke: (datum: any) => getMoneyEdgeStyle(Number(datum?.data?.tradeAmount ?? 0), datum?.data).stroke,
             lineWidth: (datum: any) => getMoneyEdgeStyle(Number(datum?.data?.tradeAmount ?? 0), datum?.data).lineWidth,
             opacity: (datum: any) => getMoneyEdgeStyle(Number(datum?.data?.tradeAmount ?? 0), datum?.data).opacity,
+            lineDash: (datum: any) => (datum?.data?.isExcluded ? [8, 6] : []),
             curveOffset: (datum: any) => Number(datum?.data?.curveOffset ?? 0),
             lineCap: 'round',
             lineJoin: 'round',
@@ -226,7 +347,7 @@ export function GraphCanvas({
             labelPadding: [4, 8],
           },
         },
-        behaviors: ['drag-canvas', 'zoom-canvas', 'drag-element'],
+        behaviors: buildGraphBehaviors(false),
         plugins: [
           {
             type: 'minimap',
@@ -245,42 +366,102 @@ export function GraphCanvas({
               background: 'rgba(107, 126, 166, 0.14)',
             },
           },
+          {
+            type: 'contextmenu',
+            key: 'case-graph-node-contextmenu',
+            className: 'case-graph-g6-context-menu',
+            trigger: 'contextmenu',
+            offset: [4, 4],
+            enable: (event: any) => event?.targetType === 'node',
+            getItems: (event: any) => {
+              const nodeId = resolveEventId(event);
+              const node = nodeId ? nodeLookupRef.current.get(nodeId) ?? null : null;
+              setCanvasContextMenu(null);
+              contextMenuNodeIdRef.current = nodeId;
+              if (!nodeId || !node) {
+                contextMenuSelectionIdsRef.current = [];
+                return [];
+              }
+
+              const currentSelection = selectedNodeIdsRef.current;
+              const actionNodeIds = currentSelection.includes(nodeId) && currentSelection.length > 1
+                ? currentSelection
+                : [nodeId];
+              contextMenuSelectionIdsRef.current = actionNodeIds;
+              setActiveRoleFilter(null);
+              setActiveEdgeId(null);
+              setActiveNodeId(nodeId);
+              setSelectedNodeIds(actionNodeIds);
+
+              const actionNodes = actionNodeIds
+                .map((id) => nodeLookupRef.current.get(id))
+                .filter((item): item is CaseGraphData['nodes'][number] => Boolean(item));
+              return buildNodeContextMenuItems({
+                selectedCount: Math.max(actionNodes.length, 1),
+                canDrill: Boolean(resolveTradeCard(node, tradeCardByNodeIdRef.current)) && !node.isExcluded && !drilldownLoadingRef.current,
+                canExclude: actionNodes.some((item) => !item.isExcluded) && !excludingRef.current,
+              });
+            },
+            onClick: (value: string) => {
+              const nodeId = contextMenuNodeIdRef.current;
+              const node = nodeId ? nodeLookupRef.current.get(nodeId) ?? null : null;
+              if (!node) return;
+
+              if (value === 'drill:both' || value === 'drill:in' || value === 'drill:out') {
+                if (node.isExcluded || drilldownLoadingRef.current) return;
+                const tradeCard = resolveTradeCard(node, tradeCardByNodeIdRef.current);
+                if (!tradeCard) return;
+                onDrillDownRef.current(value.replace('drill:', '') as 'in' | 'out' | 'both', node, tradeCard);
+                return;
+              }
+
+              if (value === 'exclude') {
+                if (excludingRef.current) return;
+                const nodesToExclude = contextMenuSelectionIdsRef.current
+                  .map((id) => nodeLookupRef.current.get(id))
+                  .filter((item): item is CaseGraphData['nodes'][number] => Boolean(item) && !item.isExcluded)
+                  .map(buildExcludedNodePayload);
+                if (nodesToExclude.length > 1) {
+                  onExcludeNodesRef.current(nodesToExclude);
+                } else if (nodesToExclude[0]) {
+                  onExcludeNodeRef.current(nodesToExclude[0]);
+                }
+              }
+            },
+          },
         ],
       });
 
       graph.on('node:click', (event: any) => {
         const nodeId = resolveEventId(event);
-        setContextMenu(null);
+        setCanvasContextMenu(null);
         setActiveRoleFilter(null);
         if (nodeId) {
+          const native = event?.nativeEvent ?? event?.originalEvent ?? event;
+          setActiveEdgeId(null);
           setActiveNodeId(nodeId);
+          setSelectedNodeIds((current) => resolveNextSelectedNodeIds(current, nodeId, native));
         }
-      });
-
-      graph.on('node:contextmenu', (event: any) => {
-        event.preventDefault?.();
-        event.originalEvent?.preventDefault?.();
-        const nodeId = resolveEventId(event);
-        if (!nodeId) return;
-        const bounds = stageRef.current?.getBoundingClientRect();
-        const { x, y } = resolvePointerPosition(event);
-        setActiveRoleFilter(null);
-        setActiveNodeId(nodeId);
-        setContextMenu({
-          nodeId,
-          x: bounds ? x - bounds.left : x,
-          y: bounds ? y - bounds.top : y,
-        });
       });
 
       graph.on('edge:click', (event: any) => {
         const edgeId = resolveEventId(event);
-        setContextMenu(null);
-        if (edgeId) onOpenEdgeDetailRef.current(edgeId);
+        setCanvasContextMenu(null);
+        setActiveRoleFilter(null);
+        if (edgeId) {
+          const edgeFocus = buildEdgeFocusPayload(edgeLookup.get(edgeId), nodeLookup);
+          setActiveNodeId(null);
+          setActiveEdgeId(edgeId);
+          setSelectedNodeIds([]);
+          onOpenEdgeDetailRef.current(edgeId, edgeFocus ?? undefined);
+        }
       });
 
       graph.on('canvas:click', () => {
-        setContextMenu(null);
+        setCanvasContextMenu(null);
+        if (!brushSelectionRef.current) {
+          setSelectedNodeIds([]);
+        }
       });
 
       graphRef.current = graph;
@@ -318,6 +499,19 @@ export function GraphCanvas({
   useEffect(() => {
     const graph = graphRef.current;
     if (!graph) return;
+    graph.setBehaviors(buildGraphBehaviors(brushMode, {
+      onSelectionChange: syncSelectedNodeIdsFromGraph,
+      onDragFinish: () => {
+        const positions = collectRenderedNodePositions(graph);
+        if (!Object.keys(positions).length) return;
+        onNodePositionsChangeRef.current?.(positions, 'drag');
+      },
+    }));
+  }, [brushMode, graphReadyNonce, nodes]);
+
+  useEffect(() => {
+    const graph = graphRef.current;
+    if (!graph) return;
 
     const graphPayload = {
       nodes: nodes.map((node) => {
@@ -335,6 +529,7 @@ export function GraphCanvas({
             metrics,
             Boolean(seedTradeCard),
             activeNodeIdRef.current,
+            selectedNodeIdsRef.current,
             activeNeighborhoodRef.current,
           ),
         };
@@ -392,6 +587,7 @@ export function GraphCanvas({
           graphView.nodeMetricsById.get(node.id),
           Boolean(resolveTradeCard(node, tradeCardByNodeId)),
           activeNodeId,
+          selectedNodeIds,
           activeNeighborhood,
         ),
       })),
@@ -399,29 +595,45 @@ export function GraphCanvas({
     graph.updateEdgeData(
       edges.map((edge) => {
         const edgeId = resolveEdgeId(edge);
-        const metrics = graphView.edgeMetricsById.get(edgeId);
-        return {
-          id: edgeId,
-          data: buildEdgeRenderData(edge, metrics, activeNeighborhood, parallelOffsets.get(edgeId) ?? 0),
+          const metrics = graphView.edgeMetricsById.get(edgeId);
+          return {
+            id: edgeId,
+          data: buildEdgeRenderData(edge, metrics, activeNeighborhood, parallelOffsets.get(edgeId) ?? 0, activeEdgeId),
         };
       }),
     );
     void graph.draw().catch(() => {});
-  }, [activeNeighborhood, activeNodeId, edges, graphReadyNonce, graphView, nodes, parallelOffsets, tradeCardByNodeId]);
+  }, [activeEdgeId, activeNeighborhood, activeNodeId, edges, graphReadyNonce, graphView, nodes, parallelOffsets, tradeCardByNodeId]);
 
   useEffect(() => {
     if (activeNodeId && !nodeLookup.has(activeNodeId)) {
       setActiveNodeId(null);
-      setContextMenu(null);
     }
-  }, [activeNodeId, nodeLookup]);
+    if (activeEdgeId && !edgeLookup.has(activeEdgeId)) {
+      setActiveEdgeId(null);
+    }
+  }, [activeEdgeId, activeNodeId, edgeLookup, nodeLookup]);
 
   useEffect(() => {
     if (!onFocusChangeRef.current) {
       return;
     }
-    if (selectedNode) {
-      onFocusChangeRef.current({
+    let nextFocus: CaseGraphConversationFocus | null = null;
+    if (selectedEdge) {
+      const sourceNode = nodeLookup.get(selectedEdge.source);
+      const targetNode = nodeLookup.get(selectedEdge.target);
+      nextFocus = {
+        type: 'edge',
+        graphId: '',
+        caseId: '',
+        graphName: '',
+        from: selectedEdge.source,
+        to: selectedEdge.target,
+        fromName: sourceNode?.accountName || sourceNode?.label || sourceNode?.name || selectedEdge.source,
+        toName: targetNode?.accountName || targetNode?.label || targetNode?.name || selectedEdge.target,
+      };
+    } else if (selectedNode) {
+      nextFocus = {
         type: 'node',
         graphId: '',
         caseId: '',
@@ -431,11 +643,15 @@ export function GraphCanvas({
         accountId: selectedNode.accountId ?? null,
         accountName: selectedNode.accountName || selectedNode.label || selectedNode.name,
         tradeCard: selectedNode.tradeCard || undefined,
-      });
+      };
+    }
+    const nextKey = focusIdentityKey(nextFocus);
+    if (lastEmittedFocusKeyRef.current === nextKey) {
       return;
     }
-    onFocusChangeRef.current(null);
-  }, [selectedNode]);
+    lastEmittedFocusKeyRef.current = nextKey;
+    onFocusChangeRef.current(nextFocus);
+  }, [nodeLookup, selectedEdge, selectedNode]);
 
   return (
     <section className="case-graph-canvas" aria-label="主图画布">
@@ -450,7 +666,7 @@ export function GraphCanvas({
                 aria-pressed={activeRoleFilter === role}
                 disabled={graphView.roleCounts[role] === 0}
                 onClick={() => {
-                  setContextMenu(null);
+                  setCanvasContextMenu(null);
                   setActiveNodeId(null);
                   setActiveRoleFilter((current) => (current === role ? null : role));
                 }}
@@ -481,92 +697,151 @@ export function GraphCanvas({
         </div>
       ) : null}
 
-      <div className="case-graph-canvas-stage case-graph-canvas-stage--full" ref={stageRef}>
-        {nodes.length ? (
-          <div className="case-graph-canvas-overlay-tools">
+      <div
+        className="case-graph-canvas-stage case-graph-canvas-stage--full"
+        ref={stageRef}
+        onContextMenuCapture={(event) => {
+          if (!shouldSuppressNativeContextMenu(event.target)) return;
+          event.preventDefault();
+        }}
+        onContextMenu={(event) => {
+          if ((event.target as HTMLElement).closest('.case-graph-g6-node, .g6-contextmenu, .case-graph-context-menu, .case-graph-canvas-overlay-tools')) {
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          const bounds = stageRef.current?.getBoundingClientRect();
+          const pointer = {
+            x: bounds ? event.clientX - bounds.left : event.clientX,
+            y: bounds ? event.clientY - bounds.top : event.clientY,
+          };
+          setCanvasContextMenu(
+            resolveMenuPosition(
+              pointer,
+              bounds ? { width: bounds.width, height: bounds.height } : { width: graphViewport.width, height: graphViewport.height },
+              CONTEXT_MENU_ROW_HEIGHT,
+            ),
+          );
+        }}
+      >
+        {hasActiveTab ? (
+          <div className="case-graph-canvas-overlay-tools" aria-label="图操作">
             <button
               className="case-graph-mini-button"
               type="button"
+              disabled={!nodes.length}
+              title="重置视图"
               onClick={() => {
                 setActiveNodeId(null);
                 setActiveRoleFilter(null);
-                setContextMenu(null);
+                setCanvasContextMenu(null);
+                setBrushSelection(null);
+                setBrushMode(false);
                 void graphRef.current?.fitView({ when: 'always', direction: 'both' });
               }}
             >
               <LocateFixed size={14} />
               <span>重置视图</span>
             </button>
+            <button
+              className={`case-graph-mini-button${brushMode ? ' is-active' : ''}`}
+              type="button"
+              aria-pressed={brushMode}
+              disabled={!nodes.length}
+              title={brushMode ? '退出框选' : '框选节点'}
+              onClick={() => {
+                setCanvasContextMenu(null);
+                setBrushSelection(null);
+                setBrushMode((current) => !current);
+              }}
+            >
+              <Scan size={14} />
+              <span>{brushMode ? '退出框选' : '框选节点'}</span>
+            </button>
+            <button
+              className="case-graph-mini-button"
+              type="button"
+              disabled={!nodes.length || loading || drilldownLoading}
+              title="分析图上节点关系"
+              onClick={() => {
+                setCanvasContextMenu(null);
+                onCompleteGraphRelations();
+              }}
+            >
+              <Network size={14} />
+              <span>{drilldownLoading ? '分析中' : '关系'}</span>
+            </button>
+            <button
+              className="case-graph-mini-button case-graph-mini-button--icon"
+              type="button"
+              disabled={loading || drilldownLoading}
+              aria-label="钻取配置"
+              title="钻取配置"
+              onClick={() => {
+                setCanvasContextMenu(null);
+                onOpenGraphConfig();
+              }}
+            >
+              <Settings2 size={14} />
+            </button>
           </div>
         ) : null}
 
-        <div className={`case-graph-g6-host${nodes.length ? '' : ' is-hidden'}`} ref={graphHostRef} />
+        <div
+          className={`case-graph-g6-host${nodes.length ? '' : ' is-hidden'}`}
+          ref={graphHostRef}
+          data-brush-mode={brushMode ? 'true' : 'false'}
+        />
 
         {!nodes.length ? (
           <div className="case-graph-empty">
-            {loading ? '正在加载图数据...' : hasActiveTab ? '先在左侧选择主体，再点击分析上图。' : '先点击新增，创建图形页签。'}
+            {loading ? (
+              '正在加载图数据...'
+            ) : hasActiveTab ? (
+              <div className="case-graph-empty-action">
+                <strong>空白图已创建</strong>
+                <span>右键空白处，或点击下面按钮选择侦办起点。</span>
+                <button className="case-graph-primary-button" type="button" onClick={onChooseInvestigationOrigin}>
+                  选择侦办起点
+                </button>
+              </div>
+            ) : (
+              '先点击新增，创建图形页签。'
+            )}
           </div>
         ) : null}
 
-        {contextMenu && selectedTradeCard ? (
+        {nodes.length && selectedNodeIds.length > 1 ? (
+          <div className="case-graph-selection-toolbar">
+            <MousePointer2 size={14} />
+            <span>已选择 {selectedNodeIds.length} 个节点</span>
+            <button
+              type="button"
+              disabled={excluding || selectedNodes.every((node) => node.isExcluded)}
+              onClick={() => onExcludeNodes(selectedNodes.filter((node) => !node.isExcluded).map(buildExcludedNodePayload))}
+            >
+              取消上图
+            </button>
+          </div>
+        ) : null}
+
+        {canvasContextMenu ? (
           <div
-            className="case-graph-context-menu"
-            style={{ left: contextMenu.x, top: contextMenu.y }}
+            className="case-graph-context-menu case-graph-context-menu--canvas"
+            style={{ left: canvasContextMenu.x, top: canvasContextMenu.y }}
             onClick={(event) => event.stopPropagation()}
           >
-            <button type="button" className="case-graph-context-item is-disabled" disabled>
+            <button
+              type="button"
+              className="case-graph-context-item"
+              disabled={!hasActiveTab || loading || drilldownLoading}
+              onClick={() => {
+                setCanvasContextMenu(null);
+                onChooseInvestigationOrigin();
+              }}
+            >
               <LocateFixed size={14} />
-              <span>定位到此处</span>
-            </button>
-            <button type="button" className="case-graph-context-item is-disabled" disabled>
-              <span>取消上图</span>
-            </button>
-            <button type="button" className="case-graph-context-item is-disabled" disabled>
-              <span>取消群组</span>
-            </button>
-            <button
-              type="button"
-              className="case-graph-context-item"
-              disabled={drilldownLoading}
-              onClick={() => {
-                onDrillDown('both', selectedTradeCard);
-                setContextMenu(null);
-              }}
-            >
-              <span>双向钻取</span>
-            </button>
-            <button
-              type="button"
-              className="case-graph-context-item"
-              disabled={drilldownLoading}
-              onClick={() => {
-                onDrillDown('in', selectedTradeCard);
-                setContextMenu(null);
-              }}
-            >
-              <ArrowDownToLine size={14} />
-              <span>上钻</span>
-            </button>
-            <button
-              type="button"
-              className="case-graph-context-item"
-              disabled={drilldownLoading}
-              onClick={() => {
-                onDrillDown('out', selectedTradeCard);
-                setContextMenu(null);
-              }}
-            >
-              <ArrowUpToLine size={14} />
-              <span>下钻</span>
-            </button>
-            <button type="button" className="case-graph-context-item is-disabled" disabled>
-              <span>明细分析</span>
-            </button>
-            <button type="button" className="case-graph-context-item is-disabled" disabled>
-              <span>汇总分析</span>
-            </button>
-            <button type="button" className="case-graph-context-item is-disabled" disabled>
-              <span>资金关系图</span>
+              <span>选择侦办起点</span>
             </button>
           </div>
         ) : null}
@@ -594,19 +869,41 @@ function resolveTradeCard(
   );
 }
 
+function buildExcludedNodePayload(node: CaseGraphData['nodes'][number]): CaseGraphExcludedNode {
+  const accounts = Array.isArray(node.accounts) ? node.accounts : [];
+  const accountIds = accounts
+    .map((account) => String(account.accountId || '').trim())
+    .filter(Boolean);
+  const tradeCards = accounts
+    .map((account) => String(account.tradeCard || '').trim())
+    .filter(Boolean);
+  const ownAccountId = String(node.accountId || '').trim();
+  const ownTradeCard = String(node.tradeCard || '').trim();
+  return {
+    nodeId: String(node.id || '').trim(),
+    label: String(node.label || node.name || node.accountName || node.tradeCard || node.id || '').trim(),
+    type: String(node.type || (node.isGroup ? 'subject' : 'account')).trim(),
+    accountIds: [...new Set([...accountIds, ownAccountId].filter(Boolean))],
+    tradeCards: [...new Set([...tradeCards, ownTradeCard].filter(Boolean))],
+    reason: 'manual',
+  };
+}
+
 function buildNodeRenderData(
   node: CaseGraphData['nodes'][number],
   metrics: ReturnType<typeof buildCaseGraphViewModel>['nodeMetricsById'] extends Map<string, infer T> ? T : never,
   isSeed: boolean,
   activeNodeId: string | null,
+  selectedNodeIds: string[],
   activeNeighborhood: {
     relatedNodeIds: Set<string>;
     relatedEdgeIds: Set<string>;
   } | null,
 ) {
   return {
+    nodeId: node.id,
     title: node.name || node.label || node.accountName || node.tradeCard || node.accountId || node.id,
-    subtitle: node.tradeCard || node.accountId || node.id,
+    subtitle: resolveNodeSubtitle(node),
     role: metrics?.role ?? 'peripheral',
     roleLabel: metrics?.roleLabel ?? '外围',
     roleBadge: resolveRoleBadge(metrics?.role),
@@ -615,7 +912,9 @@ function buildNodeRenderData(
     isSeed,
     isFocus: Boolean(metrics?.isFocus),
     isActive: activeNodeId === node.id,
+    isSelected: selectedNodeIds.includes(node.id),
     isDimmed: Boolean(activeNeighborhood && !activeNeighborhood.relatedNodeIds.has(node.id)),
+    isExcluded: Boolean(node.isExcluded),
   };
 }
 
@@ -627,6 +926,7 @@ function buildEdgeRenderData(
     relatedEdgeIds: Set<string>;
   } | null,
   curveOffset = 0,
+  activeEdgeId: string | null = null,
 ) {
   const edgeId = resolveEdgeId(edge);
   return {
@@ -634,8 +934,9 @@ function buildEdgeRenderData(
     tradeAmount: edge.tradeAmount,
     strength: metrics?.strength ?? 'medium',
     isFocusEdge: metrics?.isFocusEdge ?? false,
-    isActive: Boolean(activeNeighborhood?.relatedEdgeIds.has(edgeId)),
-    isDimmed: Boolean(activeNeighborhood && !activeNeighborhood.relatedEdgeIds.has(edgeId)),
+    isActive: activeEdgeId === edgeId || Boolean(activeNeighborhood?.relatedEdgeIds.has(edgeId)),
+    isDimmed: Boolean(edge.isExcluded || (activeNeighborhood && !activeNeighborhood.relatedEdgeIds.has(edgeId))),
+    isExcluded: Boolean(edge.isExcluded),
     showLabel: activeNeighborhood
       ? activeNeighborhood.relatedEdgeIds.has(edgeId)
       : (metrics?.strength ?? 'medium') !== 'weak',
@@ -699,8 +1000,139 @@ export function resolveEdgeTypeForTest(): string {
   return GRAPH_EDGE_TYPE;
 }
 
+export function resolveGraphCanvasLayoutForTest(graphData: CaseGraphData): Map<string, { x: number; y: number }> {
+  return computeCaseGraphLayout(graphData, {
+    graphWidth: GRAPH_WIDTH,
+    graphHeight: GRAPH_HEIGHT,
+    nodeWidth: NODE_WIDTH,
+    nodeHeight: NODE_HEIGHT,
+    columnGap: COLUMN_GAP,
+    rowGap: ROW_GAP,
+  });
+}
+
+export function buildGraphBehaviorsForTest(brushMode: boolean): Array<string | Record<string, unknown>> {
+  return buildGraphBehaviors(brushMode);
+}
+
+export function buildNodeContextMenuItemsForTest(input: {
+  selectedCount: number;
+  canDrill: boolean;
+  canExclude: boolean;
+}): NodeContextMenuItem[] {
+  return buildNodeContextMenuItems(input);
+}
+
+export function resolveNextSelectedNodeIdsForTest(
+  current: string[],
+  nodeId: string,
+  native: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean },
+): string[] {
+  return resolveNextSelectedNodeIds(current, nodeId, native);
+}
+
+export function shouldSuppressNativeContextMenuForTest(className: string): boolean {
+  return shouldSuppressNativeContextMenu({ classList: { contains: (value: string) => className.split(/\s+/).includes(value) } } as unknown as EventTarget);
+}
+
+export function shouldStopNativeContextMenuPropagationForTest(): boolean {
+  return shouldStopNativeContextMenuPropagation();
+}
+
+export function resolveMenuPositionForTest(
+  pointer: { x: number; y: number },
+  stage: { width: number; height: number },
+  menuHeight: number,
+): { x: number; y: number } {
+  return resolveMenuPosition(pointer, stage, menuHeight);
+}
+
+export function shouldEmitFocusChangeForTest(previous: unknown, next: unknown): boolean {
+  return focusIdentityKey(previous as CaseGraphConversationFocus | null) !== focusIdentityKey(next as CaseGraphConversationFocus | null);
+}
+
+export function resolveNodeSubtitleForTest(node: Partial<CaseGraphData['nodes'][number]>): string {
+  return resolveNodeSubtitle(node as CaseGraphData['nodes'][number]);
+}
+
+function focusIdentityKey(focus: CaseGraphConversationFocus | null): string {
+  if (!focus) {
+    return 'none';
+  }
+  if (focus.type === 'node') {
+    return `node:${focus.nodeId || focus.accountId || focus.tradeCard || ''}`;
+  }
+  if (focus.type === 'edge') {
+    return `edge:${focus.from || ''}->${focus.to || ''}`;
+  }
+  return 'graph';
+}
+
+function resolveNodeSubtitle(node: CaseGraphData['nodes'][number]): string {
+  const accountIds = collectNodeAccountIds(node);
+  const rawId = String(node.id || '').trim();
+  if (node.type === 'subject' || rawId.startsWith('subject:')) {
+    const suspectMatch = rawId.match(/^subject:suspect:(.+)$/);
+    if (suspectMatch?.[1]) {
+      return accountIds.length > 1
+        ? `主体编号 ${suspectMatch[1]} · ${accountIds.length} 个账号`
+        : `主体编号 ${suspectMatch[1]}`;
+    }
+    if (accountIds.length > 1) {
+      return `合并主体 · ${accountIds.length} 个账号`;
+    }
+    if (accountIds[0]) {
+      return `主体账号 ${accountIds[0]}`;
+    }
+    return '主体';
+  }
+  if (accountIds[0]) {
+    return `账号 ${accountIds[0]}`;
+  }
+  const tradeCard = String(node.tradeCard || node.accounts?.[0]?.tradeCard || '').trim();
+  if (tradeCard) {
+    return '交易账户';
+  }
+  return '图谱节点';
+}
+
+function collectNodeAccountIds(node: CaseGraphData['nodes'][number]): string[] {
+  const values = [
+    node.accountId,
+    ...(node.accountIds ?? []),
+    ...((node.accounts ?? []).map((account) => account.accountId)),
+  ];
+  return [...new Set(values.map((value) => String(value || '').trim()).filter(Boolean))];
+}
+
 function resolveEdgeId(edge: CaseGraphData['edges'][number]): string {
   return String(edge.id || `${edge.source}->${edge.target}`).trim();
+}
+
+function buildEdgeFocusPayload(
+  edge: CaseGraphData['edges'][number] | undefined,
+  nodeLookup: Map<string, CaseGraphData['nodes'][number]>,
+): CaseGraphConversationFocus | null {
+  if (!edge) {
+    return null;
+  }
+  const source = String(edge.source || edge.from || '').trim();
+  const target = String(edge.target || edge.to || '').trim();
+  if (!source || !target) {
+    return null;
+  }
+  const sourceNode = nodeLookup.get(source);
+  const targetNode = nodeLookup.get(target);
+  return {
+    type: 'edge',
+    graphId: '',
+    caseId: '',
+    graphName: '',
+    from: source,
+    to: target,
+    fromName: sourceNode?.accountName || sourceNode?.label || sourceNode?.name || source,
+    toName: targetNode?.accountName || targetNode?.label || targetNode?.name || target,
+  };
 }
 
 function buildRoleNeighborhood(
@@ -737,27 +1169,206 @@ function buildRoleNeighborhood(
   return { relatedNodeIds, relatedEdgeIds };
 }
 
+function toggleId(current: string[], id: string): string[] {
+  return current.includes(id)
+    ? current.filter((item) => item !== id)
+    : [...current, id];
+}
+
+function resolveNextSelectedNodeIds(
+  current: string[],
+  nodeId: string,
+  native: { shiftKey?: boolean; ctrlKey?: boolean; metaKey?: boolean },
+): string[] {
+  if (native.shiftKey || native.ctrlKey || native.metaKey) {
+    return toggleId(current, nodeId);
+  }
+  return [nodeId];
+}
+
+function buildNodeContextMenuItems(input: {
+  selectedCount: number;
+  canDrill: boolean;
+  canExclude: boolean;
+}): NodeContextMenuItem[] {
+  const selectedCount = Math.max(1, input.selectedCount);
+  if (selectedCount > 1) {
+    return input.canExclude
+      ? [{ name: `取消上图 ${selectedCount} 个`, value: 'exclude' }]
+      : [];
+  }
+  const items: NodeContextMenuItem[] = [];
+  if (input.canDrill) {
+    items.push(
+      { name: '双向钻取', value: 'drill:both' },
+      { name: '上钻', value: 'drill:in' },
+      { name: '下钻', value: 'drill:out' },
+    );
+  }
+  if (input.canExclude) {
+    items.push({ name: '取消上图', value: 'exclude' });
+  }
+  return items;
+}
+
+function buildGraphBehaviors(
+  brushMode: boolean,
+  callbacks: {
+    onSelectionChange?: (states: GraphSelectionStates) => void;
+    onDragFinish?: () => void;
+  } = {},
+): Array<string | Record<string, unknown>> {
+  return [
+    ...(brushMode
+      ? [
+          {
+            type: 'brush-select',
+            state: 'selected',
+            enableElements: ['node'],
+            trigger: [],
+            animation: false,
+            onSelect: callbacks.onSelectionChange,
+          },
+        ]
+      : [
+          'drag-canvas',
+          {
+            type: 'click-select',
+            multiple: true,
+            trigger: ['shift'],
+            state: 'selected',
+            onClick: callbacks.onSelectionChange,
+          },
+          {
+            type: 'drag-element',
+            key: 'case-graph-drag-node',
+            dropEffect: 'none',
+            hideEdge: 'none',
+            enable: (event: any) => (event?.targetType == null || event?.targetType === 'node') && resolvePointerButton(event) === 0,
+            onFinish: callbacks.onDragFinish,
+          },
+        ]),
+    'zoom-canvas',
+  ];
+}
+
+function collectRenderedNodePositions(graph: G6Graph): Record<string, { x: number; y: number }> {
+  const positions: Record<string, { x: number; y: number }> = {};
+  for (const node of graph.getNodeData()) {
+    const nodeId = String(node.id || '').trim();
+    const x = finiteNumber((node as any)?.style?.x);
+    const y = finiteNumber((node as any)?.style?.y);
+    if (!nodeId || x == null || y == null) continue;
+    positions[nodeId] = { x, y };
+  }
+  return positions;
+}
+
+function resolvePointerButton(event: any): number {
+  return Number(event?.button ?? event?.nativeEvent?.button ?? event?.originalEvent?.button ?? 0);
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function shouldSuppressNativeContextMenu(target: EventTarget | null): boolean {
+  const canUseElement = typeof Element !== 'undefined';
+  if (!canUseElement || !(target instanceof Element)) {
+    const maybeElement = target as { classList?: { contains?: (value: string) => boolean } } | null;
+    return Boolean(
+      maybeElement?.classList?.contains?.('case-graph-g6-node') ||
+      maybeElement?.classList?.contains?.('case-graph-g6-host') ||
+      maybeElement?.classList?.contains?.('case-graph-canvas-stage') ||
+      maybeElement?.classList?.contains?.('case-graph-context-menu') ||
+      maybeElement?.classList?.contains?.('g6-contextmenu'),
+    );
+  }
+  return Boolean(target.closest('.case-graph-canvas-stage, .case-graph-g6-host, .case-graph-g6-node, .case-graph-context-menu, .g6-contextmenu'));
+}
+
+function shouldStopNativeContextMenuPropagation(): boolean {
+  return false;
+}
+
+function getContextMenuHeight(selectedCount: number): number {
+  return CONTEXT_MENU_ROW_HEIGHT * (selectedCount > 1 ? 5 : 5);
+}
+
+function resolveMenuPosition(
+  pointer: { x: number; y: number },
+  stage: { width: number; height: number },
+  menuHeight: number,
+): { x: number; y: number } {
+  const maxX = Math.max(CONTEXT_MENU_PADDING, stage.width - CONTEXT_MENU_WIDTH - CONTEXT_MENU_PADDING);
+  const maxY = Math.max(CONTEXT_MENU_PADDING, stage.height - menuHeight - CONTEXT_MENU_PADDING);
+  return {
+    x: Math.min(maxX, Math.max(CONTEXT_MENU_PADDING, pointer.x)),
+    y: Math.min(maxY, Math.max(CONTEXT_MENU_PADDING, pointer.y)),
+  };
+}
+
+function normalizeBrushRect(brush: BrushSelectionState): { left: number; top: number; width: number; height: number; right: number; bottom: number } {
+  const left = Math.min(brush.startX, brush.currentX);
+  const top = Math.min(brush.startY, brush.currentY);
+  const right = Math.max(brush.startX, brush.currentX);
+  const bottom = Math.max(brush.startY, brush.currentY);
+  return { left, top, right, bottom, width: right - left, height: bottom - top };
+}
+
+function brushSelectionStyle(brush: BrushSelectionState): CSSProperties {
+  const rect = normalizeBrushRect(brush);
+  return {
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height,
+  };
+}
+
+function isNodeInsideBrush(
+  node: CaseGraphData['nodes'][number],
+  rect: { left: number; top: number; right: number; bottom: number },
+  stage: HTMLDivElement | null,
+): boolean {
+  if (!stage) return false;
+  const nodeElement = stage.querySelector<HTMLElement>(
+    `.case-graph-g6-node[data-node-id="${cssEscapeValue(node.id)}"]`,
+  );
+  if (!nodeElement) return false;
+  const stageBounds = stage.getBoundingClientRect();
+  const nodeBounds = nodeElement.getBoundingClientRect();
+  const nodeCenter = {
+    x: nodeBounds.left + nodeBounds.width / 2 - stageBounds.left,
+    y: nodeBounds.top + nodeBounds.height / 2 - stageBounds.top,
+  };
+  return nodeCenter.x >= rect.left && nodeCenter.x <= rect.right && nodeCenter.y >= rect.top && nodeCenter.y <= rect.bottom;
+}
+
 function renderNodeMarkup(data: {
+  nodeId: string;
   title: string;
   subtitle: string;
   isSeed: boolean;
   isFocus: boolean;
   isActive: boolean;
+  isSelected: boolean;
   isDimmed: boolean;
   role: string;
   roleLabel: string;
   roleBadge: string;
   receivedText: string;
   sentText: string;
+  isExcluded: boolean;
 }): string {
   return `
-    <div class="case-graph-g6-node role-${escapeClassName(data.role)}${data.isSeed ? ' is-seed' : ''}${data.isFocus ? ' is-focus' : ''}${data.isActive ? ' is-active' : ''}${data.isDimmed ? ' is-dimmed' : ''}">
+    <div class="case-graph-g6-node role-${escapeClassName(data.role)}${data.isSeed ? ' is-seed' : ''}${data.isFocus ? ' is-focus' : ''}${data.isActive ? ' is-active' : ''}${data.isSelected ? ' is-selected' : ''}${data.isDimmed ? ' is-dimmed' : ''}${data.isExcluded ? ' is-excluded' : ''}" data-node-id="${escapeHtml(data.nodeId)}">
       <div class="case-graph-g6-node-badge">
-        <span>${escapeHtml(data.roleBadge)}</span>
+        <span>${escapeHtml(data.isExcluded ? '排' : data.roleBadge)}</span>
       </div>
       <div class="case-graph-g6-node-copy">
         <div class="case-graph-g6-node-head">
-          <strong>${escapeHtml(data.title)}</strong>
+          <strong>${escapeHtml(data.isExcluded ? `已排除 · ${data.title}` : data.title)}</strong>
           <span class="case-graph-g6-node-role">${escapeHtml(data.roleLabel)}</span>
         </div>
         <p>${escapeHtml(data.subtitle)}</p>
@@ -768,6 +1379,13 @@ function renderNodeMarkup(data: {
       </div>
     </div>
   `;
+}
+
+function cssEscapeValue(value: string): string {
+  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
+    return CSS.escape(value);
+  }
+  return value.replace(/["\\]/g, '\\$&');
 }
 
 function resolveEventId(event: any): string | null {
@@ -819,8 +1437,12 @@ function getMoneyEdgeStyle(
     strength?: 'weak' | 'medium' | 'strong';
     isActive?: boolean;
     isDimmed?: boolean;
+    isExcluded?: boolean;
   },
 ): { stroke: string; lineWidth: number; opacity: number } {
+  if (data?.isExcluded) {
+    return { stroke: '#9aa4b2', lineWidth: 1.6, opacity: 0.38 };
+  }
   const strength = data?.strength ?? 'medium';
   let stroke = '#6b7ea6';
   let lineWidth = 2.4;

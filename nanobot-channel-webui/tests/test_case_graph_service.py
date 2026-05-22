@@ -87,6 +87,38 @@ class FakeCaseGraphStorage:
             raise self.error
         return self.graphs.get(graph_id)
 
+    def write_current_context(self, graph_id: str, focus: dict[str, Any] | None = None) -> dict[str, Any]:
+        if graph_id not in self.graphs:
+            raise KeyError(graph_id)
+        graph = self.graphs[graph_id]
+        return {
+            "graphId": graph_id,
+            "caseId": graph.get("caseId", ""),
+            "graphName": graph.get("graphName", ""),
+            "chatId": graph.get("chatId", ""),
+            "focus": focus,
+        }
+
+    def delete_graph(self, graph_id: str) -> bool:
+        return self.graphs.pop(graph_id, None) is not None
+
+    def write_current_context_from_metadata(
+        self,
+        *,
+        graph_id: str,
+        case_id: str,
+        graph_name: str,
+        chat_id: str = "",
+        focus: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "graphId": graph_id,
+            "caseId": case_id,
+            "graphName": graph_name,
+            "chatId": chat_id,
+            "focus": focus,
+        }
+
 
 class FakeCaseGraphService:
     def __init__(self) -> None:
@@ -95,7 +127,15 @@ class FakeCaseGraphService:
         self.graph_list_calls: list[str | None] = []
         self.create_calls: list[dict[str, Any]] = []
         self.update_calls: list[dict[str, Any]] = []
+        self.delete_calls: list[str] = []
         self.query_calls: list[dict[str, Any]] = []
+        self.relation_query_calls: list[dict[str, Any]] = []
+        self.relation_complete_calls: list[dict[str, Any]] = []
+        self.relation_filter_calls: list[dict[str, Any]] = []
+        self.relation_exclude_calls: list[dict[str, Any]] = []
+        self.relation_restore_calls: list[dict[str, Any]] = []
+        self.state_load_calls: list[dict[str, str]] = []
+        self.state_layout_calls: list[dict[str, Any]] = []
         self.drilldown_calls: list[dict[str, Any]] = []
         self.drillup_calls: list[dict[str, Any]] = []
         self.drill_calls: list[dict[str, Any]] = []
@@ -134,8 +174,81 @@ class FakeCaseGraphService:
             "groups": {},
             "sourceSelectId": ["节点1"],
         }
+        self.relation_query_result: dict[str, Any] = {
+            "schemaVersion": "case-graph.relation.v1",
+            "caseId": "case-1",
+            "graphId": "graph-1",
+            "queryMode": "seed_one_hop",
+            "graph": {"nodes": [{"id": "subject:suspect:1"}], "edges": []},
+            "delta": {"addedNodes": [{"id": "subject:suspect:1"}], "addedEdges": []},
+            "step": {"stepId": "0001", "type": "seed_one_hop"},
+        }
+        self.relation_complete_result: dict[str, Any] = {
+            "schemaVersion": "case-graph.relation.v1",
+            "caseId": "case-1",
+            "graphId": "graph-1",
+            "queryMode": "complete_current_graph",
+            "graph": {"nodes": [], "edges": [{"id": "money:1->2"}]},
+            "delta": {"addedNodes": [], "addedEdges": [{"id": "money:1->2"}]},
+            "step": {"stepId": "0002", "type": "complete_current_graph"},
+        }
+        self.relation_filter_result: dict[str, Any] = {
+            "schemaVersion": "case-graph.relation.v1",
+            "caseId": "case-1",
+            "graphId": "graph-1",
+            "queryMode": "filter_current_graph",
+            "graph": {"nodes": [], "edges": [{"id": "money:filtered"}]},
+            "delta": {"addedNodes": [], "addedEdges": [{"id": "money:filtered"}]},
+            "step": {"stepId": "0003", "type": "filter_current_graph"},
+        }
+        self.relation_exclude_result: dict[str, Any] = {
+            "schemaVersion": "case-graph.relation.v1",
+            "caseId": "case-1",
+            "graphId": "graph-1",
+            "queryMode": "manual_exclude_node",
+            "graph": {"nodes": [{"id": "account:35", "isExcluded": True}], "edges": [], "excludedNodes": [{"nodeId": "account:35"}]},
+            "delta": {"addedNodes": [], "addedEdges": [], "updatedNodes": [{"nodeId": "account:35"}]},
+            "step": {"stepId": "0004", "type": "manual_exclude_node"},
+        }
+        self.relation_restore_result: dict[str, Any] = {
+            "schemaVersion": "case-graph.relation.v1",
+            "caseId": "case-1",
+            "graphId": "graph-1",
+            "queryMode": "manual_restore_node",
+            "graph": {"nodes": [{"id": "account:35", "isExcluded": False}], "edges": [], "excludedNodes": []},
+            "delta": {"addedNodes": [], "addedEdges": [], "updatedNodes": [{"nodeId": "account:35"}]},
+            "step": {"stepId": "0005", "type": "manual_restore_node"},
+        }
+        self.graph_state_result: dict[str, Any] = {
+            "schemaVersion": "case-graph.state.v1",
+            "caseId": "case-1",
+            "graphId": "graph-1",
+            "graphName": "图1",
+            "revision": 1,
+            "updatedAt": "",
+            "lastStepId": "0001",
+            "graph": {
+                "nodes": [{"id": "a"}],
+                "edges": [],
+                "tradeCards": [],
+                "groupMap": {},
+                "sourceSelectId": [],
+                "summarySelectedAccountId": [],
+                "summarySelectedAccountName": [],
+                "excludedTrades": [],
+                "excludedAccountId": [],
+                "excludedAccountName": [],
+                "layout": {"nodePositions": {"a": {"x": 100, "y": 200}}, "viewport": {"x": 0, "y": 0, "zoom": 1}},
+                "filters": {"minAmount": None, "maxAmount": None, "startTime": "", "endTime": ""},
+                "excludedNodes": [],
+                "manualEdges": [],
+                "annotations": [],
+                "graphData": None,
+            },
+        }
         self.drilldown_result: dict[str, Any] = {"tradeCards": [{"tradeId": "trade-2", "amount": 200}]}
         self.target_detail_result: list[dict[str, Any]] = [{"tradeId": "trade-9"}]
+        self.delete_result = True
         self.case_list_error: Exception | None = None
         self.account_list_error: Exception | None = None
         self.create_error: Exception | None = None
@@ -186,6 +299,63 @@ class FakeCaseGraphService:
         })
         return self.query_result
 
+    def query_seed_one_hop(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.query_error is not None:
+            raise self.query_error
+        self.relation_query_calls.append(payload)
+        return self.relation_query_result
+
+    def complete_current_graph(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.query_error is not None:
+            raise self.query_error
+        self.relation_complete_calls.append(payload)
+        return self.relation_complete_result
+
+    def filter_current_graph(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.query_error is not None:
+            raise self.query_error
+        self.relation_filter_calls.append(payload)
+        return self.relation_filter_result
+
+    def exclude_node(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.query_error is not None:
+            raise self.query_error
+        self.relation_exclude_calls.append(payload)
+        return self.relation_exclude_result
+
+    def restore_node(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.query_error is not None:
+            raise self.query_error
+        self.relation_restore_calls.append(payload)
+        return self.relation_restore_result
+
+    def load_current(self, case_id: str, graph_id: str) -> dict[str, Any]:
+        self.state_load_calls.append({"case_id": case_id, "graph_id": graph_id})
+        return self.graph_state_result
+
+    def update_layout(
+        self,
+        *,
+        case_id: str,
+        graph_id: str,
+        graph_name: str = "",
+        node_positions: dict[str, Any],
+        viewport: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self.state_layout_calls.append(
+            {
+                "case_id": case_id,
+                "graph_id": graph_id,
+                "graph_name": graph_name,
+                "node_positions": node_positions,
+                "viewport": viewport or {},
+            }
+        )
+        return self.graph_state_result
+
+    def list_steps(self, case_id: str, graph_id: str) -> list[dict[str, Any]]:
+        return [{"stepId": "0001", "operation": {"type": "seed_one_hop"}}]
+
     def update_graph(self, graph_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         self.update_calls.append({
             "graph_id": graph_id,
@@ -195,6 +365,10 @@ class FakeCaseGraphService:
         updated["graph_id"] = graph_id
         updated.update(patch)
         return updated
+
+    def delete_graph(self, graph_id: str) -> bool:
+        self.delete_calls.append(graph_id)
+        return self.delete_result
 
     def drill_down(self, *, graph_id: str, case_id: str, **filters: Any) -> dict[str, Any]:
         if self.drilldown_error is not None:
@@ -260,6 +434,8 @@ async def _case_graph_client(
         channel,
     )
     channel._case_graph_service = service or FakeCaseGraphService()
+    channel._case_graph_relation_service = service or FakeCaseGraphService()
+    channel._case_graph_state_service = service or FakeCaseGraphService()
     channel._case_graph_storage = storage or FakeCaseGraphStorage()
     app = channel._create_app(web)
 
@@ -1044,6 +1220,102 @@ def test_pymysql_target_detail_serializes_trade_time() -> None:
     ]
 
 
+def test_pymysql_target_detail_backfills_empty_party_names_from_request_cards() -> None:
+    _load_service_module()
+    mysql_client_module = sys.modules["nanobot_channel_webui.case_graph.mysql_client"]
+
+    class StubClient(mysql_client_module.PyMySQLCaseGraphQueryClient):
+        def _query(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+            return [
+                {
+                    "id": 45,
+                    "serial_number": "SN-45",
+                    "trade_amount": 20000,
+                    "trade_time": datetime(2026, 1, 14, 3, 46, 34),
+                    "trade_abstract": None,
+                    "payer_account_id": 35,
+                    "payer_account_name": "",
+                    "payer_pay_account": "085e9858ee415e117f9003838@wx.tenpay.com",
+                    "payee_account_id": 1,
+                    "payee_account_name": "伍华中",
+                    "payee_pay_account": "085e9858e90527255ba312e91@wx.tenpay.com",
+                }
+            ]
+
+    client = StubClient(
+        mysql_client_module.CaseGraphMySQLConfig(
+            host="127.0.0.1",
+            port=3306,
+            user="root",
+            password="secret",
+            database="jingzhen",
+        )
+    )
+
+    result = client.target_detail(
+        {
+            "caseId": "case-37",
+            "payerCards": [
+                {
+                    "accountId": "35",
+                    "tradeCard": "085e9858ee415e117f9003838@wx.tenpay.com",
+                    "accountName": "冯燕青",
+                }
+            ],
+            "payeeCards": [
+                {
+                    "accountId": "1",
+                    "tradeCard": "085e9858e90527255ba312e91@wx.tenpay.com",
+                    "accountName": "伍华中",
+                }
+            ],
+        }
+    )
+
+    assert result[0]["payerAccountName"] == "冯燕青"
+    assert result[0]["payeeAccountName"] == "伍华中"
+
+
+def test_pymysql_target_detail_uses_raw_trade_table_columns_for_card_matching() -> None:
+    _load_service_module()
+    mysql_client_module = sys.modules["nanobot_channel_webui.case_graph.mysql_client"]
+
+    class StubClient(mysql_client_module.PyMySQLCaseGraphQueryClient):
+        def __init__(self, config: Any) -> None:
+            super().__init__(config)
+            self.sql = ""
+            self.params: tuple[Any, ...] = ()
+
+        def _query(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+            self.sql = sql
+            self.params = params
+            return []
+
+    client = StubClient(
+        mysql_client_module.CaseGraphMySQLConfig(
+            host="127.0.0.1",
+            port=3306,
+            user="root",
+            password="secret",
+            database="jingzhen",
+        )
+    )
+
+    client.target_detail(
+        {
+            "caseId": "case-37",
+            "payerCards": [{"accountId": "35", "tradeCard": "payer-card", "accountName": "冯燕青"}],
+            "payeeCards": [{"accountId": "1", "tradeCard": "payee-card", "accountName": "伍华中"}],
+        }
+    )
+
+    assert "payer_suspect_name" not in client.sql
+    assert "payee_suspect_name" not in client.sql
+    assert "payer_account_name" in client.sql
+    assert "payee_account_name" in client.sql
+    assert client.params == (35, "35", 1, "1", 200)
+
+
 @pytest.mark.parametrize(
     ("method_name", "kwargs"),
     [
@@ -1090,28 +1362,28 @@ def test_methods_raise_for_missing_graph(
 
 
 @pytest.mark.anyio
-async def test_http_query_route_calls_service_and_returns_payload() -> None:
+async def test_http_relation_query_route_calls_service_and_returns_payload() -> None:
     service = FakeCaseGraphService()
 
     async with _case_graph_client(service=service) as (client, _channel):
         response = await client.post(
-            "/api/case-graph/query",
+            "/api/case-graph/relation/query",
             json={
                 "graphId": "graph-1",
                 "caseId": "case-1",
-                "tradeCards": [{"tradeId": "trade-1"}],
+                "seeds": [{"suspectId": "1", "accountIds": ["1"]}],
                 "direction": "out",
             },
         )
 
         assert response.status == 200
-        assert await response.json() == service.query_result
-        assert service.query_calls == [
+        assert await response.json() == service.relation_query_result
+        assert service.relation_query_calls == [
             {
-                "graph_id": "graph-1",
-                "case_id": "case-1",
-                "trade_cards": [{"tradeId": "trade-1"}],
-                "filters": {"direction": "out"},
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "seeds": [{"suspectId": "1", "accountIds": ["1"]}],
+                "direction": "out",
             }
         ]
 
@@ -1153,32 +1425,136 @@ async def test_http_graph_list_route_calls_service_and_returns_payload() -> None
 
 
 @pytest.mark.anyio
-async def test_http_drilldown_route_calls_service_and_returns_payload() -> None:
+async def test_http_relation_complete_route_calls_service_and_returns_payload() -> None:
     service = FakeCaseGraphService()
 
     async with _case_graph_client(service=service) as (client, _channel):
         response = await client.post(
-            "/api/case-graph/query/drilldown",
+            "/api/case-graph/relation/complete",
             json={
                 "graphId": "graph-1",
                 "caseId": "case-1",
-                "payer": "payer-1",
-                "payee": "payee-1",
-                "drill_type": "out",
+                "accounts": [{"accountId": "1"}, {"accountId": "2"}],
             },
         )
 
         assert response.status == 200
-        assert await response.json() == service.drilldown_result
-        assert service.drilldown_calls == [
+        assert await response.json() == service.relation_complete_result
+        assert service.relation_complete_calls == [
             {
-                "graph_id": "graph-1",
-                "case_id": "case-1",
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "accounts": [{"accountId": "1"}, {"accountId": "2"}],
+            }
+        ]
+
+
+@pytest.mark.anyio
+async def test_http_relation_filter_route_calls_service_and_returns_payload() -> None:
+    service = FakeCaseGraphService()
+
+    async with _case_graph_client(service=service) as (client, _channel):
+        response = await client.post(
+            "/api/case-graph/relation/filter",
+            json={
+                "graphId": "graph-1",
+                "caseId": "case-1",
                 "filters": {
-                    "payer": "payer-1",
-                    "payee": "payee-1",
-                    "drill_type": "out",
+                    "minAmount": 10000,
+                    "maxAmount": 50000,
+                    "startTime": "2026-01-01 00:00:00",
+                    "endTime": "2026-01-31 23:59:59",
                 },
+            },
+        )
+
+        assert response.status == 200
+        assert await response.json() == service.relation_filter_result
+        assert service.relation_filter_calls == [
+            {
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "filters": {
+                    "minAmount": 10000,
+                    "maxAmount": 50000,
+                    "startTime": "2026-01-01 00:00:00",
+                    "endTime": "2026-01-31 23:59:59",
+                },
+            }
+        ]
+
+
+@pytest.mark.anyio
+async def test_http_relation_exclude_and_restore_routes_call_service() -> None:
+    service = FakeCaseGraphService()
+
+    async with _case_graph_client(service=service) as (client, _channel):
+        exclude_response = await client.post(
+            "/api/case-graph/relation/exclude-node",
+            json={
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "node": {"nodeId": "account:35", "label": "冯燕青", "type": "account"},
+            },
+        )
+        restore_response = await client.post(
+            "/api/case-graph/relation/restore-node",
+            json={
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "nodeId": "account:35",
+            },
+        )
+
+        assert exclude_response.status == 200
+        assert await exclude_response.json() == service.relation_exclude_result
+        assert service.relation_exclude_calls == [
+            {
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "node": {"nodeId": "account:35", "label": "冯燕青", "type": "account"},
+            }
+        ]
+        assert restore_response.status == 200
+        assert await restore_response.json() == service.relation_restore_result
+        assert service.relation_restore_calls == [
+            {
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "nodeId": "account:35",
+            }
+        ]
+
+
+@pytest.mark.anyio
+async def test_http_relation_state_routes_call_state_service() -> None:
+    service = FakeCaseGraphService()
+
+    async with _case_graph_client(service=service) as (client, _channel):
+        get_response = await client.get("/api/case-graph/relation/state/case-1/graph-1")
+        layout_response = await client.post(
+            "/api/case-graph/relation/state/case-1/graph-1/operations/layout",
+            json={
+                "graphName": "图1",
+                "nodePositions": {"a": {"x": 100, "y": 200}},
+                "viewport": {"x": 0, "y": 0, "zoom": 1},
+            },
+        )
+        steps_response = await client.get("/api/case-graph/relation/state/case-1/graph-1/steps")
+
+        assert get_response.status == 200
+        assert await get_response.json() == service.graph_state_result
+        assert layout_response.status == 200
+        assert await layout_response.json() == service.graph_state_result
+        assert await steps_response.json() == {"items": [{"stepId": "0001", "operation": {"type": "seed_one_hop"}}]}
+        assert service.state_load_calls == [{"case_id": "case-1", "graph_id": "graph-1"}]
+        assert service.state_layout_calls == [
+            {
+                "case_id": "case-1",
+                "graph_id": "graph-1",
+                "graph_name": "图1",
+                "node_positions": {"a": {"x": 100, "y": 200}},
+                "viewport": {"x": 0, "y": 0, "zoom": 1},
             }
         ]
 
@@ -1269,6 +1645,42 @@ async def test_http_update_route_persists_graph_patch() -> None:
 
 
 @pytest.mark.anyio
+async def test_http_delete_graph_route_removes_graph_files() -> None:
+    service = FakeCaseGraphService()
+    storage = FakeCaseGraphStorage()
+    storage.graphs["graph-existing"] = {
+        "graph_id": "graph-existing",
+        "caseId": "case-1",
+        "graphName": "存量图",
+        "tradeCards": [],
+        "excludedTrades": [],
+        "excludedAccountId": "",
+        "drillNums": 0,
+        "drillType": None,
+    }
+
+    async with _case_graph_client(service=service, storage=storage) as (client, _channel):
+        response = await client.delete("/api/case-graph/graph/graph-existing")
+
+        assert response.status == 200
+        assert await response.json() == {"ok": True}
+        assert service.delete_calls == ["graph-existing"]
+
+
+@pytest.mark.anyio
+async def test_http_delete_graph_route_returns_404_for_missing_graph() -> None:
+    service = FakeCaseGraphService()
+    service.delete_result = False
+
+    async with _case_graph_client(service=service) as (client, _channel):
+        response = await client.delete("/api/case-graph/graph/missing")
+
+        assert response.status == 404
+        assert (await response.json())["error"] == "图不存在"
+        assert service.delete_calls == ["missing"]
+
+
+@pytest.mark.anyio
 async def test_http_route_returns_400_when_required_fields_missing() -> None:
     async with _case_graph_client() as (client, _channel):
         response = await client.post(
@@ -1284,7 +1696,7 @@ async def test_http_route_returns_400_when_required_fields_missing() -> None:
 async def test_http_route_returns_400_for_invalid_json_body() -> None:
     async with _case_graph_client() as (client, _channel):
         response = await client.post(
-            "/api/case-graph/query",
+            "/api/case-graph/relation/query",
             data="{",
             headers={"Content-Type": "application/json"},
         )
@@ -1298,14 +1710,14 @@ async def test_http_route_returns_400_for_invalid_json_body() -> None:
     ("path", "payload", "message"),
     [
         (
-            "/api/case-graph/query",
-            {"graphId": {}, "caseId": "case-1", "tradeCards": [{"tradeId": "trade-1"}]},
+            "/api/case-graph/relation/query",
+            {"graphId": {}, "caseId": "case-1", "seeds": [{"accountIds": ["1"]}]},
             "graphId",
         ),
         (
-            "/api/case-graph/query",
-            {"graphId": "graph-1", "caseId": "case-1", "tradeCards": ["bad-card"]},
-            "tradeCards",
+            "/api/case-graph/relation/query",
+            {"graphId": "graph-1", "caseId": "case-1", "seeds": ["bad-seed"]},
+            "seeds",
         ),
         (
             "/api/case-graph/target-detail",
@@ -1349,22 +1761,49 @@ async def test_http_detail_route_maps_corrupt_graph_to_conflict_response(tmp_pat
 
 
 @pytest.mark.anyio
-async def test_http_query_route_maps_service_runtime_error_to_json_failure() -> None:
+async def test_http_context_route_falls_back_to_request_graph_metadata() -> None:
+    service = FakeCaseGraphService()
+    storage = FakeCaseGraphStorage()
+
+    async with _case_graph_client(service=service, storage=storage) as (client, _channel):
+        response = await client.post(
+            "/api/case-graph/context",
+            json={
+                "graphId": "graph-new",
+                "caseId": "case-1",
+                "graphName": "主图",
+                "chatId": "chat-1",
+                "focus": {"type": "node", "nodeId": "account:1"},
+            },
+        )
+
+        assert response.status == 200
+        assert await response.json() == {
+            "graphId": "graph-new",
+            "caseId": "case-1",
+            "graphName": "主图",
+            "chatId": "chat-1",
+            "focus": {"type": "node", "nodeId": "account:1"},
+        }
+
+
+@pytest.mark.anyio
+async def test_http_relation_query_route_maps_service_runtime_error_to_json_failure() -> None:
     service = FakeCaseGraphService()
     service.query_error = RuntimeError("db down")
 
     async with _case_graph_client(service=service) as (client, _channel):
         response = await client.post(
-            "/api/case-graph/query",
+            "/api/case-graph/relation/query",
             json={
                 "graphId": "graph-1",
                 "caseId": "case-1",
-                "tradeCards": [{"tradeId": "trade-1"}],
+                "seeds": [{"suspectId": "1", "accountIds": ["1"]}],
             },
         )
 
         assert response.status == 502
-        assert (await response.json())["error"] == "查询图失败: db down"
+        assert (await response.json())["error"] == "关系图查询失败: db down"
 
 
 @pytest.mark.anyio

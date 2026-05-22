@@ -193,21 +193,23 @@
 
 - [graph-canvas.tsx](../../frontend/src/case-graph/graph-canvas.tsx:439)
 
-### P1: 当前布局渲染主动关闭了持久化坐标优先
+### P1: 原版完整画布序列化能力仍未完全复刻
 
 现状：
 
-- 布局算法本身支持优先使用保存态坐标
-- 但 `GraphCanvas` 调用时传入了 `preferPersistedPositions: false`
+- 当前关系图状态已经把节点坐标保存到 `graph.layout.nodePositions`
+- 刷新页面会优先读取 `case_graphs/{caseId}/{graphId}/graph.json` 的当前投影
+- 但原版围绕 `graphContent` 的完整画布图元序列化、重置和回放能力还没有完全复刻
 
 定位：
 
-- [graph-layout.ts](../../frontend/src/case-graph/graph-layout.ts:64)
-- [graph-canvas.tsx](../../frontend/src/case-graph/graph-canvas.tsx:87)
+- [graph_repository.py](../../src/nanobot_channel_webui/case_graph/graph_repository.py)
+- [workbench.tsx](../../frontend/src/case-graph/workbench.tsx)
 
 影响：
 
-- 与原版「已有保存态时优先按 `graphContent` 回显」的语义不一致
+- 当前可以解决刷新后关系图节点坐标漂移
+- 但如果未来要做完整回放、重置到任意历史步骤、或保留非关系图元，还需要继续补齐画布层能力
 
 ### P1: 新建图时没有带入当前左侧主体基线
 

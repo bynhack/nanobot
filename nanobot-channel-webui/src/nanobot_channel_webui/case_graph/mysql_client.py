@@ -237,6 +237,96 @@ class PyMySQLCaseGraphQueryClient:
             )
         return items
 
+    def query_relation_one_hop(
+        self,
+        *,
+        case_id: int | str,
+        seed_accounts: list[dict[str, Any]],
+        direction: str = "both",
+        filters: QueryPayload | None = None,
+    ) -> QueryResult:
+        parsed_case_id = self._parse_case_id(case_id)
+        normalized_direction = direction if direction in {"in", "out", "both"} else "both"
+        seed = self._extract_trade_card_seed(seed_accounts)
+        if not seed["account_ids"] and not seed["pay_accounts"]:
+            return {"nodes": [], "edges": []}
+
+        seed_clauses, seed_params = self._seed_where_clause(seed, direction=normalized_direction)
+        query_filters = filters or {}
+        filter_sql, filter_params = self._trade_filter_clauses(query_filters)
+        order_by_sql = "trade_amount DESC, trade_count DESC"
+        if self._drill_sort_type(query_filters) == 2:
+            order_by_sql = "trade_count DESC, trade_amount DESC"
+        rows = self._query(
+            f"""
+            SELECT
+                payer_account_id,
+                payer_pay_account,
+                MAX(NULLIF(payer_account_name, '')) AS payer_account_name,
+                payee_account_id,
+                payee_pay_account,
+                MAX(NULLIF(payee_account_name, '')) AS payee_account_name,
+                COUNT(*) AS trade_count,
+                SUM(trade_amount) AS trade_amount,
+                MIN(trade_time) AS start_time,
+                MAX(trade_time) AS end_time
+            FROM ga_trade_{parsed_case_id}
+            WHERE {" AND ".join(seed_clauses)}
+              {"".join(f" AND {clause}" for clause in filter_sql)}
+            GROUP BY
+                payer_account_id,
+                payer_pay_account,
+                payee_account_id,
+                payee_pay_account
+            ORDER BY {order_by_sql}
+            LIMIT %s
+            """,
+            seed_params + filter_params + (self._query_limit(query_filters),),
+        )
+        return self._relation_graph_from_one_hop_rows(rows, seed_accounts=seed_accounts)
+
+    def query_relation_between_accounts(
+        self,
+        *,
+        case_id: int | str,
+        accounts: list[dict[str, Any]],
+        filters: QueryPayload | None = None,
+    ) -> QueryResult:
+        parsed_case_id = self._parse_case_id(case_id)
+        account_ids = self._relation_account_ids(accounts)
+        if len(account_ids) < 2:
+            return {"nodes": [], "edges": []}
+        placeholders = ", ".join(["%s"] * len(account_ids))
+        filter_sql, filter_params = self._trade_filter_clauses(filters or {})
+        rows = self._query(
+            f"""
+            SELECT
+                payer_account_id,
+                payer_pay_account,
+                MAX(NULLIF(payer_account_name, '')) AS payer_account_name,
+                payee_account_id,
+                payee_pay_account,
+                MAX(NULLIF(payee_account_name, '')) AS payee_account_name,
+                COUNT(*) AS trade_count,
+                SUM(trade_amount) AS trade_amount,
+                MIN(trade_time) AS start_time,
+                MAX(trade_time) AS end_time
+            FROM ga_trade_{parsed_case_id}
+            WHERE payer_account_id IN ({placeholders})
+              AND payee_account_id IN ({placeholders})
+              {"".join(f" AND {clause}" for clause in filter_sql)}
+            GROUP BY
+                payer_account_id,
+                payer_pay_account,
+                payee_account_id,
+                payee_pay_account
+            ORDER BY trade_amount DESC, trade_count DESC
+            LIMIT 500
+            """,
+            tuple(account_ids + account_ids) + filter_params,
+        )
+        return self._relation_graph_from_account_rows(rows, scope="graph_internal")
+
     def query_graph(self, payload: QueryPayload) -> QueryResult:
         case_id = self._parse_case_id(payload.get("caseId"))
         seed_cards = [dict(card) for card in payload.get("tradeCards") or [] if isinstance(card, dict)]
@@ -961,6 +1051,8 @@ class PyMySQLCaseGraphQueryClient:
             + filter_params
             + (self._detail_limit(payload),),
         )
+        payer_name_index = self._detail_card_name_index(payer_cards)
+        payee_name_index = self._detail_card_name_index(payee_cards)
 
         return [
             {
@@ -970,10 +1062,20 @@ class PyMySQLCaseGraphQueryClient:
                 "tradeTime": _json_safe_scalar(row.get("trade_time")),
                 "tradeAbstract": row.get("trade_abstract") or "",
                 "payerAccountId": row.get("payer_account_id"),
-                "payerAccountName": row.get("payer_account_name") or "",
+                "payerAccountName": row.get("payer_account_name")
+                or self._resolve_detail_card_name(
+                    payer_name_index,
+                    row.get("payer_account_id"),
+                    row.get("payer_pay_account"),
+                ),
                 "payerTradeCard": row.get("payer_pay_account") or "",
                 "payeeAccountId": row.get("payee_account_id"),
-                "payeeAccountName": row.get("payee_account_name") or "",
+                "payeeAccountName": row.get("payee_account_name")
+                or self._resolve_detail_card_name(
+                    payee_name_index,
+                    row.get("payee_account_id"),
+                    row.get("payee_pay_account"),
+                ),
                 "payeeTradeCard": row.get("payee_pay_account") or "",
             }
             for row in rows
@@ -1198,6 +1300,172 @@ class PyMySQLCaseGraphQueryClient:
                 }
             )
         return list(nodes_by_id.values()), money
+
+    @classmethod
+    def _relation_graph_from_one_hop_rows(
+        cls,
+        rows: list[dict[str, Any]],
+        *,
+        seed_accounts: list[dict[str, Any]],
+    ) -> QueryResult:
+        seed_node = cls._relation_seed_node(seed_accounts)
+        nodes_by_id: dict[str, dict[str, Any]] = {seed_node["id"]: seed_node}
+        seed_ids = {
+            str(account.get("accountId") or "").strip()
+            for account in seed_accounts
+            if str(account.get("accountId") or "").strip()
+        }
+        seed_cards = {
+            str(account.get("tradeCard") or account.get("payAccount") or "").strip()
+            for account in seed_accounts
+            if str(account.get("tradeCard") or account.get("payAccount") or "").strip()
+        }
+        edges: list[dict[str, Any]] = []
+        for row in rows:
+            payer_is_seed = cls._relation_party_is_seed(row, "payer", seed_ids, seed_cards)
+            payee_is_seed = cls._relation_party_is_seed(row, "payee", seed_ids, seed_cards)
+            if payer_is_seed and payee_is_seed:
+                continue
+            if payer_is_seed:
+                counterparty = cls._relation_party_node(row, "payee")
+                source_id = seed_node["id"]
+                target_id = counterparty["id"]
+            elif payee_is_seed:
+                counterparty = cls._relation_party_node(row, "payer")
+                source_id = counterparty["id"]
+                target_id = seed_node["id"]
+            else:
+                continue
+            nodes_by_id.setdefault(counterparty["id"], counterparty)
+            edges.append(
+                {
+                    "id": f"money:{source_id}->{target_id}",
+                    "from": source_id,
+                    "to": target_id,
+                    "source": source_id,
+                    "target": target_id,
+                    "scope": "seed_to_counterparty",
+                    "tradeAmount": float(row.get("trade_amount") or 0),
+                    "tradeCount": int(row.get("trade_count") or 0),
+                    "startTime": _json_safe_scalar(row.get("start_time") or row.get("startDate")),
+                    "endTime": _json_safe_scalar(row.get("end_time") or row.get("endDate")),
+                }
+            )
+        return {"nodes": list(nodes_by_id.values()), "edges": edges}
+
+    @classmethod
+    def _relation_seed_node(cls, seed_accounts: list[dict[str, Any]]) -> dict[str, Any]:
+        first = seed_accounts[0] if seed_accounts else {}
+        suspect_id = str(first.get("suspectId") or "").strip()
+        suspect_name = str(first.get("suspectName") or first.get("accountName") or "").strip()
+        account_ids = [
+            str(account.get("accountId") or "").strip()
+            for account in seed_accounts
+            if str(account.get("accountId") or "").strip()
+        ]
+        accounts = [
+            {
+                "accountId": str(account.get("accountId") or "").strip() or None,
+                "tradeCard": str(account.get("tradeCard") or account.get("payAccount") or "").strip(),
+                "accountName": str(account.get("accountName") or suspect_name).strip(),
+            }
+            for account in seed_accounts
+            if str(account.get("accountId") or account.get("tradeCard") or account.get("payAccount") or "").strip()
+        ]
+        node_key = suspect_id or suspect_name or (account_ids[0] if account_ids else "seed")
+        node_id = f"subject:suspect:{node_key}" if suspect_id else f"subject:{node_key}"
+        return {
+            "id": node_id,
+            "type": "subject",
+            "role": "seed",
+            "label": suspect_name or node_key,
+            "suspectId": suspect_id or None,
+            "suspectName": suspect_name,
+            "accountIds": account_ids,
+            "accounts": accounts,
+            "depth": 0,
+        }
+
+    @staticmethod
+    def _relation_party_is_seed(
+        row: dict[str, Any],
+        prefix: str,
+        seed_ids: set[str],
+        seed_cards: set[str],
+    ) -> bool:
+        account_id = str(row.get(f"{prefix}_account_id") or "").strip()
+        pay_account = str(row.get(f"{prefix}_pay_account") or "").strip()
+        return (account_id and account_id in seed_ids) or (pay_account and pay_account in seed_cards)
+
+    @classmethod
+    def _relation_party_node(cls, row: dict[str, Any], prefix: str) -> dict[str, Any]:
+        account_id = str(row.get(f"{prefix}_account_id") or "").strip()
+        trade_card = str(row.get(f"{prefix}_pay_account") or "").strip()
+        account_name = str(row.get(f"{prefix}_account_name") or "").strip()
+        node_id = f"account:{account_id}" if account_id else f"account:{trade_card}"
+        label = account_name or trade_card or node_id
+        return {
+            "id": node_id,
+            "type": "account",
+            "role": "counterparty",
+            "label": label,
+            "accountId": account_id or None,
+            "accountIds": [account_id] if account_id else [],
+            "tradeCard": trade_card,
+            "accountName": account_name,
+            "accounts": [
+                {
+                    "accountId": account_id or None,
+                    "tradeCard": trade_card,
+                    "accountName": account_name,
+                }
+            ],
+            "depth": 1,
+        }
+
+    @classmethod
+    def _relation_graph_from_account_rows(cls, rows: list[dict[str, Any]], *, scope: str) -> QueryResult:
+        nodes_by_id: dict[str, dict[str, Any]] = {}
+        edges: list[dict[str, Any]] = []
+        for row in rows:
+            source = cls._relation_party_node(row, "payer")
+            target = cls._relation_party_node(row, "payee")
+            source["role"] = "current"
+            target["role"] = "current"
+            source["depth"] = 0
+            target["depth"] = 0
+            nodes_by_id.setdefault(source["id"], source)
+            nodes_by_id.setdefault(target["id"], target)
+            edges.append(
+                {
+                    "id": f"money:{source['id']}->{target['id']}",
+                    "from": source["id"],
+                    "to": target["id"],
+                    "source": source["id"],
+                    "target": target["id"],
+                    "scope": scope,
+                    "tradeAmount": float(row.get("trade_amount") or 0),
+                    "tradeCount": int(row.get("trade_count") or 0),
+                    "startTime": _json_safe_scalar(row.get("start_time") or row.get("startDate")),
+                    "endTime": _json_safe_scalar(row.get("end_time") or row.get("endDate")),
+                }
+            )
+        return {"nodes": list(nodes_by_id.values()), "edges": edges}
+
+    @staticmethod
+    def _relation_account_ids(accounts: list[dict[str, Any]]) -> list[int]:
+        ids: list[int] = []
+        seen: set[int] = set()
+        for account in accounts:
+            account_id = str(account.get("accountId") or "").strip()
+            if not account_id.isdigit():
+                continue
+            parsed = int(account_id)
+            if parsed in seen:
+                continue
+            seen.add(parsed)
+            ids.append(parsed)
+        return ids
 
     @staticmethod
     def _node_id(account_id: Any, pay_account: Any) -> str:
@@ -1692,7 +1960,7 @@ class PyMySQLCaseGraphQueryClient:
     @classmethod
     def _detail_cards_match_sql(cls, prefix: str, cards: list[dict[str, Any]]) -> str:
         return " OR ".join(
-            f"({cls._account_match_sql(prefix, value)})"
+            f"({cls._detail_card_match_sql(prefix, value)})"
             for value in cls._detail_card_values(cards)
         )
 
@@ -1700,8 +1968,21 @@ class PyMySQLCaseGraphQueryClient:
     def _detail_cards_match_params(cls, cards: list[dict[str, Any]]) -> tuple[Any, ...]:
         params: list[Any] = []
         for value in cls._detail_card_values(cards):
-            params.extend(cls._account_match_params(value))
+            params.extend(cls._detail_card_match_params(value))
         return tuple(params)
+
+    @staticmethod
+    def _detail_card_match_sql(prefix: str, value: str) -> str:
+        if value.isdigit():
+            return f"{prefix}_account_id = %s OR {prefix}_pay_account = %s"
+        return f"{prefix}_pay_account = %s OR {prefix}_account_name = %s"
+
+    @staticmethod
+    def _detail_card_match_params(value: str) -> tuple[Any, ...]:
+        if value.isdigit():
+            numeric = int(value)
+            return (numeric, value)
+        return (value, value)
 
     @staticmethod
     def _detail_card_values(cards: list[dict[str, Any]]) -> list[str]:
@@ -1720,6 +2001,38 @@ class PyMySQLCaseGraphQueryClient:
                     values.append(value)
                     break
         return values
+
+    @staticmethod
+    def _detail_card_name_index(cards: list[dict[str, Any]]) -> dict[str, str]:
+        index: dict[str, str] = {}
+        for card in cards:
+            if not isinstance(card, dict):
+                continue
+            name = str(card.get("accountName") or card.get("suspectName") or "").strip()
+            if not name:
+                continue
+            for raw in (
+                card.get("accountId"),
+                card.get("tradeCard"),
+                card.get("payAccount"),
+                card.get("accountNo"),
+            ):
+                value = str(raw or "").strip()
+                if value:
+                    index.setdefault(value, name)
+        return index
+
+    @staticmethod
+    def _resolve_detail_card_name(
+        index: dict[str, str],
+        account_id: Any,
+        pay_account: Any,
+    ) -> str:
+        for raw in (account_id, pay_account):
+            value = str(raw or "").strip()
+            if value and value in index:
+                return index[value]
+        return ""
 
     def _expand_query_trade_cards(
         self,

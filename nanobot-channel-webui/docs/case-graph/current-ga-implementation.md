@@ -53,6 +53,8 @@
 
 图记录负责保存当前 tab 的图状态、排除状态、群组状态和画布内容；主查询负责根据这些状态重新生成 `nodes / money / phone`。
 
+当前 nanobot 的关系图状态已调整为以 `case_graphs/{caseId}/{graphId}/graph.json` 为权威当前投影，`steps/*.json` 保存每次操作完成后的完整图快照。外层 graph snapshot 只作为图列表、图名、聊天绑定和配置索引，不再反向同步完整关系图状态。
+
 ## 2. 页面主流程
 
 页面主交互是“左侧主体树 + 右侧图 tab + tab 内画布”。

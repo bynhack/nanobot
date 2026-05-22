@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import types
 from pathlib import Path
@@ -113,6 +114,52 @@ def test_update_graph_persists_graph_state_fields(tmp_path: Path) -> None:
     assert reloaded == updated
 
 
+def test_update_graph_does_not_sync_relation_graph_state_into_nested_graph_file(tmp_path: Path) -> None:
+    module = _load_storage_module()
+    service = module.CaseGraphStorage(workspace=tmp_path)
+    service.create_graph(
+        {
+            "graph_id": "graph-layout",
+            "caseId": "case-1",
+            "graphName": "主图",
+            "tradeCards": [],
+            "excludedTrades": [],
+            "excludedAccountId": "",
+            "drillNums": 1,
+            "drillType": "out",
+        }
+    )
+
+    service.update_graph(
+        "graph-layout",
+        {
+            "graphData": {
+                "nodes": [
+                    {"id": "wu", "label": "伍华中", "x": 206, "y": 68},
+                    {"id": "feng", "label": "冯燕青", "x": 954, "y": 1960},
+                ],
+                "money": [
+                    {"id": "money:wu->feng", "from": "wu", "to": "feng", "source": "wu", "target": "feng"},
+                ],
+                "phone": [],
+                "groups": {},
+                "excludedTrades": [],
+                "sourceSelectId": [],
+            }
+        },
+    )
+
+    relation_graph_file = (
+        tmp_path
+        / ".nanobot_channel_webui"
+        / "case_graphs"
+        / "case-1"
+        / "graph-layout"
+        / "graph.json"
+    )
+    assert not relation_graph_file.exists()
+
+
 def test_create_graph_round_trips_original_snapshot_fields(tmp_path: Path) -> None:
     module = _load_storage_module()
     service = module.CaseGraphStorage(workspace=tmp_path)
@@ -139,6 +186,7 @@ def test_create_graph_round_trips_original_snapshot_fields(tmp_path: Path) -> No
             "summarySelectedAccountId": ["200"],
             "summarySelectedAccountName": ["李四"],
             "sourceSelectId": ["张三"],
+            "chatId": "11111111-1111-4111-8111-111111111111",
             "drillNums": 2,
             "drillType": 1,
             "minAmount": 100,
@@ -154,9 +202,143 @@ def test_create_graph_round_trips_original_snapshot_fields(tmp_path: Path) -> No
     assert created["excludedAccountName"] == ["张三"]
     assert created["summarySelectedAccountName"] == ["李四"]
     assert created["sourceSelectId"] == ["张三"]
+    assert created["chatId"] == "11111111-1111-4111-8111-111111111111"
     assert created["minAmount"] == 100
     assert created["maxAmount"] == 2000
     assert loaded == created
+
+
+def test_current_context_is_written_per_case_and_graph(tmp_path: Path) -> None:
+    module = _load_storage_module()
+    service = module.CaseGraphStorage(workspace=tmp_path)
+    service.create_graph(
+        {
+            "graph_id": "graph-context",
+            "caseId": "case-1",
+            "graphName": "主图",
+            "tradeCards": [],
+            "excludedTrades": [],
+            "excludedAccountId": "",
+            "drillNums": 1,
+            "drillType": "out",
+            "chatId": "22222222-2222-4222-8222-222222222222",
+        }
+    )
+
+    context = service.write_current_context("graph-context", {"type": "node", "nodeId": "137"})
+
+    context_path = (
+        tmp_path
+        / ".nanobot_channel_webui"
+        / "case_graph_contexts"
+        / "case-1"
+        / "graph-context"
+        / "current_context.json"
+    )
+    assert context_path.exists()
+    assert not (tmp_path / ".nanobot_channel_webui" / "current_case_graph_context.json").exists()
+    assert context["contextFile"] == str(context_path.resolve())
+    assert context["chatId"] == "22222222-2222-4222-8222-222222222222"
+    assert context["focus"] == {"type": "node", "nodeId": "137"}
+
+
+def test_current_context_can_be_written_from_graph_metadata_without_snapshot(tmp_path: Path) -> None:
+    module = _load_storage_module()
+    service = module.CaseGraphStorage(workspace=tmp_path)
+
+    context = service.write_current_context_from_metadata(
+        graph_id="graph-context",
+        case_id="case-1",
+        graph_name="主图",
+        chat_id="22222222-2222-4222-8222-222222222222",
+        focus={"type": "node", "nodeId": "137"},
+    )
+
+    context_path = (
+        tmp_path
+        / ".nanobot_channel_webui"
+        / "case_graph_contexts"
+        / "case-1"
+        / "graph-context"
+        / "current_context.json"
+    )
+    assert context_path.exists()
+    assert context["graphId"] == "graph-context"
+    assert context["caseId"] == "case-1"
+    assert context["graphName"] == "主图"
+    assert context["chatId"] == "22222222-2222-4222-8222-222222222222"
+
+
+def test_list_graphs_includes_graph_chat_id(tmp_path: Path) -> None:
+    module = _load_storage_module()
+    service = module.CaseGraphStorage(workspace=tmp_path)
+    service.create_graph(
+        {
+            "graph_id": "graph-chat",
+            "caseId": "case-1",
+            "graphName": "主图",
+            "tradeCards": [],
+            "excludedTrades": [],
+            "excludedAccountId": "",
+            "drillNums": 1,
+            "drillType": "out",
+            "chatId": "33333333-3333-4333-8333-333333333333",
+        }
+    )
+
+    [item] = service.list_graphs("case-1")
+
+    assert item["chatId"] == "33333333-3333-4333-8333-333333333333"
+
+
+def test_delete_graph_removes_snapshot_relation_state_and_context_files(tmp_path: Path) -> None:
+    module = _load_storage_module()
+    service = module.CaseGraphStorage(workspace=tmp_path)
+    service.create_graph(
+        {
+            "graph_id": "graph-delete",
+            "caseId": "case-1",
+            "graphName": "主图",
+            "tradeCards": [],
+            "excludedTrades": [],
+            "excludedAccountId": "",
+            "drillNums": 1,
+            "drillType": "out",
+        }
+    )
+    snapshot_path = service._path_for_graph("graph-delete")
+    relation_dir = (
+        tmp_path
+        / ".nanobot_channel_webui"
+        / "case_graphs"
+        / "case-1"
+        / "graph-delete"
+    )
+    relation_dir.mkdir(parents=True)
+    (relation_dir / "graph.json").write_text("{}", encoding="utf-8")
+    context_dir = (
+        tmp_path
+        / ".nanobot_channel_webui"
+        / "case_graph_contexts"
+        / "case-1"
+        / "graph-delete"
+    )
+    context_dir.mkdir(parents=True)
+    (context_dir / "current_context.json").write_text("{}", encoding="utf-8")
+
+    assert service.delete_graph("graph-delete") is True
+
+    assert not snapshot_path.exists()
+    assert not relation_dir.exists()
+    assert not context_dir.exists()
+    assert service.get_graph("graph-delete") is None
+
+
+def test_delete_graph_returns_false_for_missing_graph(tmp_path: Path) -> None:
+    module = _load_storage_module()
+    service = module.CaseGraphStorage(workspace=tmp_path)
+
+    assert service.delete_graph("missing") is False
 
 
 def test_create_graph_rejects_empty_graph_id(tmp_path: Path) -> None:

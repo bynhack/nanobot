@@ -284,26 +284,25 @@
 
 - 主图主体已经能画出来，但节点对象还不是原版那种完整事实对象
 
-### P1: `graphContent` 虽已持久化，但当前加载图时不会优先恢复已保存坐标
+### P1: 图状态已收敛到关系图投影，但仍未覆盖原版完整画布能力
 
 当前位置：
 
-- `src/nanobot_channel_webui/case_graph/types.py::CaseGraphState`
-- `src/nanobot_channel_webui/case_graph/storage.py`
-- `frontend/src/case-graph/graph-canvas.tsx`
-- `frontend/src/case-graph/graph-layout.ts`
+- `src/nanobot_channel_webui/case_graph/graph_repository.py`
+- `src/nanobot_channel_webui/case_graph/relation_storage.py`
+- `frontend/src/case-graph/workbench.tsx`
 
 现状：
 
-- 后端已经持久化 `graphContent`
-- 前端布局器也有解析 `graphContent` 坐标的能力
-- 但 `GraphCanvas` 当前调用布局时固定传了：
-  - `preferPersistedPositions: false`
+- 关系图当前投影以 `case_graphs/{caseId}/{graphId}/graph.json` 为权威
+- 每次关系图操作会写入 `steps/*.json`，并在 step 中保存操作后的完整 `graph`
+- 布局坐标进入 `graph.layout.nodePositions`
+- 外层 snapshot 不再反向同步完整关系图
 
 影响：
 
-- 已保存图重新打开后，仍以当前布局算法重排为主
-- 不是原版那种更偏向恢复既有画布位置的行为
+- 刷新恢复和过程回溯的基础状态已经稳定
+- 但原版基于 `graphContent` 的完整画布序列化、复杂图元和重置能力仍未完全复刻
 
 ## 当前判断
 
@@ -317,4 +316,4 @@
    - `phone` 未实现
    - `excludedTrades` 修正链路未实现
    - 前端缺少原版汇总分析 / 取消上图 / 取消群组 / 资金关系图等交互闭环
-   - 布局恢复与节点事实字段仍有薄化
+   - 完整画布能力与节点事实字段仍有薄化

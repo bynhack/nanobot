@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { AuiIf, ThreadPrimitive } from '@assistant-ui/react';
 
 import { AskUserPromptCard } from '../../ask-user-prompt';
@@ -29,6 +29,7 @@ export function ChatThreadContent({
   workspaceLoading,
   onOpenWorkspace,
   showWorkspaceButton = true,
+  topControlsSlot,
 }: {
   title: string;
   flashMessage: string | null;
@@ -48,6 +49,7 @@ export function ChatThreadContent({
   workspaceLoading: boolean;
   onOpenWorkspace: () => void;
   showWorkspaceButton?: boolean;
+  topControlsSlot?: ReactNode;
 }) {
   return (
     <main className={`chat${compact ? ' compact' : ''}`}>
@@ -91,6 +93,7 @@ export function ChatThreadContent({
             {workspaceFileCount > 0 ? <span>{workspaceFileCount}</span> : null}
           </button>
         ) : null}
+        {topControlsSlot}
       </div>
 
       {flashMessage ? <div className="flash">{flashMessage}</div> : null}

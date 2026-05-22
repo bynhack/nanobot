@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -38,7 +40,7 @@ class CaseGraphStorage:
         self._workspace = workspace or get_workspace_path()
         self._root = self._workspace / ".nanobot_channel_webui" / "case_graphs"
         self._root.mkdir(parents=True, exist_ok=True)
-        self._context_path = self._workspace / ".nanobot_channel_webui" / "current_case_graph_context.json"
+        self._context_root = self._workspace / ".nanobot_channel_webui" / "case_graph_contexts"
 
     @staticmethod
     def _file_key(graph_id: str) -> str:
@@ -54,6 +56,21 @@ class CaseGraphStorage:
     def _path_for_graph(self, graph_id: str) -> Path:
         normalized_graph_id = self._normalize_graph_id_value(graph_id)
         return self._root / f"{self._file_key(normalized_graph_id)}.json"
+
+    @classmethod
+    def _safe_path_segment(cls, value: str) -> str:
+        normalized = re.sub(r"[^A-Za-z0-9_.-]+", "-", value.strip())
+        return normalized.strip(".-") or cls._file_key(value.strip() or "unknown")
+
+    def _context_path_for_graph(self, state: CaseGraphState) -> Path:
+        case_segment = self._safe_path_segment(state["caseId"])
+        graph_segment = self._safe_path_segment(state["graph_id"])
+        return self._context_root / case_segment / graph_segment / "current_context.json"
+
+    def _context_path_for_values(self, *, case_id: str, graph_id: str) -> Path:
+        case_segment = self._safe_path_segment(case_id)
+        graph_segment = self._safe_path_segment(graph_id)
+        return self._context_root / case_segment / graph_segment / "current_context.json"
 
     def create_graph(self, payload: Mapping[str, Any]) -> CaseGraphState:
         state = normalize_case_graph_state(payload)
@@ -91,6 +108,18 @@ class CaseGraphStorage:
         self._write_atomic(self._path_for_graph(normalized_graph_id), state)
         return state
 
+    def delete_graph(self, graph_id: str) -> bool:
+        normalized_graph_id = self._normalize_graph_id_value(graph_id)
+        state = self.get_graph(normalized_graph_id)
+        if state is None:
+            return False
+        self._path_for_graph(normalized_graph_id).unlink(missing_ok=True)
+        case_segment = self._safe_path_segment(state["caseId"])
+        graph_segment = self._safe_path_segment(state["graph_id"])
+        shutil.rmtree(self._root / case_segment / graph_segment, ignore_errors=True)
+        shutil.rmtree(self._context_root / case_segment / graph_segment, ignore_errors=True)
+        return True
+
     def list_graphs(self, case_id: str | None = None) -> list[dict[str, Any]]:
         normalized_case_id = str(case_id or "").strip()
         items: list[dict[str, Any]] = []
@@ -109,6 +138,7 @@ class CaseGraphStorage:
                     "graphName": state["graphName"],
                     "tradeCardCount": len(state["tradeCards"]),
                     "updatedAt": int(path.stat().st_mtime),
+                    "chatId": state.get("chatId", ""),
                 }
             )
         return items
@@ -123,13 +153,46 @@ class CaseGraphStorage:
             "caseId": state["caseId"],
             "graphName": state["graphName"],
             "graphFile": str(self._path_for_graph(state["graph_id"]).resolve()),
+            "contextFile": str(self._context_path_for_graph(state).resolve()),
+            "chatId": state.get("chatId", ""),
             "focus": dict(focus) if focus is not None else None,
         }
-        self._write_atomic(self._context_path, payload)
+        self._write_atomic(self._context_path_for_graph(state), payload)
+        return payload
+
+    def write_current_context_from_metadata(
+        self,
+        *,
+        graph_id: str,
+        case_id: str,
+        graph_name: str,
+        chat_id: str = "",
+        focus: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        normalized_graph_id = self._normalize_graph_id_value(graph_id)
+        normalized_case_id = str(case_id or "").strip()
+        if not normalized_case_id:
+            raise ValueError("caseId")
+        context_path = self._context_path_for_values(
+            case_id=normalized_case_id,
+            graph_id=normalized_graph_id,
+        )
+        payload: dict[str, Any] = {
+            "updatedAt": datetime.now(timezone.utc).isoformat(),
+            "graphId": normalized_graph_id,
+            "caseId": normalized_case_id,
+            "graphName": str(graph_name or "").strip(),
+            "graphFile": str(self._path_for_graph(normalized_graph_id).resolve()),
+            "contextFile": str(context_path.resolve()),
+            "chatId": str(chat_id or "").strip(),
+            "focus": dict(focus) if focus is not None else None,
+        }
+        self._write_atomic(context_path, payload)
         return payload
 
     @staticmethod
     def _write_atomic(path: Path, payload: Mapping[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
         temp_path = path.with_suffix(".json.tmp")
         temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         temp_path.replace(path)

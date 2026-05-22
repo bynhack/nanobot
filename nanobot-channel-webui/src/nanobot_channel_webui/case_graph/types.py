@@ -27,6 +27,7 @@ class CaseGraphState(TypedDict):
     drillType: JSONValue
     minAmount: JSONValue
     maxAmount: JSONValue
+    chatId: str
 
 
 class CaseGraphPatch(TypedDict, total=False):
@@ -46,6 +47,7 @@ class CaseGraphPatch(TypedDict, total=False):
     drillType: JSONValue
     minAmount: JSONValue
     maxAmount: JSONValue
+    chatId: str
 
 
 def _normalize_graph_id(payload: Mapping[str, Any]) -> str:
@@ -119,4 +121,5 @@ def normalize_case_graph_state(payload: Mapping[str, Any]) -> CaseGraphState:
         "drillType": _normalize_json_value(payload.get("drillType"), field_name="drillType"),
         "minAmount": _normalize_json_value(payload.get("minAmount"), field_name="minAmount"),
         "maxAmount": _normalize_json_value(payload.get("maxAmount"), field_name="maxAmount"),
+        "chatId": str(payload.get("chatId") or "").strip(),
     }

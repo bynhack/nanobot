@@ -106,6 +106,26 @@ describe('case graph layout helpers', () => {
     expect(distinctPositions.size).toBeGreaterThan(1);
   });
 
+  it('keeps direct node coordinates unchanged when every visible node has a position', () => {
+    const graphData: CaseGraphData = {
+      nodes: [
+        { id: 'wu', label: '伍华中', x: 320, y: 240 },
+        { id: 'feng', label: '冯燕青', x: 560, y: 240 },
+        { id: 'chen', label: '陈某', x: 120, y: 240 },
+      ],
+      edges: [
+        { id: 'chen->wu', from: 'chen', to: 'wu', source: 'chen', target: 'wu', tradeAmount: 10, tradeCount: 1 },
+        { id: 'wu->feng', from: 'wu', to: 'feng', source: 'wu', target: 'feng', tradeAmount: 20, tradeCount: 1 },
+      ],
+    };
+
+    const layout = computeCaseGraphLayout(graphData, OPTIONS);
+
+    expect(layout.get('wu')).toEqual({ x: 320, y: 240 });
+    expect(layout.get('feng')).toEqual({ x: 560, y: 240 });
+    expect(layout.get('chen')).toEqual({ x: 120, y: 240 });
+  });
+
   it('prefers investigator layout over persisted coordinates when requested', () => {
     const graphData: CaseGraphData = {
       nodes: [

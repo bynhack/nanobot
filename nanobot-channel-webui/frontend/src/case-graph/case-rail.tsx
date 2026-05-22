@@ -3,8 +3,10 @@ import { Search } from 'lucide-react';
 import type { CaseGraphCaseOption, CaseGraphSelectableAccount } from './types';
 
 interface CaseRailProps {
+  className?: string;
   cases: CaseGraphCaseOption[];
   casesLoading: boolean;
+  caseSelectDisabled?: boolean;
   caseIdDraft: string;
   accountQuery: string;
   availableAccounts: CaseGraphSelectableAccount[];
@@ -17,8 +19,10 @@ interface CaseRailProps {
 }
 
 export function CaseRail({
+  className,
   cases,
   casesLoading,
+  caseSelectDisabled = false,
   caseIdDraft,
   accountQuery,
   availableAccounts,
@@ -42,7 +46,7 @@ export function CaseRail({
   }
 
   return (
-    <section className="case-graph-rail" aria-label="主体选择区">
+    <section className={`case-graph-rail${className ? ` ${className}` : ''}`} aria-label="主体选择区">
       <div className="case-graph-form">
         <label className="case-graph-field">
           <span>案件</span>
@@ -50,7 +54,7 @@ export function CaseRail({
             className="case-graph-select"
             value={caseIdDraft}
             onChange={(event) => onCaseIdChange(event.target.value)}
-            disabled={casesLoading}
+            disabled={casesLoading || caseSelectDisabled}
           >
             <option value="">{casesLoading ? '案件加载中...' : '请选择案件'}</option>
             {cases.map((item) => (

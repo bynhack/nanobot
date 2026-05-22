@@ -6,6 +6,7 @@ import type {
   CaseGraphOriginData,
   CaseGraphQueryResult,
   CaseGraphSnapshot,
+  CaseGraphStateSnapshot,
   CaseGraphTradeCard,
 } from './types';
 
@@ -51,6 +52,11 @@ export function normalizeCaseGraphOriginData(
       'excludedAccountId' in (value as object)
         ? ((value as CaseGraphQueryResult).excludedAccountId ?? null)
         : null,
+    excludedNodes: Array.isArray((value as CaseGraphQueryResult).excludedNodes)
+      ? [...((value as CaseGraphQueryResult).excludedNodes ?? [])]
+      : Array.isArray((value as { graph?: { excludedNodes?: CaseGraphQueryResult['excludedNodes'] } }).graph?.excludedNodes)
+        ? [...((value as { graph?: { excludedNodes?: CaseGraphQueryResult['excludedNodes'] } }).graph?.excludedNodes ?? [])]
+        : [],
     sourceSelectId: Array.isArray((value as CaseGraphQueryResult).sourceSelectId)
       ? [...((value as CaseGraphQueryResult).sourceSelectId ?? [])]
       : [],
@@ -108,6 +114,36 @@ export function originDataToCanvasData(originData: CaseGraphOriginData | null): 
     edges: originData.money
       .filter((edge) => validNodeIds.has(String(edge.from || '').trim()) && validNodeIds.has(String(edge.to || '').trim()))
       .map((edge) => normalizeMoneyEdge(edge)),
+    excludedNodes: [...(originData.excludedNodes ?? [])],
+  };
+}
+
+export function graphStateToCanvasData(state: CaseGraphStateSnapshot | null | undefined): CaseGraphData | null {
+  if (!state) return null;
+  const positions = state.graph.layout?.nodePositions ?? {};
+  return {
+    nodes: state.graph.nodes.map((node) => {
+      const point = positions[node.id];
+      return point ? { ...node, x: point.x, y: point.y } : node;
+    }),
+    edges: state.graph.edges.map((edge) => normalizeMoneyEdge(edge)),
+    excludedNodes: [...(state.graph.excludedNodes ?? [])],
+  };
+}
+
+export function graphStateToOriginData(state: CaseGraphStateSnapshot | null | undefined): CaseGraphOriginData | null {
+  if (!state) return null;
+  const canvasData = graphStateToCanvasData(state);
+  return {
+    graphId: state.graphId,
+    nodes: canvasData?.nodes ?? [],
+    money: state.graph.edges.map((edge) => normalizeMoneyEdge(edge)),
+    phone: [],
+    groups: normalizeCaseGraphGroupMap(state.graph.groupMap),
+    excludedTrades: [...(state.graph.excludedTrades ?? [])],
+    excludedAccountId: state.graph.excludedAccountId?.[0] ?? null,
+    excludedNodes: [...(state.graph.excludedNodes ?? [])],
+    sourceSelectId: [...(state.graph.sourceSelectId ?? [])],
   };
 }
 

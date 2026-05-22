@@ -1,15 +1,19 @@
 import type {
   CaseGraphCaseOption,
-  CaseGraphQueryResult,
   CaseGraphSavedGraph,
   CaseGraphSelectableAccount,
   CaseGraphSnapshot,
+  CaseGraphStateSnapshot,
   CaseGraphConversationFocus,
+  CaseGraphRelationResponse,
   CaseGraphTargetDetailPayload,
   CaseGraphTargetDetailResult,
+  CompleteCaseGraphRelationPayload,
   CreateCaseGraphPayload,
-  DrillDownCaseGraphPayload,
-  QueryCaseGraphPayload,
+  ExcludeCaseGraphNodePayload,
+  FilterCaseGraphRelationPayload,
+  QueryCaseGraphRelationPayload,
+  RestoreCaseGraphNodePayload,
   UpdateCaseGraphConfigPayload,
 } from './types';
 
@@ -46,6 +50,17 @@ async function postJson<T>(url: string, payload: unknown, token: string, fallbac
 
 async function getJson<T>(url: string, token: string, fallback: string): Promise<T> {
   const response = await fetch(url, {
+    headers: authHeaders(token),
+  });
+  if (!response.ok) {
+    throw new Error(await readError(response, `${fallback}（${response.status}）`));
+  }
+  return response.json() as Promise<T>;
+}
+
+async function deleteJson<T>(url: string, token: string, fallback: string): Promise<T> {
+  const response = await fetch(url, {
+    method: 'DELETE',
     headers: authHeaders(token),
   });
   if (!response.ok) {
@@ -95,6 +110,10 @@ export function loadCaseGraph(graphId: string, token: string): Promise<CaseGraph
   return getJson(`/api/case-graph/graph/${encodeURIComponent(graphId)}`, token, '加载分析图失败');
 }
 
+export function deleteCaseGraph(graphId: string, token: string): Promise<{ ok: boolean }> {
+  return deleteJson(`/api/case-graph/graph/${encodeURIComponent(graphId)}`, token, '删除分析图失败');
+}
+
 export function updateCaseGraphConfig(
   graphId: string,
   payload: UpdateCaseGraphConfigPayload,
@@ -103,29 +122,82 @@ export function updateCaseGraphConfig(
   return postJson(`/api/case-graph/graph/${encodeURIComponent(graphId)}`, payload, token, '更新分析配置失败');
 }
 
-export function queryCaseGraph(payload: QueryCaseGraphPayload, token: string): Promise<CaseGraphQueryResult> {
-  return postJson('/api/case-graph/query', payload, token, '查询分析图失败');
+export function loadCaseGraphState(caseId: string, graphId: string, token: string): Promise<CaseGraphStateSnapshot> {
+  return getJson(
+    `/api/case-graph/relation/state/${encodeURIComponent(caseId)}/${encodeURIComponent(graphId)}`,
+    token,
+    '加载图状态失败',
+  );
 }
 
-export function drillDownCaseGraph(
-  payload: DrillDownCaseGraphPayload,
+export function saveCaseGraphLayoutOperation(
+  caseId: string,
+  graphId: string,
+  payload: {
+    graphName?: string;
+    nodePositions: Record<string, { x: number; y: number }>;
+    viewport?: { x: number; y: number; zoom: number };
+  },
   token: string,
-): Promise<{ tradeCards: CaseGraphSnapshot['tradeCards'] }> {
-  return postJson('/api/case-graph/query/drilldown', payload, token, '节点下钻失败');
+): Promise<CaseGraphStateSnapshot> {
+  return postJson(
+    `/api/case-graph/relation/state/${encodeURIComponent(caseId)}/${encodeURIComponent(graphId)}/operations/layout`,
+    payload,
+    token,
+    '保存图谱布局失败',
+  );
 }
 
-export function drillUpCaseGraph(
-  payload: DrillDownCaseGraphPayload,
+export function saveCaseGraphLatestStepLayout(
+  caseId: string,
+  graphId: string,
+  payload: {
+    nodePositions: Record<string, { x: number; y: number }>;
+    viewport?: { x: number; y: number; zoom: number };
+  },
   token: string,
-): Promise<{ tradeCards: CaseGraphSnapshot['tradeCards'] }> {
-  return postJson('/api/case-graph/query/drillup', payload, token, '节点上钻失败');
+): Promise<CaseGraphStateSnapshot> {
+  return postJson(
+    `/api/case-graph/relation/state/${encodeURIComponent(caseId)}/${encodeURIComponent(graphId)}/operations/latest-step-layout`,
+    payload,
+    token,
+    '保存步骤布局失败',
+  );
 }
 
-export function drillCaseGraph(
-  payload: DrillDownCaseGraphPayload,
+export function queryCaseGraphRelation(
+  payload: QueryCaseGraphRelationPayload,
   token: string,
-): Promise<{ tradeCards: CaseGraphSnapshot['tradeCards'] }> {
-  return postJson('/api/case-graph/query/drill', payload, token, '节点双向钻取失败');
+): Promise<CaseGraphRelationResponse> {
+  return postJson('/api/case-graph/relation/query', payload, token, '查询关系图失败');
+}
+
+export function completeCaseGraphRelation(
+  payload: CompleteCaseGraphRelationPayload,
+  token: string,
+): Promise<CaseGraphRelationResponse> {
+  return postJson('/api/case-graph/relation/complete', payload, token, '分析图上节点关系失败');
+}
+
+export function filterCaseGraphRelation(
+  payload: FilterCaseGraphRelationPayload,
+  token: string,
+): Promise<CaseGraphRelationResponse> {
+  return postJson('/api/case-graph/relation/filter', payload, token, '筛选关系图失败');
+}
+
+export function excludeCaseGraphNode(
+  payload: ExcludeCaseGraphNodePayload,
+  token: string,
+): Promise<CaseGraphRelationResponse> {
+  return postJson('/api/case-graph/relation/exclude-node', payload, token, '排除节点失败');
+}
+
+export function restoreCaseGraphNode(
+  payload: RestoreCaseGraphNodePayload,
+  token: string,
+): Promise<CaseGraphRelationResponse> {
+  return postJson('/api/case-graph/relation/restore-node', payload, token, '恢复节点失败');
 }
 
 export function loadCaseGraphTargetDetail(
@@ -137,6 +209,7 @@ export function loadCaseGraphTargetDetail(
 
 export function updateCaseGraphContext(
   graphId: string,
+  graphMeta: { caseId: string; graphName: string; chatId?: string },
   focus: Omit<CaseGraphConversationFocus, 'graphId' | 'caseId' | 'graphName'> | null,
   token: string,
 ): Promise<{
@@ -145,7 +218,9 @@ export function updateCaseGraphContext(
   caseId: string;
   graphName: string;
   graphFile: string;
+  contextFile?: string;
+  chatId?: string;
   focus: Record<string, unknown> | null;
 }> {
-  return postJson('/api/case-graph/context', { graphId, focus }, token, '更新图上下文失败');
+  return postJson('/api/case-graph/context', { graphId, ...graphMeta, focus }, token, '更新图上下文失败');
 }

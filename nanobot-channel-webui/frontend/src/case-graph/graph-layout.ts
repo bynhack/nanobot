@@ -63,6 +63,9 @@ export function computeCaseGraphLayout(
 
   if (options.preferPersistedPositions !== false) {
     const persistedPositions = resolvePersistedPositions(nodes, options);
+    if (persistedPositions.size === nodes.length) {
+      return persistedPositions;
+    }
     if (persistedPositions.size >= minimumPersistedCoverage(nodes.length)) {
       return fitPositionsToCanvas(persistedPositions, options);
     }

@@ -82,6 +82,29 @@ export function useWebsocketSession({
     return promise;
   }, []);
 
+  const createServerThread = useCallback(() => {
+    let settleThread: (chatId: string | null) => void = () => undefined;
+    const promise = new Promise<string | null>((resolve) => {
+      let settled = false;
+      settleThread = (chatId: string | null) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        window.clearTimeout(timeout);
+        pendingThreadResolversRef.current = pendingThreadResolversRef.current.filter((item) => item !== settleThread);
+        resolve(chatId);
+      };
+      const timeout = window.setTimeout(() => settleThread(null), 5000);
+      pendingThreadResolversRef.current.push(settleThread);
+    });
+    const sent = wsClientRef.current?.send({ type: 'session.new' }) ?? false;
+    if (!sent) {
+      settleThread(null);
+    }
+    return promise;
+  }, []);
+
   useEffect(() => {
     const client = new WebSocketClient({
       getAuthToken: () => appStore.getState().authToken,
@@ -187,8 +210,9 @@ export function useWebsocketSession({
       createThread,
       deleteThread: deleteThreadById,
       ensureThread: requestServerThread,
+      createServerThread,
       cancelTurn,
     }),
-    [cancelTurn, createThread, deleteThreadById, refreshSessions, requestServerThread, sendMessage, switchThread],
+    [cancelTurn, createServerThread, createThread, deleteThreadById, refreshSessions, requestServerThread, sendMessage, switchThread],
   );
 }

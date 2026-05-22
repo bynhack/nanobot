@@ -10,11 +10,11 @@ import type {
   UploadedAttachment,
 } from './types';
 export {
+  completeCaseGraphRelation,
   createCaseGraph,
-  drillDownCaseGraph,
   loadCaseGraph,
   loadCaseGraphTargetDetail,
-  queryCaseGraph,
+  queryCaseGraphRelation,
 } from './case-graph/api';
 
 export function authHeaders(token: string): HeadersInit {

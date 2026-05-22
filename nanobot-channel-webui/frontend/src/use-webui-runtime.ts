@@ -38,6 +38,7 @@ export function useWebuiRuntime({
     createThread: () => void;
     deleteThread: (threadId: string) => Promise<void>;
     ensureThread: () => Promise<string | null>;
+    createServerThread: () => Promise<string | null>;
     cancelTurn: () => void;
   };
 }) {

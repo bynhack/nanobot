@@ -32,6 +32,7 @@ export interface CaseGraphSavedGraph {
   graphName: string;
   tradeCardCount: number;
   updatedAt: number;
+  chatId?: string;
 }
 
 export interface CaseGraphNode {
@@ -46,6 +47,9 @@ export interface CaseGraphNode {
   name?: string;
   x?: number;
   y?: number;
+  role?: string;
+  type?: string;
+  accounts?: CaseGraphTradeCard[];
 }
 
 export interface CaseGraphMoneyEdge {
@@ -60,6 +64,10 @@ export interface CaseGraphMoneyEdge {
   count?: number;
   startDate?: string | null;
   endDate?: string | null;
+  startTime?: string | null;
+  endTime?: string | null;
+  scope?: string;
+  isExcluded?: boolean;
 }
 
 export interface CaseGraphPhoneEdge {
@@ -79,6 +87,16 @@ export interface CaseGraphGroupItem {
 
 export type CaseGraphGroupMap = Record<string, CaseGraphGroupItem>;
 
+export interface CaseGraphExcludedNode {
+  nodeId: string;
+  label: string;
+  type?: string;
+  accountIds?: string[];
+  tradeCards?: string[];
+  reason?: string;
+  excludedAt?: string;
+}
+
 export interface CaseGraphOriginData {
   graphId?: string;
   nodes: CaseGraphNode[];
@@ -87,12 +105,14 @@ export interface CaseGraphOriginData {
   groups: CaseGraphGroupMap;
   excludedTrades: string[];
   excludedAccountId?: string | string[] | null;
+  excludedNodes?: CaseGraphExcludedNode[];
   sourceSelectId: string[];
 }
 
 export interface CaseGraphData {
   nodes: CaseGraphNode[];
   edges: CaseGraphMoneyEdge[];
+  excludedNodes?: CaseGraphExcludedNode[];
 }
 
 export interface CaseGraphSnapshot {
@@ -112,14 +132,18 @@ export interface CaseGraphSnapshot {
   drillType: string | number | null;
   minAmount?: number | string | null;
   maxAmount?: number | string | null;
-  graphData?: CaseGraphQueryResult | null;
+  graphData?: CaseGraphQueryResult | CaseGraphRelationResponse | null;
+  excludedNodes?: CaseGraphExcludedNode[];
+  chatId?: string;
 }
 
 export interface UpdateCaseGraphConfigPayload {
-  drillNums: number;
-  drillType: string | number | null;
+  drillNums?: number;
+  drillType?: string | number | null;
   minAmount?: number | string | null;
   maxAmount?: number | string | null;
+  chatId?: string;
+  graphData?: CaseGraphQueryResult | CaseGraphRelationResponse | null;
 }
 
 export interface CaseGraphTargetDetailItem {
@@ -147,7 +171,119 @@ export interface CaseGraphQueryResult {
   tradeCards?: CaseGraphTradeCard[];
   excludedTrades?: string[];
   excludedAccountId?: string | string[] | null;
+  excludedNodes?: CaseGraphExcludedNode[];
   graph?: CaseGraphData;
+}
+
+export interface CaseGraphRelationSeed {
+  suspectId?: string;
+  suspectName?: string;
+  accountIds: string[];
+  excludedAccountIds?: string[];
+  accounts?: CaseGraphTradeCard[];
+}
+
+export interface CaseGraphRelationResponse {
+  schemaVersion: string;
+  caseId: string;
+  graphId: string;
+  queryMode: string;
+  graph: CaseGraphData;
+  graphState?: CaseGraphStateSnapshot;
+  delta: {
+    addedNodes?: CaseGraphNode[];
+    addedEdges?: CaseGraphMoneyEdge[];
+    updatedNodes?: CaseGraphNode[];
+    updatedEdges?: CaseGraphMoneyEdge[];
+  };
+  step: {
+    stepId: string;
+    type: string;
+    createdAt?: string;
+    request?: Record<string, unknown>;
+    summary?: Record<string, unknown>;
+    file?: string;
+  };
+}
+
+export interface CaseGraphLayoutState {
+  nodePositions: Record<string, { x: number; y: number }>;
+  viewport: { x: number; y: number; zoom: number };
+}
+
+export interface CaseGraphAppliedFilters {
+  minAmount: number | string | null;
+  maxAmount: number | string | null;
+  startTime: string;
+  endTime: string;
+}
+
+export interface CaseGraphStateBody {
+  nodes: CaseGraphNode[];
+  edges: CaseGraphMoneyEdge[];
+  tradeCards: CaseGraphTradeCard[];
+  groupMap: CaseGraphGroupMap;
+  sourceSelectId: string[];
+  summarySelectedAccountId: string[];
+  summarySelectedAccountName: string[];
+  excludedTrades: string[];
+  excludedAccountId: string[];
+  excludedAccountName: string[];
+  layout: CaseGraphLayoutState;
+  filters: CaseGraphAppliedFilters;
+  excludedNodes: CaseGraphExcludedNode[];
+  manualEdges: CaseGraphMoneyEdge[];
+  annotations: Array<Record<string, unknown>>;
+  graphData?: CaseGraphQueryResult | null;
+}
+
+export interface CaseGraphStateSnapshot {
+  schemaVersion: 'case-graph.state.v1';
+  caseId: string;
+  graphId: string;
+  graphName: string;
+  revision: number;
+  updatedAt: string;
+  lastStepId: string;
+  graph: CaseGraphStateBody;
+}
+
+export interface QueryCaseGraphRelationPayload {
+  graphId: string;
+  caseId: string;
+  seeds: CaseGraphRelationSeed[];
+  direction?: 'in' | 'out' | 'both';
+  drillNums?: number;
+  drillType?: string | number | null;
+  filters?: Record<string, unknown>;
+  options?: Record<string, unknown>;
+}
+
+export interface CompleteCaseGraphRelationPayload {
+  graphId: string;
+  caseId: string;
+  accounts: CaseGraphTradeCard[];
+  filters?: Record<string, unknown>;
+  options?: Record<string, unknown>;
+}
+
+export interface FilterCaseGraphRelationPayload {
+  graphId: string;
+  caseId: string;
+  filters?: Record<string, unknown>;
+  options?: Record<string, unknown>;
+}
+
+export interface ExcludeCaseGraphNodePayload {
+  graphId: string;
+  caseId: string;
+  node: CaseGraphExcludedNode;
+}
+
+export interface RestoreCaseGraphNodePayload {
+  graphId: string;
+  caseId: string;
+  nodeId: string;
 }
 
 export interface CreateCaseGraphPayload {

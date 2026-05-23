@@ -35,6 +35,11 @@ current process files under:
 These files are the best local evidence for how every analysis step preserves the graph structure
 and layout positions over time.
 
+For graph page capabilities, prefer official G6 features first. Before implementing custom graph
+canvas behavior, check whether G6 already provides the needed layout, behavior, plugin, event,
+interaction, drag, selection, context menu, zoom, or viewport capability. Custom code should mainly
+adapt business data, preserve investigation state, or fill gaps that G6 does not cover.
+
 Do not rely on deleted dated plan/design notes. The current docs directory is an index plus durable facts only.
 
 ## Project Layout
@@ -63,6 +68,10 @@ Do not rely on deleted dated plan/design notes. The current docs directory is an
 Testing is risk-based, not mechanical. Do not run Python or frontend tests after every edit by
 default; choose the smallest useful verification based on the change.
 
+Test case coverage should focus on core product invariants, not exhaustive implementation details.
+Prefer a few high-signal tests that protect business behavior over many narrow tests that only
+lock the current code shape.
+
 Skip tests for simple documentation, copy, comment-only, README, AGENTS, PRODUCT, or docs index
 changes that do not affect installed runtime behavior.
 
@@ -72,6 +81,22 @@ store, or case-graph workflow. Prefer the narrowest relevant test command over t
 Use broader verification when a change touches cross-cutting contracts, persistence formats,
 case-graph layout/state, frontend build output, package data, auth/session behavior, or release
 scripts.
+
+When adding or pruning tests, keep these as core coverage:
+
+- case-graph query and relation state contracts
+- graph step persistence and `graph.layout.nodePositions`
+- the invariant that existing graph node positions do not move during drill/extend/filter/load
+- assistant-ui message/runtime conversion at integration boundaries
+- workspace/session ownership and stale-request protection
+- packaging/static asset behavior needed for local publish
+
+Avoid expanding tests just to cover:
+
+- purely visual copy or button placement that is not a product invariant
+- every invalid input permutation when one representative validation path is enough
+- internal helper implementation details that are already covered through a workflow test
+- duplicate frontend and backend assertions for the same contract unless both sides have distinct risk
 
 From `nanobot-channel-webui/`:
 
@@ -97,8 +122,10 @@ Full local verification flow:
 ./scripts/publish-local.sh
 ```
 
-When a complete feature implementation, behavior change, frontend change, backend change,
-packaging change, or static-asset change is ready to hand back to the user for review or use, run:
+When the user asks for a modification or new requirement and the request is clear and complete,
+execute it end-to-end instead of stopping at a plan. For any complete feature implementation,
+behavior change, frontend change, backend change, packaging change, or static-asset change that is
+ready to hand back to the user for review or use, run:
 
 ```bash
 ./scripts/publish-local.sh
@@ -133,7 +160,7 @@ not disposable render output.
 - Stored positions from `graph.layout.nodePositions`, node-level `x/y`, and legacy `graphContent` coordinates are authoritative for existing nodes.
 - Layout logic may only assign coordinates to newly added nodes or nodes with genuinely missing/invalid coordinates.
 - Existing nodes may be moved only by an explicit user action whose purpose is to change layout, such as dragging a node or invoking a future manual relayout/reset-layout command.
-- If an official G6 layout is introduced, it must be used in an incremental/fixed-node mode: existing nodes are fixed anchors, and only new/missing-position nodes are placed around the current graph.
+- If an official G6 layout or graph behavior is introduced, use the official capability in an incremental/fixed-node mode where relevant: existing nodes are fixed anchors, and only new/missing-position nodes are placed around the current graph.
 - Drill and relation-completion flows must carry the current rendered `nodePositions` into the request and must merge results without changing any previously positioned node.
 - Tests for graph extension or layout changes should assert that pre-existing node `x/y` coordinates remain unchanged after the operation.
 
@@ -228,6 +255,7 @@ These are still real unless code and docs are updated together:
   - existing node coordinates are preserved across the operation
   - only new or missing-position nodes receive generated coordinates
   - `graph.json` and the latest relevant `steps/*.json` retain the expected `graph.layout.nodePositions`
+- When changing graph page behavior, prefer G6 official APIs/plugins/behaviors/layouts before adding custom canvas logic; document any custom fallback reason in code or docs when the choice is not obvious
 - Prefer updating durable docs when facts change:
   - facts -> `docs/case-graph/current-ga-implementation.md`
   - remaining differences -> `docs/case-graph/nanobot-gap-notes.md`

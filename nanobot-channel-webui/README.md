@@ -78,6 +78,9 @@ For completed feature implementations or runtime/UI behavior changes, this local
 part of the definition of done. After `publish-local.sh` succeeds, the change is ready for local
 manual testing through `nanobot gateway`.
 
+When a requested modification or new requirement is clear and complete, implement it through this
+local publish handoff so the user can test it directly in the browser after completion.
+
 If you already built a wheel and only want to reinstall the latest one:
 
 ```bash

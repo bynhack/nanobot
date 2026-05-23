@@ -62,6 +62,7 @@ const CONTEXT_MENU_WIDTH = 210;
 const CONTEXT_MENU_ROW_HEIGHT = 48;
 const CONTEXT_MENU_PADDING = 10;
 const BRUSH_MIN_DISTANCE = 6;
+const CONNECTED_COMPONENT_DEGREE = Number.MAX_SAFE_INTEGER;
 const ROLE_CHIPS: Array<{ role: Exclude<CaseGraphNodeRole, 'peripheral'>; label: string; className: string }> = [
   { role: 'upstream', label: '来款', className: 'is-upstream' },
   { role: 'core', label: '核心', className: 'is-core' },
@@ -176,24 +177,21 @@ export function GraphCanvas({
     if (!activeNodeId && !activeEdgeId) {
       return null;
     }
-    const relatedNodeIds = new Set<string>(activeNodeId ? [activeNodeId] : []);
-    const relatedEdgeIds = new Set<string>();
     if (activeEdgeId) {
       const activeEdge = edgeLookup.get(activeEdgeId);
       if (activeEdge) {
+        const relatedNodeIds = new Set<string>();
+        const relatedEdgeIds = new Set<string>();
         relatedEdgeIds.add(activeEdgeId);
         relatedNodeIds.add(activeEdge.source);
         relatedNodeIds.add(activeEdge.target);
+        return { relatedNodeIds, relatedEdgeIds };
       }
     }
-    for (const edge of edges) {
-      if (activeNodeId && (edge.source === activeNodeId || edge.target === activeNodeId)) {
-        relatedNodeIds.add(edge.source);
-        relatedNodeIds.add(edge.target);
-        relatedEdgeIds.add(resolveEdgeId(edge));
-      }
+    if (activeNodeId) {
+      return buildConnectedNeighborhood(activeNodeId, edges);
     }
-    return { relatedNodeIds, relatedEdgeIds };
+    return null;
   }, [activeEdgeId, activeNodeId, activeRoleFilter, edgeLookup, edges, graphView.nodeMetricsById, nodes]);
 
   const selectedNode = activeNodeId ? nodeLookup.get(activeNodeId) ?? null : null;
@@ -677,7 +675,10 @@ export function GraphCanvas({
           </div>
 
           {selectedNodeMetrics ? (
-            <div className="case-graph-active-brief">
+            <div
+              className="case-graph-active-brief"
+              title={`${selectedNodeMetrics.displayName} · ${selectedNodeMetrics.roleLabel} · 收 ${formatCompactAmount(selectedNodeMetrics.receivedAmount)} 元 · 出 ${formatCompactAmount(selectedNodeMetrics.sentAmount)} 元 · ${selectedNodeMetrics.degree} 个关联对象`}
+            >
               <strong>{selectedNodeMetrics.displayName}</strong>
               <span>{selectedNodeMetrics.roleLabel}</span>
               <span>收 {formatCompactAmount(selectedNodeMetrics.receivedAmount)} 元</span>
@@ -685,7 +686,10 @@ export function GraphCanvas({
               <span>{selectedNodeMetrics.degree} 个关联对象</span>
             </div>
           ) : activeRoleFilter ? (
-            <div className="case-graph-active-brief">
+            <div
+              className="case-graph-active-brief"
+              title={`${ROLE_CHIPS.find((item) => item.role === activeRoleFilter)?.label} · ${activeRoleCount} 个节点 · 已高亮该角色及其一跳资金线 · 再点一次取消`}
+            >
               <strong>{ROLE_CHIPS.find((item) => item.role === activeRoleFilter)?.label}</strong>
               <span>{activeRoleCount} 个节点</span>
               <span>已高亮该角色及其一跳资金线</span>
@@ -788,7 +792,7 @@ export function GraphCanvas({
         ) : null}
 
         <div
-          className={`case-graph-g6-host${nodes.length ? '' : ' is-hidden'}`}
+          className="case-graph-g6-host"
           ref={graphHostRef}
           data-brush-mode={brushMode ? 'true' : 'false'}
         />
@@ -1237,7 +1241,7 @@ function buildGraphBehaviors(
             multiple: true,
             trigger: ['shift'],
             state: 'selected',
-            onClick: callbacks.onSelectionChange,
+            degree: CONNECTED_COMPONENT_DEGREE,
           },
           {
             type: 'drag-element',
@@ -1262,6 +1266,59 @@ function collectRenderedNodePositions(graph: G6Graph): Record<string, { x: numbe
     positions[nodeId] = { x, y };
   }
   return positions;
+}
+
+function buildConnectedNeighborhood(
+  startNodeId: string,
+  edges: CaseGraphData['edges'],
+): {
+  relatedNodeIds: Set<string>;
+  relatedEdgeIds: Set<string>;
+} {
+  const relatedNodeIds = new Set<string>([startNodeId]);
+  const adjacency = new Map<string, string[]>();
+  for (const edge of edges) {
+    const source = String(edge.source || edge.from || '').trim();
+    const target = String(edge.target || edge.to || '').trim();
+    if (!source || !target) continue;
+    adjacency.set(source, [...(adjacency.get(source) ?? []), target]);
+    adjacency.set(target, [...(adjacency.get(target) ?? []), source]);
+  }
+
+  const queue = [startNodeId];
+  for (let index = 0; index < queue.length; index += 1) {
+    const nodeId = queue[index];
+    for (const neighborId of adjacency.get(nodeId) ?? []) {
+      if (relatedNodeIds.has(neighborId)) continue;
+      relatedNodeIds.add(neighborId);
+      queue.push(neighborId);
+    }
+  }
+
+  const relatedEdgeIds = new Set<string>();
+  for (const edge of edges) {
+    const source = String(edge.source || edge.from || '').trim();
+    const target = String(edge.target || edge.to || '').trim();
+    if (source && target && relatedNodeIds.has(source) && relatedNodeIds.has(target)) {
+      relatedEdgeIds.add(resolveEdgeId(edge));
+    }
+  }
+
+  return { relatedNodeIds, relatedEdgeIds };
+}
+
+export function buildConnectedNeighborhoodForTest(
+  startNodeId: string,
+  edges: CaseGraphData['edges'],
+): {
+  relatedNodeIds: string[];
+  relatedEdgeIds: string[];
+} {
+  const neighborhood = buildConnectedNeighborhood(startNodeId, edges);
+  return {
+    relatedNodeIds: [...neighborhood.relatedNodeIds].sort(),
+    relatedEdgeIds: [...neighborhood.relatedEdgeIds].sort(),
+  };
 }
 
 function resolvePointerButton(event: any): number {

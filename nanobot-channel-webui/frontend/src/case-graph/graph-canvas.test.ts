@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildNodeContextMenuItemsForTest,
+  buildConnectedNeighborhoodForTest,
   buildGraphBehaviorsForTest,
   computeParallelEdgeOffsetsForTest,
   resolveNextSelectedNodeIdsForTest,
@@ -61,16 +62,22 @@ describe('graph canvas parallel edge offsets', () => {
   });
 
   it('enables left-button node dragging and disables it while brush mode is active', () => {
+    const clickSelectBehavior = buildGraphBehaviorsForTest(false).find(
+      (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'click-select',
+    );
+
     expect(buildGraphBehaviorsForTest(false)).toContain('drag-canvas');
     expect(buildGraphBehaviorsForTest(true)).not.toContain('drag-canvas');
     expect(buildGraphBehaviorsForTest(true)).toContain('zoom-canvas');
     expect(buildGraphBehaviorsForTest(false)).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'click-select',
+        degree: Number.MAX_SAFE_INTEGER,
         multiple: true,
         trigger: ['shift'],
       }),
     ]));
+    expect(clickSelectBehavior).not.toHaveProperty('onClick');
     expect(buildGraphBehaviorsForTest(false)).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'drag-element',
@@ -93,6 +100,20 @@ describe('graph canvas parallel edge offsets', () => {
     expect(resolveNextSelectedNodeIdsForTest(['a'], 'b', { shiftKey: true })).toEqual(['a', 'b']);
     expect(resolveNextSelectedNodeIdsForTest(['a', 'b'], 'b', { ctrlKey: true })).toEqual(['a']);
     expect(resolveNextSelectedNodeIdsForTest(['a', 'b'], 'c', {})).toEqual(['c']);
+  });
+
+  it('highlights the full connected component when a node is selected', () => {
+    const neighborhood = buildConnectedNeighborhoodForTest('A', [
+      { id: 'A-B', source: 'A', target: 'B', from: 'A', to: 'B', tradeAmount: 1, tradeCount: 1 },
+      { id: 'B-C', source: 'B', target: 'C', from: 'B', to: 'C', tradeAmount: 1, tradeCount: 1 },
+      { id: 'C-D', source: 'C', target: 'D', from: 'C', to: 'D', tradeAmount: 1, tradeCount: 1 },
+      { id: 'D-F', source: 'D', target: 'F', from: 'D', to: 'F', tradeAmount: 1, tradeCount: 1 },
+      { id: 'E-F', source: 'E', target: 'F', from: 'E', to: 'F', tradeAmount: 1, tradeCount: 1 },
+      { id: 'X-Y', source: 'X', target: 'Y', from: 'X', to: 'Y', tradeAmount: 1, tradeCount: 1 },
+    ]);
+
+    expect(neighborhood.relatedNodeIds).toEqual(['A', 'B', 'C', 'D', 'E', 'F']);
+    expect(neighborhood.relatedEdgeIds).toEqual(['A-B', 'B-C', 'C-D', 'D-F', 'E-F']);
   });
 
   it('suppresses native context menu inside graph stage', () => {

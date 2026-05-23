@@ -2202,20 +2202,26 @@
     margin-bottom: 12px;
   }
   .case-graph-insight-strip--compact {
-    flex-direction: row;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
-    justify-content: space-between;
     gap: 12px;
     margin-bottom: 10px;
   }
   .case-graph-insight-strip--compact .case-graph-role-chip-row {
-    flex: 1 1 auto;
     min-width: 0;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .case-graph-insight-strip--compact .case-graph-role-chip-row::-webkit-scrollbar {
+    display: none;
   }
   .case-graph-insight-strip--compact .case-graph-active-brief,
   .case-graph-insight-strip--compact .case-graph-insight-hint {
-    flex: 0 1 auto;
-    margin-left: auto;
+    min-width: 0;
+    margin-left: 0;
   }
   .case-graph-insight-grid {
     display: grid;
@@ -2287,6 +2293,7 @@
   }
   .case-graph-role-chip {
     display: inline-flex;
+    flex: 0 0 auto;
     align-items: center;
     justify-content: center;
     height: 28px;
@@ -2337,19 +2344,36 @@
   }
   .case-graph-active-brief {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    align-items: center;
     justify-content: flex-end;
     gap: 8px 12px;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
     color: var(--color-text-secondary);
     font-size: 12px;
     line-height: 1.45;
   }
   .case-graph-active-brief strong {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--color-text-primary);
     font-size: 13px;
   }
+  .case-graph-active-brief span {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
   .case-graph-insight-hint {
     margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--color-text-muted);
     font-size: 12px;
     line-height: 1.45;
@@ -2502,12 +2526,22 @@
     display: none;
   }
   .case-graph-canvas-stage > .case-graph-empty {
-    min-height: clamp(620px, calc(100vh - 248px), 960px);
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
     border: 1px solid var(--color-border-subtle);
     border-radius: var(--r-sm);
     background:
       radial-gradient(circle at top, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 46%),
       linear-gradient(180deg, color-mix(in srgb, var(--color-bg-page) 90%, white), var(--color-bg-page));
+    pointer-events: none;
+  }
+  .case-graph-canvas-stage > .case-graph-empty .case-graph-empty-action {
+    pointer-events: auto;
   }
   .case-graph-empty-action {
     display: grid;

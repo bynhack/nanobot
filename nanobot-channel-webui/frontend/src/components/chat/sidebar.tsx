@@ -1,5 +1,4 @@
 import { connectionStatusText } from '../../ui-utils';
-import { WorkspaceModeSwitch } from '../workspace-mode-switch';
 import { SidebarThreadList } from './thread-shell';
 import type { ConnectionState, SessionSummary } from '../../types';
 
@@ -10,7 +9,6 @@ export function ChatSidebar({
   sessionsById,
   connectionState,
   onOpenSettings,
-  onOpenCaseGraph,
 }: {
   title: string;
   sidebarCollapsed: boolean;
@@ -18,7 +16,6 @@ export function ChatSidebar({
   sessionsById: Map<string, SessionSummary>;
   connectionState: ConnectionState;
   onOpenSettings: () => void;
-  onOpenCaseGraph: () => void;
 }) {
   return (
     <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
@@ -33,7 +30,6 @@ export function ChatSidebar({
           </div>
           <div className="brand-title">{title}</div>
         </div>
-        <WorkspaceModeSwitch activeMode="chat" onSelectCaseGraph={onOpenCaseGraph} />
       </div>
       <div className="sidebar-history">
         <SidebarThreadList

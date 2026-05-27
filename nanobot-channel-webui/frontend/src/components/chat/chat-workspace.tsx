@@ -42,7 +42,6 @@ export type ChatWorkspaceProps = {
   showSidebarToggle?: boolean;
   onToggleSidebar?: () => void;
   onOpenSettings?: () => void;
-  onOpenCaseGraph?: () => void;
   showWorkspaceButton?: boolean;
   showWorkspacePanel?: boolean;
   canOpenWorkspace?: boolean;
@@ -83,7 +82,6 @@ export const ChatWorkspace = memo(function ChatWorkspace({
   showSidebarToggle = false,
   onToggleSidebar = noop,
   onOpenSettings = noop,
-  onOpenCaseGraph = noop,
   showWorkspacePanel = true,
   workspaceFileCount: workspaceFileCountProp,
   workspaceLoading: workspaceLoadingProp,
@@ -210,7 +208,6 @@ export const ChatWorkspace = memo(function ChatWorkspace({
                 sessionsById={sessionsById}
                 connectionState={connectionState}
                 onOpenSettings={onOpenSettings}
-                onOpenCaseGraph={onOpenCaseGraph}
               />
             ) : null}
 

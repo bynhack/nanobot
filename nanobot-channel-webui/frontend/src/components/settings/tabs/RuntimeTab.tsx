@@ -42,9 +42,9 @@ export function RuntimeTab({ token }: { token: string }) {
     <section className="settings-section">
       <SettingsSectionTitle 
         title="运行数据" 
-        subtitle="观测 Nanobot 的运行状态、日志跟踪与存储资源。"
+        subtitle="观测系统运行状态、日志跟踪与存储资源。"
       />
-      <SettingsRow label="工作区目录" hint="Nanobot 当前运行的物理路径。">
+      <SettingsRow label="工作区目录" hint="当前系统运行的物理路径。">
         <code className="text-xs">{data.workspace}</code>
       </SettingsRow>
       <SettingsRow label="活跃会话数" hint="当前存储在工作区中的对话总数。">
@@ -53,9 +53,9 @@ export function RuntimeTab({ token }: { token: string }) {
 
       <div className="settings-header mt-8">
         <h3 className="settings-header-title">实时运行视图</h3>
-        <p className="settings-header-subtitle">只读展示当前 channel、runtime attach、连接与 active turn 状态。</p>
+        <p className="settings-header-subtitle">只读展示当前通道、运行时挂载、连接与活跃任务状态。</p>
       </div>
-      <SettingsRow label="Channel 状态" hint="当前 WebUI 插件运行开关与 runtime 挂载结果。" vertical>
+      <SettingsRow label="通道状态" hint="当前界面插件运行开关与运行时挂载结果。" vertical>
         <pre className="settings-code-block">
           {JSON.stringify(
             {
@@ -69,7 +69,7 @@ export function RuntimeTab({ token }: { token: string }) {
           )}
         </pre>
       </SettingsRow>
-      <SettingsRow label="Runtime attach" hint="显示是否找到 AgentLoop、hook 数量与包装状态。" vertical>
+      <SettingsRow label="运行时挂载" hint="显示是否找到任务循环、挂钩数量与包装状态。" vertical>
         <pre className="settings-code-block">
           {JSON.stringify(
             {
@@ -83,7 +83,7 @@ export function RuntimeTab({ token }: { token: string }) {
           )}
         </pre>
       </SettingsRow>
-      <SettingsRow label="连接统计" hint="当前 WebSocket 连接与每个 chat 的订阅数量。" vertical>
+      <SettingsRow label="连接统计" hint="当前实时连接与每个会话的订阅数量。" vertical>
         <pre className="settings-code-block">
           {JSON.stringify(
             {
@@ -97,7 +97,7 @@ export function RuntimeTab({ token }: { token: string }) {
           )}
         </pre>
       </SettingsRow>
-      <SettingsRow label="Active turn" hint="当前仍在追踪中的 turn 生命周期状态。" vertical>
+      <SettingsRow label="活跃任务" hint="当前仍在追踪中的任务生命周期状态。" vertical>
         <pre className="settings-code-block">
           {JSON.stringify(
             {
@@ -116,7 +116,7 @@ export function RuntimeTab({ token }: { token: string }) {
       )}
       
       <div className="settings-header mt-8">
-        <h3 className="settings-header-title">性能指标 (Metrics)</h3>
+        <h3 className="settings-header-title">性能指标</h3>
         <p className="settings-header-subtitle">实时统计数据，反映系统负载与执行效率。</p>
       </div>
       <SettingsRow label="执行统计" vertical>

@@ -2,12 +2,16 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildNodeContextMenuItemsForTest,
-  buildConnectedNeighborhoodForTest,
+  buildReplayTimelineViewForTest,
   buildGraphBehaviorsForTest,
+  clearGraphInteractionStatesForTest,
+  clearGraphTransientStatesForTest,
+  createGraphRenderSnapshotForTest,
   computeParallelEdgeOffsetsForTest,
   resolveNextSelectedNodeIdsForTest,
   resolveEdgeTypeForTest,
   resolveGraphCanvasLayoutForTest,
+  resolveGraphRenderTransitionForTest,
   resolveMenuPositionForTest,
   resolveNodeSubtitleForTest,
   shouldSuppressNativeContextMenuForTest,
@@ -72,11 +76,18 @@ describe('graph canvas parallel edge offsets', () => {
     expect(buildGraphBehaviorsForTest(false)).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'click-select',
-        degree: Number.MAX_SAFE_INTEGER,
+        degree: 1,
+        state: 'click-highlight',
+        neighborState: 'click-highlight',
+        unselectedState: 'click-dim',
+        animation: false,
         multiple: true,
         trigger: ['shift'],
       }),
     ]));
+    expect(clickSelectBehavior?.enable?.({ targetType: 'node' })).toBe(true);
+    expect(clickSelectBehavior?.enable?.({ targetType: 'edge' })).toBe(true);
+    expect(clickSelectBehavior?.enable?.({ targetType: 'canvas' })).toBe(true);
     expect(clickSelectBehavior).not.toHaveProperty('onClick');
     expect(buildGraphBehaviorsForTest(false)).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -94,26 +105,16 @@ describe('graph canvas parallel edge offsets', () => {
 
     expect(dragBehavior?.enable?.({ button: 0 })).toBe(true);
     expect(dragBehavior?.enable?.({ nativeEvent: { button: 2 } })).toBe(false);
+    const replayDragBehavior = buildGraphBehaviorsForTest(false, false, false).find(
+      (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'drag-element',
+    );
+    expect(replayDragBehavior?.enable?.({ button: 0 })).toBe(false);
   });
 
   it('supports shift or command/control multi-select for graph nodes', () => {
     expect(resolveNextSelectedNodeIdsForTest(['a'], 'b', { shiftKey: true })).toEqual(['a', 'b']);
     expect(resolveNextSelectedNodeIdsForTest(['a', 'b'], 'b', { ctrlKey: true })).toEqual(['a']);
     expect(resolveNextSelectedNodeIdsForTest(['a', 'b'], 'c', {})).toEqual(['c']);
-  });
-
-  it('highlights the full connected component when a node is selected', () => {
-    const neighborhood = buildConnectedNeighborhoodForTest('A', [
-      { id: 'A-B', source: 'A', target: 'B', from: 'A', to: 'B', tradeAmount: 1, tradeCount: 1 },
-      { id: 'B-C', source: 'B', target: 'C', from: 'B', to: 'C', tradeAmount: 1, tradeCount: 1 },
-      { id: 'C-D', source: 'C', target: 'D', from: 'C', to: 'D', tradeAmount: 1, tradeCount: 1 },
-      { id: 'D-F', source: 'D', target: 'F', from: 'D', to: 'F', tradeAmount: 1, tradeCount: 1 },
-      { id: 'E-F', source: 'E', target: 'F', from: 'E', to: 'F', tradeAmount: 1, tradeCount: 1 },
-      { id: 'X-Y', source: 'X', target: 'Y', from: 'X', to: 'Y', tradeAmount: 1, tradeCount: 1 },
-    ]);
-
-    expect(neighborhood.relatedNodeIds).toEqual(['A', 'B', 'C', 'D', 'E', 'F']);
-    expect(neighborhood.relatedEdgeIds).toEqual(['A-B', 'B-C', 'C-D', 'D-F', 'E-F']);
   });
 
   it('suppresses native context menu inside graph stage', () => {
@@ -140,15 +141,151 @@ describe('graph canvas parallel edge offsets', () => {
     ]));
   });
 
+  it('uses official G6 hover activation for one-hop node neighborhoods', () => {
+    const hoverBehavior = buildGraphBehaviorsForTest(false).find(
+      (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'hover-activate',
+    );
+
+    expect(hoverBehavior).toEqual(expect.objectContaining({
+      type: 'hover-activate',
+      degree: 1,
+      state: 'highlight',
+      inactiveState: 'dim',
+      animation: false,
+    }));
+    expect(hoverBehavior?.enable?.({ targetType: 'node' })).toBe(true);
+    expect(hoverBehavior?.enable?.({ targetType: 'edge' })).toBe(false);
+    expect(buildGraphBehaviorsForTest(true).some(
+      (behavior) => typeof behavior === 'object' && behavior?.type === 'hover-activate',
+    )).toBe(false);
+  });
+
+  it('suppresses official hover and click interactions while graph operations are settling', () => {
+    const behaviors = buildGraphBehaviorsForTest(false, true);
+    const hoverBehavior = behaviors.find(
+      (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'hover-activate',
+    );
+    const clickBehavior = behaviors.find(
+      (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'click-select',
+    );
+
+    expect(hoverBehavior?.enable?.({ targetType: 'node' })).toBe(false);
+    expect(clickBehavior?.enable?.({ targetType: 'node' })).toBe(false);
+    expect(clickBehavior?.enable?.({ targetType: 'canvas' })).toBe(false);
+  });
+
+  it('animates graph changes only after an existing graph gains or moves elements', () => {
+    const emptySnapshot = createGraphRenderSnapshotForTest([], [], new Map());
+    const firstGraph = createGraphRenderSnapshotForTest(
+      [{ id: 'wu', label: '伍华中' }],
+      [],
+      new Map([['wu', { x: 120, y: 160 }]]),
+    );
+    const expandedGraph = createGraphRenderSnapshotForTest(
+      [
+        { id: 'wu', label: '伍华中' },
+        { id: 'feng', label: '冯燕青' },
+      ],
+      [{ id: 'wu->feng', from: 'wu', to: 'feng', source: 'wu', target: 'feng', tradeAmount: 1, tradeCount: 1 }],
+      new Map([
+        ['wu', { x: 120, y: 160 }],
+        ['feng', { x: 320, y: 180 }],
+      ]),
+    );
+    const unrelatedGraph = createGraphRenderSnapshotForTest(
+      [{ id: 'other', label: '其他主体' }],
+      [],
+      new Map([['other', { x: 260, y: 220 }]]),
+    );
+    const movedGraph = createGraphRenderSnapshotForTest(
+      [{ id: 'wu', label: '伍华中' }],
+      [],
+      new Map([['wu', { x: 160, y: 160 }]]),
+    );
+
+    expect(resolveGraphRenderTransitionForTest(emptySnapshot, firstGraph).shouldAnimate).toBe(false);
+    expect(resolveGraphRenderTransitionForTest(emptySnapshot, firstGraph).shouldFitView).toBe(true);
+    const expansionTransition = resolveGraphRenderTransitionForTest(firstGraph, expandedGraph);
+    expect(expansionTransition.shouldAnimate).toBe(true);
+    expect(expansionTransition.shouldFitView).toBe(false);
+    expect([...expansionTransition.newNodeIds]).toEqual(['feng']);
+    expect([...expansionTransition.newEdgeIds]).toEqual(['wu->feng']);
+    expect(resolveGraphRenderTransitionForTest(firstGraph, unrelatedGraph).shouldAnimate).toBe(false);
+    expect(resolveGraphRenderTransitionForTest(firstGraph, unrelatedGraph).shouldFitView).toBe(true);
+    const movedTransition = resolveGraphRenderTransitionForTest(firstGraph, movedGraph);
+    expect(movedTransition.shouldAnimate).toBe(true);
+    expect([...movedTransition.movedNodeIds]).toEqual(['wu']);
+  });
+
+  it('clears stale official hover and click states without removing reveal state', () => {
+    expect(clearGraphInteractionStatesForTest([
+      'click-dim',
+      'highlight',
+      'reveal',
+      'selected',
+      'click-highlight',
+      'dim',
+    ])).toEqual(['reveal', 'selected']);
+  });
+
+  it('clears stale reveal state before replaying another graph step', () => {
+    expect(clearGraphTransientStatesForTest([
+      'click-dim',
+      'highlight',
+      'reveal',
+      'selected',
+      'click-highlight',
+      'dim',
+    ])).toEqual(['selected']);
+  });
+
+  it('builds the custom replay panel state from persisted steps', () => {
+    const steps = [
+      { stepId: '0001', time: 1000, label: '步骤 0001', operationLabel: '一跳分析', nodeCount: 9, edgeCount: 9, addedNodeCount: 9, addedEdgeCount: 9 },
+      { stepId: '0002', time: 5000, label: '步骤 0002', operationLabel: '下钻', nodeCount: 17, edgeCount: 17, addedNodeCount: 8, addedEdgeCount: 8 },
+      { stepId: '0003', time: 9000, label: '步骤 0003', operationLabel: '全图筛选', nodeCount: 12, edgeCount: 12, addedNodeCount: 0, addedEdgeCount: 0 },
+    ];
+
+    expect(buildReplayTimelineViewForTest({ steps, activeStepId: '0002', onStepSelect: () => {} })?.previousStep?.stepId).toBe('0001');
+    expect(buildReplayTimelineViewForTest({ steps, activeStepId: '0002', onStepSelect: () => {} })?.nextStep?.stepId).toBe('0003');
+    expect(buildReplayTimelineViewForTest({ steps, activeStepId: null, onStepSelect: () => {} })?.activeStep.stepId).toBe('0003');
+  });
+
   it('builds node context menu items for the official G6 contextmenu plugin', () => {
     expect(buildNodeContextMenuItemsForTest({ selectedCount: 1, canDrill: true, canExclude: true })).toEqual([
       { name: '双向钻取', value: 'drill:both' },
       { name: '上钻', value: 'drill:in' },
       { name: '下钻', value: 'drill:out' },
+      { name: '补充资金往来', value: 'manual-trade' },
+      { name: '标注现实关系', value: 'reality-relation' },
+      { name: '取消上图', value: 'exclude' },
+    ]);
+    expect(buildNodeContextMenuItemsForTest({
+      selectedCount: 1,
+      canDrill: false,
+      canDetailAnalysis: true,
+      canSummaryAnalysis: true,
+      canExclude: true,
+    })).toEqual([
+      { name: '交易核查', value: 'detail-analysis' },
+      { name: '线索扩展', value: 'summary-analysis' },
+      { name: '补充资金往来', value: 'manual-trade' },
+      { name: '标注现实关系', value: 'reality-relation' },
       { name: '取消上图', value: 'exclude' },
     ]);
     expect(buildNodeContextMenuItemsForTest({ selectedCount: 3, canDrill: false, canExclude: true })).toEqual([
       { name: '取消上图 3 个', value: 'exclude' },
+    ]);
+    expect(buildNodeContextMenuItemsForTest({
+      selectedCount: 1,
+      canRestore: true,
+      canDrill: true,
+      canDetailAnalysis: true,
+      canSummaryAnalysis: true,
+      canManualActions: true,
+      canExclude: true,
+    })).toEqual([
+      { name: '恢复上图', value: 'restore' },
     ]);
   });
 

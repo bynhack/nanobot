@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 from .graph_repository import GraphRepository
+from .graph_state_types import now_iso
 
 
 class GraphStateService:
@@ -73,3 +75,114 @@ class GraphStateService:
             node_positions=node_positions,
             viewport=viewport,
         )
+
+    def write_current_context(
+        self,
+        *,
+        case_id: str,
+        graph_id: str,
+        graph_name: str = "",
+        chat_id: str = "",
+        focus: dict[str, Any] | None = None,
+        latest_step_id: str = "",
+        latest_operation: dict[str, Any] | None = None,
+        latest_step_summary: dict[str, Any] | None = None,
+        delta_summary: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        current = self._repository.load_current(case_id, graph_id)
+        graph = dict(current.get("graph") or {})
+        steps = self._repository.list_steps(case_id, graph_id)
+        latest_step = self._resolve_latest_step(steps, latest_step_id or str(current.get("lastStepId") or ""))
+        graph_dir = self._repository.graph_dir(case_id, graph_id)
+        context_path = (
+            self._repository._workspace_root
+            / ".nanobot_channel_webui"
+            / "case_graph_contexts"
+            / self._safe_path_segment(case_id)
+            / self._safe_path_segment(graph_id)
+            / "current_context.json"
+        )
+        operation = latest_operation or (dict(latest_step.get("operation") or {}) if latest_step else {})
+        summary = latest_step_summary or (dict(latest_step.get("summary") or {}) if latest_step else {})
+        delta = dict(latest_step.get("delta") or {}) if latest_step else {}
+        payload: dict[str, Any] = {
+            "updatedAt": now_iso(),
+            "graphId": graph_id,
+            "caseId": case_id,
+            "graphName": str(current.get("graphName") or graph_name or "").strip(),
+            "graphFile": str((graph_dir / "graph.json").resolve()),
+            "stepsDir": str((graph_dir / "steps").resolve()),
+            "tradeFactsFile": str((graph_dir / "facts" / "trades.jsonl").resolve()),
+            "contextFile": str(context_path.resolve()),
+            "chatId": str(chat_id or "").strip(),
+            "focus": dict(focus) if focus is not None else None,
+            "latestStepId": str((latest_step or {}).get("stepId") or latest_step_id or current.get("lastStepId") or ""),
+            "latestStepFile": str((latest_step or {}).get("file") or ""),
+            "latestOperation": operation,
+            "latestStepSummary": summary,
+            "deltaSummary": delta_summary or self._delta_summary(delta),
+            "graphStats": {
+                "nodeCount": len(graph.get("nodes") or []),
+                "edgeCount": len(graph.get("edges") or []),
+                "tradeFactCount": len(graph.get("tradeFacts") or {}),
+                "manualTradeCount": len(graph.get("manualEdges") or []),
+                "realityRelationCount": len(graph.get("realityRelations") or []),
+                "excludedNodeCount": len(graph.get("excludedNodes") or []),
+                "excludedTradeCount": len(graph.get("excludedTrades") or []),
+            },
+            "availableActions": self._available_actions(graph),
+        }
+        self._write_json(context_path, payload)
+        return payload
+
+    @staticmethod
+    def _resolve_latest_step(steps: list[dict[str, Any]], step_id: str) -> dict[str, Any] | None:
+        if not steps:
+            return None
+        normalized_step_id = str(step_id or "").strip()
+        if normalized_step_id:
+            for step in steps:
+                if str(step.get("stepId") or "").strip() == normalized_step_id:
+                    return step
+        return sorted(
+            steps,
+            key=lambda item: (
+                int(item.get("revision") or 0),
+                str(item.get("stepId") or ""),
+            ),
+        )[-1]
+
+    @staticmethod
+    def _delta_summary(delta: dict[str, Any]) -> dict[str, int]:
+        return {
+            "addedNodeCount": len(delta.get("addedNodes") or []),
+            "addedEdgeCount": len(delta.get("addedEdges") or []),
+            "updatedNodeCount": len(delta.get("updatedNodes") or []),
+            "updatedEdgeCount": len(delta.get("updatedEdges") or []),
+            "removedNodeCount": len(delta.get("removedNodes") or []),
+            "removedEdgeCount": len(delta.get("removedEdges") or []),
+        }
+
+    @staticmethod
+    def _available_actions(graph: dict[str, Any]) -> list[str]:
+        actions = ["总结整图"]
+        if graph.get("nodes"):
+            actions.extend(["上钻", "下钻", "双向钻取", "全图筛选", "取消上图", "交易核查", "线索扩展"])
+        if graph.get("edges"):
+            actions.extend(["查看交易明细", "补全图上关系"])
+        if graph.get("excludedNodes"):
+            actions.append("恢复排除节点")
+        return actions
+
+    @staticmethod
+    def _safe_path_segment(value: str) -> str:
+        normalized = "".join(ch if ch.isalnum() or ch in "._-" else "-" for ch in value.strip())
+        normalized = normalized.strip(".-")
+        return normalized or "unknown"
+
+    @staticmethod
+    def _write_json(path: Path, payload: dict[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = path.with_suffix(".json.tmp")
+        temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp_path.replace(path)

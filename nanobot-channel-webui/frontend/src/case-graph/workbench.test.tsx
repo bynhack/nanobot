@@ -329,6 +329,16 @@ describe('case graph workbench', () => {
     expect(shouldPersistLatestStepLayoutForTest(graphData, positions)).toBe(true);
   });
 
+  it('keeps existing trade exclusions while applying only the current review selection', async () => {
+    const { buildAppliedExcludedTradeIdsForTest } = await import('./workbench');
+
+    expect(buildAppliedExcludedTradeIdsForTest(['old-1', ' old-2 ', 'old-1'], ['new-1', 'old-2', ''])).toEqual([
+      'old-1',
+      'old-2',
+      'new-1',
+    ]);
+  });
+
   it('opens graph workbench from sidebar entry', async () => {
     const onOpenCaseGraph = () => {};
     const sidebar = ChatSidebar({
@@ -376,7 +386,7 @@ describe('case graph workbench', () => {
     expect(html).toContain('时间');
     expect(html).toContain('应用筛选');
     expect(html).toContain('当前筛选');
-    expect(html).toContain('已排除 0');
+    expect(html).toContain('排除项 0');
     expect(html).toContain('显示排除');
   });
 

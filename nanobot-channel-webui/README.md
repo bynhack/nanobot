@@ -150,9 +150,10 @@ Behavior after enabling PocketBase auth:
 
 ## Status
 
-The standalone package now contains the migrated backend plus the current frontend source and built static assets. The original in-repo implementation still exists at:
+The standalone package now contains the migrated backend plus the current frontend source and built static assets. Current planning and implementation should use this package as the source of truth, not older implementations. Historical project locations are only for explicit migration archaeology:
 
-- `/Users/brian/Documents/Project/nanobot/nanobot_webui`
+- `/Users/brian/Documents/Projects/nanobot/webui`
+- `/Users/brian/Documents/Projects/skyable`
 
 Already migrated into the standalone package:
 
@@ -196,9 +197,9 @@ Not migrated yet:
 
 Current documentation entry points:
 
-- [docs/README.md](/Users/brian/Documents/Project/nanobot/nanobot-channel-webui/docs/README.md)
-- [PRODUCT.md](/Users/brian/Documents/Project/nanobot/nanobot-channel-webui/PRODUCT.md)
-- [DESIGN.md](/Users/brian/Documents/Project/nanobot/nanobot-channel-webui/DESIGN.md)
+- [docs/README.md](/Users/brian/Documents/Projects/nanobot/nanobot-channel-webui/docs/README.md)
+- [PRODUCT.md](/Users/brian/Documents/Projects/nanobot/nanobot-channel-webui/PRODUCT.md)
+- [DESIGN.md](/Users/brian/Documents/Projects/nanobot/nanobot-channel-webui/DESIGN.md)
 
 ## Planned package layout
 

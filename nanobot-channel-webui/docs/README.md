@@ -16,8 +16,6 @@ case-graph 事实文档为准。
   - 当前长期设计基线
 - [case-graph/README.md](./case-graph/README.md)
   - 经侦上图分析器相关事实文档入口
-- [case-graph/real-example/](./case-graph/real-example)
-  - 原版 `/trade/query` 的真实请求/响应样本，供对比参考
 
 当前硬约束：
 
@@ -31,7 +29,7 @@ case-graph 事实文档为准。
 - 删除只描述某个阶段执行过程的 `plan` / `design` / `release-notes` 文档
 - 删除已经被当前事实文档吸收、继续保留只会制造分叉的文档
 - 删除一次性调试产物或临时样例文件
-- 保留可复用的真实样本快照，例如 `case-graph/real-example/` 下的请求/响应基线
 - 如果文档事实已经不符合当前代码、`~/.nanobot/workspace/.nanobot_channel_webui` 过程文件或产品定位，要随功能修改一并更新
+- 不再维护原版实现对比、原版差异或原版问题跟踪；当前产品规划以本项目代码和用户工作流为准
 
 当前目录应视为“索引层”，不是历史档案层。

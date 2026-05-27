@@ -126,6 +126,28 @@ describe('case graph layout helpers', () => {
     expect(layout.get('chen')).toEqual({ x: 120, y: 240 });
   });
 
+  it('keeps existing coordinates unchanged when extension nodes need new positions', () => {
+    const graphData: CaseGraphData = {
+      nodes: [
+        { id: 'wu', label: '伍华中', x: 320, y: 240 },
+        { id: 'feng', label: '冯燕青', x: 560, y: 240 },
+        { id: 'new-counterparty', label: '新增对手主体' },
+      ],
+      edges: [
+        { id: 'feng->wu', from: 'feng', to: 'wu', source: 'feng', target: 'wu', tradeAmount: 20, tradeCount: 1 },
+        { id: 'wu->new-counterparty', from: 'wu', to: 'new-counterparty', source: 'wu', target: 'new-counterparty', tradeAmount: 30, tradeCount: 1 },
+      ],
+    };
+
+    const layout = computeCaseGraphLayout(graphData, OPTIONS);
+
+    expect(layout.get('wu')).toEqual({ x: 320, y: 240 });
+    expect(layout.get('feng')).toEqual({ x: 560, y: 240 });
+    expect(layout.get('new-counterparty')).toBeDefined();
+    expect(layout.get('new-counterparty')).not.toEqual({ x: 320, y: 240 });
+    expect(layout.get('new-counterparty')).not.toEqual({ x: 560, y: 240 });
+  });
+
   it('prefers investigator layout over persisted coordinates when requested', () => {
     const graphData: CaseGraphData = {
       nodes: [
@@ -147,5 +169,27 @@ describe('case graph layout helpers', () => {
 
     expect(layout.get('upstream')!.x).toBeLessThan(layout.get('core')!.x);
     expect(layout.get('core')!.x).toBeLessThan(layout.get('downstream')!.x);
+  });
+
+  it('renders flow graphs as a left-to-right directed layout', () => {
+    const graphData: CaseGraphData = {
+      nodes: [
+        { id: 'source', label: '资金来源', x: 900, y: 40 },
+        { id: 'middle', label: '中转账户', x: 500, y: 40 },
+        { id: 'sink', label: '资金去向', x: 100, y: 40 },
+      ],
+      edges: [
+        { id: 'source->middle', from: 'source', to: 'middle', source: 'source', target: 'middle', tradeAmount: 100, tradeCount: 1 },
+        { id: 'middle->sink', from: 'middle', to: 'sink', source: 'middle', target: 'sink', tradeAmount: 80, tradeCount: 1 },
+      ],
+    };
+
+    const layout = computeCaseGraphLayout(graphData, {
+      ...OPTIONS,
+      layoutMode: 'directed-flow',
+    });
+
+    expect(layout.get('source')!.x).toBeLessThan(layout.get('middle')!.x);
+    expect(layout.get('middle')!.x).toBeLessThan(layout.get('sink')!.x);
   });
 });

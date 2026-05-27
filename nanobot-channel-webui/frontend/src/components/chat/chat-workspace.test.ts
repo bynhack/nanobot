@@ -27,23 +27,32 @@ describe('ChatWorkspace component boundary', () => {
     }
   });
 
-  it('keeps case-graph fullscreen on the shared chat workbench without the primary sidebar', () => {
+  it('keeps case-graph chat as one stable workspace when toggling fullscreen', () => {
     const caseGraphSource = readSource('src/case-graph/workbench.tsx');
-    const fullscreenBlock = caseGraphSource.slice(
-      caseGraphSource.indexOf('case-graph-chat-fullscreen-mask'),
-      caseGraphSource.indexOf('{newGraphDialogOpen'),
+    const chatBlock = caseGraphSource.slice(
+      caseGraphSource.indexOf('<aside className="case-graph-detail case-graph-chat-panel">'),
+      caseGraphSource.indexOf('</aside>', caseGraphSource.indexOf('<aside className="case-graph-detail case-graph-chat-panel">')),
     );
 
-    expect(fullscreenBlock).toContain('<ChatWorkspace');
-    expect(fullscreenBlock).toContain('showSidebar={false}');
-    expect(fullscreenBlock).toContain('showSidebarToggle={false}');
-    expect(fullscreenBlock).toContain('showWorkspacePanel={true}');
-    expect(fullscreenBlock).toContain('showWorkspaceButton={true}');
-    expect(fullscreenBlock).toContain('<DetailPreviewPane');
-    expect(fullscreenBlock).toContain('onResizeStart={() => setResizingDetailPanel(true)}');
-    expect(fullscreenBlock).toContain('topControlsSlot={renderFullscreenTopControls}');
-    expect(fullscreenBlock).not.toContain('headerSlot=');
-    expect(fullscreenBlock).not.toContain('case-graph-chat-fullscreen-header');
+    expect((caseGraphSource.match(/<ChatWorkspace(?:\s|>)/g) ?? []).length).toBe(1);
+    expect(chatBlock).toContain('<ChatWorkspace');
+    expect(chatBlock).toContain("className={chatFullscreen ? 'chat-workspace case-graph-chat-fullscreen-workspace' : 'case-graph-chat-workspace'}");
+    expect(chatBlock).toContain("threadWrapperClassName={chatFullscreen ? 'case-graph-chat-thread case-graph-chat-thread--fullscreen' : 'case-graph-chat-thread'}");
+    expect(chatBlock).toContain('showSidebar={false}');
+    expect(chatBlock).toContain('showSidebarToggle={false}');
+    expect(chatBlock).toContain('showWorkspacePanel={false}');
+    expect(chatBlock).toContain('<ConversationContentPane');
+    expect(chatBlock).toContain('onResizeStart={() => setResizingDetailPanel(true)}');
+    expect(chatBlock).toContain('{chatFullscreen ? renderFullscreenTopControls() : null}');
+    expect(chatBlock).toContain('showContentPanelToggle={false}');
+    expect(chatBlock).toContain('showContentHeader={chatFullscreen}');
+    expect(chatBlock).toContain('headerSlot={chatFullscreen ? undefined :');
+    expect(chatBlock).not.toContain('contextSlot=');
+    expect(chatBlock).toContain('useDefaultSuggestions={false}');
+    expect(chatBlock).toContain('showThreadWelcome={false}');
+    expect(chatBlock).toContain('composerTopSlot={renderComposerSuggestions}');
+    expect(caseGraphSource).toContain('case-graph-chat-fullscreen-controls');
+    expect(caseGraphSource).toContain('className="content-panel-toggle case-graph-chat-fullscreen-exit"');
     expect(caseGraphSource).not.toContain('setPreviewSidebarOpen');
     expect(caseGraphSource).not.toContain('previewSidebarOpen');
     expect(caseGraphSource).not.toContain('setChatFullscreenSidebarCollapsed');
@@ -53,8 +62,8 @@ describe('ChatWorkspace component boundary', () => {
   it('keeps graph edge selection from being overwritten by node focus', () => {
     const graphCanvasSource = readSource('src/case-graph/graph-canvas.tsx');
     const edgeClickBlock = graphCanvasSource.slice(
-      graphCanvasSource.indexOf("graph.on('edge:click'"),
-      graphCanvasSource.indexOf("graph.on('canvas:click'"),
+      graphCanvasSource.indexOf('graph.on(EdgeEvent.CLICK'),
+      graphCanvasSource.indexOf('graph.on(CanvasEvent.CLICK'),
     );
     const focusEffectBlock = graphCanvasSource.slice(
       graphCanvasSource.indexOf('if (selectedEdge)'),
@@ -63,6 +72,8 @@ describe('ChatWorkspace component boundary', () => {
 
     expect(edgeClickBlock).toContain('setActiveNodeId(null)');
     expect(edgeClickBlock).toContain('setActiveEdgeId(edgeId)');
+    expect(edgeClickBlock).toContain('edgeLookupRef.current.get(edgeId)');
+    expect(edgeClickBlock).toContain('nodeLookupRef.current');
     expect(edgeClickBlock).toContain('onOpenEdgeDetailRef.current(edgeId, edgeFocus ?? undefined)');
     expect(focusEffectBlock).toContain("type: 'edge'");
     expect(focusEffectBlock).toContain('from: selectedEdge.source');
@@ -73,15 +84,25 @@ describe('ChatWorkspace component boundary', () => {
     const graphCanvasSource = readSource('src/case-graph/graph-canvas.tsx');
     const workbenchSource = readSource('src/case-graph/workbench.tsx');
     const edgeClickBlock = graphCanvasSource.slice(
-      graphCanvasSource.indexOf("graph.on('edge:click'"),
-      graphCanvasSource.indexOf("graph.on('canvas:click'"),
+      graphCanvasSource.indexOf('graph.on(EdgeEvent.CLICK'),
+      graphCanvasSource.indexOf('graph.on(CanvasEvent.CLICK'),
+    );
+    const focusChangeBlock = workbenchSource.slice(
+      workbenchSource.indexOf('onFocusChange={(focus) => {'),
+      workbenchSource.indexOf('onNodePositionsChange={(positions, reason) => {'),
     );
 
     expect(edgeClickBlock).toContain('const edgeFocus = buildEdgeFocusPayload');
+    expect(edgeClickBlock).toContain('edgeLookupRef.current.get(edgeId)');
+    expect(edgeClickBlock).toContain('nodeLookupRef.current');
     expect(edgeClickBlock).toContain('onOpenEdgeDetailRef.current(edgeId, edgeFocus ?? undefined)');
     expect(workbenchSource).toContain('const handleOpenEdgeDetail = useCallback((edgeId: string, edgeFocus?: CaseGraphConversationFocus)');
     expect(workbenchSource).toContain("if (edgeFocus?.type === 'edge')");
     expect(workbenchSource).toContain('syncGraphContext(edgeFocus)');
+    expect(focusChangeBlock).toContain("if (focus.type === 'edge')");
+    expect(focusChangeBlock).toContain('fromName: focus.fromName || resolveNodeDisplayName');
+    expect(focusChangeBlock).toContain('toName: focus.toName || resolveNodeDisplayName');
+    expect(focusChangeBlock).toContain('syncGraphContext({');
   });
 
   it('clears stale case data before loading a newly selected case', () => {

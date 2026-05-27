@@ -93,6 +93,12 @@ def normalize_graph_body(value: Any) -> dict[str, Any]:
     return {
         "nodes": nodes,
         "edges": [dict(item) for item in list_value(raw.get("edges")) if isinstance(item, dict)],
+        "tradeFacts": {
+            text(key): dict(item)
+            for key, item in dict_value(raw.get("tradeFacts")).items()
+            if text(key) and isinstance(item, dict)
+        },
+        "factStore": dict_value(raw.get("factStore")),
         "tradeCards": [dict(item) for item in list_value(raw.get("tradeCards")) if isinstance(item, dict)],
         "groupMap": dict_value(raw.get("groupMap")),
         "sourceSelectId": text_list(raw.get("sourceSelectId")),
@@ -105,6 +111,7 @@ def normalize_graph_body(value: Any) -> dict[str, Any]:
         "filters": normalize_filters(raw.get("filters")),
         "excludedNodes": [dict(item) for item in list_value(raw.get("excludedNodes")) if isinstance(item, dict)],
         "manualEdges": [dict(item) for item in list_value(raw.get("manualEdges")) if isinstance(item, dict)],
+        "realityRelations": [dict(item) for item in list_value(raw.get("realityRelations")) if isinstance(item, dict)],
         "annotations": [dict(item) for item in list_value(raw.get("annotations")) if isinstance(item, dict)],
         "graphData": raw.get("graphData"),
     }

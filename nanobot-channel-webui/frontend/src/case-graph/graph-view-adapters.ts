@@ -10,6 +10,59 @@ export function buildMergedNetworkGraph(
   return buildGroupedGraph(graphData, groupMap, { prefixGroupIds: false });
 }
 
+export function buildFlowGraphProjection(
+  graphData: CaseGraphData | null,
+  groupMap: CaseGraphGroupMap,
+): CaseGraphData | null {
+  const groupedGraph = buildGroupedGraph(graphData, groupMap, { prefixGroupIds: false });
+  if (!groupedGraph) {
+    return null;
+  }
+
+  const reciprocalPairs = new Map<string, {
+    first?: CaseGraphData['edges'][number];
+    second?: CaseGraphData['edges'][number];
+  }>();
+  for (const edge of groupedGraph.edges) {
+    const source = String(edge.source || edge.from || '').trim();
+    const target = String(edge.target || edge.to || '').trim();
+    if (!source || !target || source === target) {
+      continue;
+    }
+    const key = source < target ? `${source}::${target}` : `${target}::${source}`;
+    const pair = reciprocalPairs.get(key) ?? {};
+    if (!pair.first) {
+      pair.first = { ...edge, source, target, from: source, to: target };
+    } else if (!pair.second) {
+      pair.second = { ...edge, source, target, from: source, to: target };
+    } else {
+      pair.first = mergeSameDirectionEdges(pair.first, { ...edge, source, target, from: source, to: target });
+    }
+    reciprocalPairs.set(key, pair);
+  }
+
+  const flowEdges: CaseGraphData['edges'] = [];
+  for (const pair of reciprocalPairs.values()) {
+    if (pair.first && pair.second) {
+      const netEdge = buildNetFlowEdge(pair.first, pair.second);
+      if (netEdge) {
+        flowEdges.push(netEdge);
+      }
+      continue;
+    }
+    if (pair.first) {
+      flowEdges.push(normalizeFlowEdge(pair.first));
+    }
+  }
+
+  return {
+    nodes: groupedGraph.nodes.map((node) => ({ ...node })),
+    edges: flowEdges,
+    tradeFacts: { ...(groupedGraph.tradeFacts ?? {}) },
+    realityRelations: [...(groupedGraph.realityRelations ?? [])],
+  };
+}
+
 function buildGroupedGraph(
   graphData: CaseGraphData | null,
   groupMap: CaseGraphGroupMap,
@@ -79,8 +132,11 @@ function buildGroupedGraph(
       existing.tradeCount += Number(edge.tradeCount || 0);
       existing.amount = existing.tradeAmount;
       existing.count = existing.tradeCount;
+      existing.tradeIds = [...new Set([...(existing.tradeIds ?? []), ...(edge.tradeIds ?? [])].map(String).filter(Boolean))];
       existing.startDate = chooseEdgeBoundary(existing.startDate, edge.startDate, 'min');
       existing.endDate = chooseEdgeBoundary(existing.endDate, edge.endDate, 'max');
+      existing.startTime = chooseEdgeBoundary(existing.startTime, edge.startTime, 'min');
+      existing.endTime = chooseEdgeBoundary(existing.endTime, edge.endTime, 'max');
       continue;
     }
     edgeMap.set(edgeId, {
@@ -108,6 +164,86 @@ function buildGroupedGraph(
   return {
     nodes: [...nodesByKey.values()],
     edges: [...edgeMap.values()],
+    tradeFacts: { ...(graphData.tradeFacts ?? {}) },
+    realityRelations: (graphData.realityRelations ?? [])
+      .map((relation) => {
+        const sourceNode = graphData.nodes.find((node) => node.id === relation.source || node.id === relation.sourceNodeId);
+        const targetNode = graphData.nodes.find((node) => node.id === relation.target || node.id === relation.targetNodeId);
+        const source = sourceNode ? resolveGroupNodeKey(sourceNode, memberToGroup) : String(relation.source || relation.sourceNodeId || '').trim();
+        const target = targetNode ? resolveGroupNodeKey(targetNode, memberToGroup) : String(relation.target || relation.targetNodeId || '').trim();
+        return source && target && source !== target ? { ...relation, source, target, sourceNodeId: source, targetNodeId: target } : null;
+      })
+      .filter((relation): relation is NonNullable<CaseGraphData['realityRelations']>[number] => Boolean(relation)),
+  };
+}
+
+function buildNetFlowEdge(
+  first: CaseGraphData['edges'][number],
+  second: CaseGraphData['edges'][number],
+): CaseGraphData['edges'][number] | null {
+  const firstAmount = Number(first.tradeAmount || first.amount || 0);
+  const secondAmount = Number(second.tradeAmount || second.amount || 0);
+  const netAmount = Math.abs(firstAmount - secondAmount);
+  if (netAmount <= 0) {
+    return null;
+  }
+  const dominant = firstAmount >= secondAmount ? first : second;
+  const source = String(dominant.source || dominant.from || '').trim();
+  const target = String(dominant.target || dominant.to || '').trim();
+  if (!source || !target) {
+    return null;
+  }
+  return {
+    ...dominant,
+    id: `${GROUP_EDGE_PREFIX}${source}->${target}`,
+    from: source,
+    to: target,
+    source,
+    target,
+    tradeAmount: netAmount,
+    amount: netAmount,
+    tradeCount: Number(dominant.tradeCount || dominant.count || 0),
+    count: Number(dominant.tradeCount || dominant.count || 0),
+    tradeIds: [...(dominant.tradeIds ?? [])],
+  };
+}
+
+function normalizeFlowEdge(edge: CaseGraphData['edges'][number]): CaseGraphData['edges'][number] {
+  const source = String(edge.source || edge.from || '').trim();
+  const target = String(edge.target || edge.to || '').trim();
+  const amount = Number(edge.tradeAmount || edge.amount || 0);
+  const count = Number(edge.tradeCount || edge.count || 0);
+  return {
+    ...edge,
+    id: `${GROUP_EDGE_PREFIX}${source}->${target}`,
+    from: source,
+    to: target,
+    source,
+    target,
+    tradeAmount: amount,
+    amount,
+    tradeCount: count,
+    count,
+  };
+}
+
+function mergeSameDirectionEdges(
+  current: CaseGraphData['edges'][number],
+  next: CaseGraphData['edges'][number],
+): CaseGraphData['edges'][number] {
+  const tradeAmount = Number(current.tradeAmount || 0) + Number(next.tradeAmount || 0);
+  const tradeCount = Number(current.tradeCount || 0) + Number(next.tradeCount || 0);
+  return {
+    ...current,
+    tradeAmount,
+    amount: tradeAmount,
+    tradeCount,
+    count: tradeCount,
+    tradeIds: [...new Set([...(current.tradeIds ?? []), ...(next.tradeIds ?? [])].map(String).filter(Boolean))],
+    startDate: chooseEdgeBoundary(current.startDate, next.startDate, 'min'),
+    endDate: chooseEdgeBoundary(current.endDate, next.endDate, 'max'),
+    startTime: chooseEdgeBoundary(current.startTime, next.startTime, 'min'),
+    endTime: chooseEdgeBoundary(current.endTime, next.endTime, 'max'),
   };
 }
 

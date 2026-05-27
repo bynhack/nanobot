@@ -16,7 +16,7 @@ export function LoginPage({
     <div className="auth-modal">
       <div className="auth-card">
         <h2>登录</h2>
-        <p>请输入 PocketBase 后台创建的账号。</p>
+        <p>请输入后台创建的账号。</p>
         <input
           type="email"
           placeholder="邮箱"

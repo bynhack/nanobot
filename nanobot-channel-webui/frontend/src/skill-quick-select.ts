@@ -11,6 +11,12 @@ export type SkillRunConfig = {
 const SLASH_PATTERN = /^\/([^\s]*)/;
 const INVOCATION_PATTERN = /^\$([^\s]+)/;
 const SELECTED_SKILL_RUN_CONFIG_KEY = 'nanobotSelectedSkill';
+const SKILL_DISPLAY_NAME_OVERRIDES: Record<string, string> = {
+  'case graph analyst': '图谱研判助手',
+  'case-graph-analyst': '图谱研判助手',
+  'case graph operator': '图谱操作助手',
+  'case-graph-operator': '图谱操作助手',
+};
 
 function leadingSlashToken(draft: string): string | null {
   const match = draft.match(SLASH_PATTERN);
@@ -131,7 +137,8 @@ export function messageContentWithSelectedSkill(
 
   const trimmedContent = content.trim();
   const legacyPrefix = `$${selected}`;
-  const displayPrefix = `使用 ${selected} 技能`;
+  const displaySkill = SKILL_DISPLAY_NAME_OVERRIDES[selected.toLowerCase()] ?? selected;
+  const displayPrefix = `使用 ${displaySkill} 技能`;
   const normalizedLower = trimmedContent.toLowerCase();
   if (!trimmedContent) {
     return displayPrefix;

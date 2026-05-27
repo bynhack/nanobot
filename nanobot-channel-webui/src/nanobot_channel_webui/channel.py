@@ -462,8 +462,14 @@ class WebUIChannel(BaseChannel):
         app.router.add_post("/api/case-graph/relation/query", self._handle_case_graph_relation_query)
         app.router.add_post("/api/case-graph/relation/complete", self._handle_case_graph_relation_complete)
         app.router.add_post("/api/case-graph/relation/filter", self._handle_case_graph_relation_filter)
+        app.router.add_post("/api/case-graph/relation/exclude-trades", self._handle_case_graph_relation_exclude_trades)
+        app.router.add_post("/api/case-graph/relation/summary-candidates", self._handle_case_graph_relation_summary_candidates)
+        app.router.add_post("/api/case-graph/relation/summary-selection", self._handle_case_graph_relation_summary_selection)
         app.router.add_post("/api/case-graph/relation/exclude-node", self._handle_case_graph_relation_exclude_node)
         app.router.add_post("/api/case-graph/relation/restore-node", self._handle_case_graph_relation_restore_node)
+        app.router.add_post("/api/case-graph/relation/manual-node", self._handle_case_graph_relation_manual_node)
+        app.router.add_post("/api/case-graph/relation/manual-trade", self._handle_case_graph_relation_manual_trade)
+        app.router.add_post("/api/case-graph/relation/reality-relation", self._handle_case_graph_relation_reality_relation)
         app.router.add_get("/api/case-graph/relation/state/{case_id}/{graph_id}", self._handle_case_graph_state_get)
         app.router.add_post("/api/case-graph/relation/state/{case_id}/{graph_id}/operations/layout", self._handle_case_graph_state_layout)
         app.router.add_post("/api/case-graph/relation/state/{case_id}/{graph_id}/operations/latest-step-layout", self._handle_case_graph_state_latest_step_layout)
@@ -702,18 +708,31 @@ class WebUIChannel(BaseChannel):
         if not chat_id or not is_valid_chat_id(chat_id):
             return web.json_response({"error": "无效的会话 ID"}, status=400)
 
+        deleted = await self._delete_session_by_id(chat_id, user)
+        if not deleted:
+            message = "会话不存在或无权删除" if user is not None and self._pocketbase.enabled else "会话不存在"
+            return web.json_response({"error": message}, status=404)
+        return web.json_response({"ok": True})
+
+    async def _delete_session_by_id(
+        self,
+        chat_id: str,
+        user: CurrentUser | None,
+        *,
+        missing_ok: bool = False,
+    ) -> bool:
         if user is not None and self._pocketbase.enabled:
             deleted_index = await self._session_index.delete_for_user(user, chat_id)
-            if not deleted_index:
-                return web.json_response({"error": "会话不存在或无权删除"}, status=404)
+            if not deleted_index and not missing_ok:
+                return False
 
         deleted = await asyncio.to_thread(self._sessions.delete_session, chat_id)
-        if not deleted and not (user is not None and self._pocketbase.enabled):
-            return web.json_response({"error": "会话不存在"}, status=404)
+        if not deleted and not (user is not None and self._pocketbase.enabled) and not missing_ok:
+            return False
 
         self._turns.clear(chat_id)
         await self._registry.delete_chat(chat_id, session_deleted_event(chat_id))
-        return web.json_response({"ok": True})
+        return deleted or (user is not None and self._pocketbase.enabled)
 
     async def _handle_skills(self, request: Any) -> Any:
         from aiohttp import web
@@ -986,7 +1005,7 @@ class WebUIChannel(BaseChannel):
     async def _handle_case_graph_delete(self, request: Any) -> Any:
         from aiohttp import web
 
-        allowed, resp, _user = await self._authorize_request(request)
+        allowed, resp, user = await self._authorize_request(request)
         if not allowed:
             return resp
 
@@ -995,6 +1014,7 @@ class WebUIChannel(BaseChannel):
             return web.json_response({"error": "缺少 graph_id"}, status=400)
 
         try:
+            graph = await asyncio.to_thread(self._case_graph_storage.get_graph, graph_id)
             deleted = await asyncio.to_thread(self._case_graph_service.delete_graph, graph_id)
         except CaseGraphCorruptError as exc:
             return _case_graph_corrupt_response(web, exc)
@@ -1002,6 +1022,12 @@ class WebUIChannel(BaseChannel):
             return web.json_response({"error": f"删除图失败: {exc}"}, status=500)
         if not deleted:
             return web.json_response({"error": "图不存在"}, status=404)
+        chat_id = str((graph or {}).get("chatId") or "").strip()
+        if chat_id and is_valid_chat_id(chat_id):
+            try:
+                await self._delete_session_by_id(chat_id, user, missing_ok=True)
+            except Exception as exc:
+                logger.warning("Deleted case graph {} but failed to delete bound chat {}: {}", graph_id, chat_id, exc)
         return web.json_response({"ok": True})
 
     async def _handle_case_graph_relation_query(self, request: Any) -> Any:
@@ -1105,6 +1131,44 @@ class WebUIChannel(BaseChannel):
             return web.json_response({"error": f"图筛选失败: {exc}"}, status=502)
         return web.json_response(result)
 
+    async def _handle_case_graph_relation_exclude_trades(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            _require_text_field(payload, "graphId")
+            _require_text_field(payload, "caseId")
+        except ValueError as exc:
+            return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
+        if "excludedTrades" in payload and not isinstance(payload.get("excludedTrades"), list):
+            return web.json_response({"error": "excludedTrades 必须是数组"}, status=400)
+        if "tradeFacts" in payload and not isinstance(payload.get("tradeFacts"), (list, dict)):
+            return web.json_response({"error": "tradeFacts 必须是数组或对象"}, status=400)
+        if "edgeTradeIds" in payload and not isinstance(payload.get("edgeTradeIds"), dict):
+            return web.json_response({"error": "edgeTradeIds 必须是对象"}, status=400)
+
+        try:
+            result = await asyncio.to_thread(
+                self._case_graph_relation_service.exclude_trades,
+                dict(payload),
+            )
+        except ValueError as exc:
+            field = exc.args[0] if exc.args else "payload"
+            return web.json_response({"error": f"缺少或无效的必要字段: {field}"}, status=400)
+        except FileNotFoundError:
+            return web.json_response({"error": "图不存在或还没有可筛选的图数据"}, status=404)
+        except Exception as exc:
+            return web.json_response({"error": f"交易核查失败: {exc}"}, status=502)
+        return web.json_response(result)
+
     async def _handle_case_graph_relation_exclude_node(self, request: Any) -> Any:
         from aiohttp import web
 
@@ -1122,7 +1186,12 @@ class WebUIChannel(BaseChannel):
             _require_text_field(payload, "caseId")
         except ValueError as exc:
             return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
-        if not isinstance(payload.get("node"), dict):
+        if "nodes" in payload:
+            if not isinstance(payload.get("nodes"), list):
+                return web.json_response({"error": "nodes 必须是数组"}, status=400)
+            if not all(isinstance(node, dict) for node in payload.get("nodes") or []):
+                return web.json_response({"error": "nodes 必须是对象数组"}, status=400)
+        elif not isinstance(payload.get("node"), dict):
             return web.json_response({"error": "node 必须是对象"}, status=400)
 
         try:
@@ -1136,6 +1205,85 @@ class WebUIChannel(BaseChannel):
             return web.json_response({"error": "图不存在或还没有可排除的图数据"}, status=404)
         except Exception as exc:
             return web.json_response({"error": f"排除节点失败: {exc}"}, status=502)
+        return web.json_response(result)
+
+    async def _handle_case_graph_relation_summary_selection(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            _require_text_field(payload, "graphId")
+            _require_text_field(payload, "caseId")
+        except ValueError as exc:
+            field_labels = {"graphId": "图谱", "caseId": "案件", "focusNodeId": "当前主体"}
+            return web.json_response({"error": f"缺少或无效的必要字段: {field_labels.get(exc.args[0], '请求内容')}"}, status=400)
+        if "candidateNodeIds" in payload and not isinstance(payload.get("candidateNodeIds"), list):
+            return web.json_response({"error": "候选主体必须是数组"}, status=400)
+        if "selectedNodeIds" in payload and not isinstance(payload.get("selectedNodeIds"), list):
+            return web.json_response({"error": "保留主体必须是数组"}, status=400)
+
+        try:
+            result = await asyncio.to_thread(
+                self._case_graph_relation_service.apply_summary_selection,
+                dict(payload),
+            )
+        except ValueError as exc:
+            field_labels = {"graphId": "图谱", "caseId": "案件", "focusNodeId": "当前主体"}
+            return web.json_response({"error": f"缺少或无效的必要字段: {field_labels.get(exc.args[0], '请求内容')}"}, status=400)
+        except FileNotFoundError:
+            return web.json_response({"error": "图不存在或还没有可扩展的图数据"}, status=404)
+        except Exception as exc:
+            return web.json_response({"error": f"线索扩展失败: {exc}"}, status=502)
+        return web.json_response(result)
+
+    async def _handle_case_graph_relation_summary_candidates(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            _require_text_field(payload, "graphId")
+            _require_text_field(payload, "caseId")
+        except ValueError as exc:
+            field_labels = {"graphId": "图谱", "caseId": "案件", "focusNodeId": "当前主体"}
+            return web.json_response({"error": f"缺少或无效的必要字段: {field_labels.get(exc.args[0], '请求内容')}"}, status=400)
+        if "filters" in payload and not isinstance(payload.get("filters"), dict):
+            return web.json_response({"error": "筛选条件必须是对象"}, status=400)
+
+        try:
+            result = await asyncio.to_thread(
+                self._case_graph_relation_service.query_summary_candidates,
+                dict(payload),
+            )
+        except ValueError as exc:
+            field_labels = {
+                "graphId": "图谱",
+                "caseId": "案件",
+                "focusNodeId": "当前主体",
+                "focusNodeAccounts": "当前主体账号",
+            }
+            return web.json_response({"error": f"缺少或无效的必要字段: {field_labels.get(exc.args[0], '请求内容')}"}, status=400)
+        except FileNotFoundError:
+            return web.json_response({"error": "图不存在或还没有可扩展的图数据"}, status=404)
+        except _CaseGraphQueryClientNotConfiguredError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        except Exception as exc:
+            return web.json_response({"error": f"线索候选读取失败: {exc}"}, status=502)
         return web.json_response(result)
 
     async def _handle_case_graph_relation_restore_node(self, request: Any) -> Any:
@@ -1168,6 +1316,142 @@ class WebUIChannel(BaseChannel):
             return web.json_response({"error": "图不存在或还没有可恢复的图数据"}, status=404)
         except Exception as exc:
             return web.json_response({"error": f"恢复节点失败: {exc}"}, status=502)
+        return web.json_response(result)
+
+    async def _handle_case_graph_relation_manual_node(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            _require_text_field(payload, "graphId")
+            _require_text_field(payload, "caseId")
+            _require_text_field(payload, "label")
+        except ValueError as exc:
+            field_labels = {"graphId": "图谱", "caseId": "案件", "label": "主体名称"}
+            return web.json_response({"error": f"缺少或无效的必要字段: {field_labels.get(exc.args[0], '请求内容')}"}, status=400)
+
+        try:
+            result = await asyncio.to_thread(
+                self._case_graph_relation_service.add_manual_node,
+                dict(payload),
+            )
+        except ValueError as exc:
+            if exc.args and exc.args[0] == "duplicateTradeCard":
+                return web.json_response({"error": "该银行卡号或账号已在当前图谱中存在"}, status=400)
+            if exc.args and exc.args[0] == "graphAnchor":
+                return web.json_response({"error": "请先选择案件和侦办起点，当前图上没有可承载的主体"}, status=400)
+            field_labels = {
+                "graphId": "图谱",
+                "caseId": "案件",
+                "label": "主体名称",
+            }
+            return web.json_response({"error": f"缺少或无效的必要字段: {field_labels.get(exc.args[0], '请求内容')}"}, status=400)
+        except FileNotFoundError:
+            return web.json_response({"error": "图不存在或还没有可补充的图数据"}, status=404)
+        except Exception as exc:
+            return web.json_response({"error": f"创建交易主体失败: {exc}"}, status=502)
+        return web.json_response(result)
+
+    async def _handle_case_graph_relation_manual_trade(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            _require_text_field(payload, "graphId")
+            _require_text_field(payload, "caseId")
+        except ValueError as exc:
+            field_labels = {"graphId": "图谱", "caseId": "案件"}
+            return web.json_response({"error": f"缺少或无效的必要字段: {field_labels.get(exc.args[0], '请求内容')}"}, status=400)
+        if not isinstance(payload.get("payer"), dict):
+            return web.json_response({"error": "付款方必须是对象"}, status=400)
+        if not isinstance(payload.get("payee"), dict):
+            return web.json_response({"error": "收款方必须是对象"}, status=400)
+
+        try:
+            result = await asyncio.to_thread(
+                self._case_graph_relation_service.add_manual_trade,
+                dict(payload),
+            )
+        except ValueError as exc:
+            field_labels = {
+                "graphId": "图谱",
+                "caseId": "案件",
+                "payer": "付款方",
+                "payee": "收款方",
+                "amount": "交易金额",
+                "counterparty": "交易双方",
+                "graphAnchor": "图上已有主体",
+            }
+            return web.json_response({"error": f"缺少或无效的必要字段: {field_labels.get(exc.args[0], '请求内容')}"}, status=400)
+        except FileNotFoundError:
+            return web.json_response({"error": "图不存在或还没有可补充的图数据"}, status=404)
+        except Exception as exc:
+            return web.json_response({"error": f"补充资金往来失败: {exc}"}, status=502)
+        return web.json_response(result)
+
+    async def _handle_case_graph_relation_reality_relation(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            _require_text_field(payload, "graphId")
+            _require_text_field(payload, "caseId")
+            _require_text_field(payload, "sourceNodeId")
+            _require_text_field(payload, "targetNodeId")
+            _require_text_field(payload, "relationType")
+        except ValueError as exc:
+            field_labels = {
+                "graphId": "图谱",
+                "caseId": "案件",
+                "sourceNodeId": "主体",
+                "targetNodeId": "关联主体",
+                "relationType": "现实关系",
+            }
+            return web.json_response({"error": f"缺少或无效的必要字段: {field_labels.get(exc.args[0], '请求内容')}"}, status=400)
+
+        try:
+            result = await asyncio.to_thread(
+                self._case_graph_relation_service.add_reality_relation,
+                dict(payload),
+            )
+        except ValueError as exc:
+            field_labels = {
+                "graphId": "图谱",
+                "caseId": "案件",
+                "sourceNodeId": "主体",
+                "targetNodeId": "关联主体",
+                "relationType": "现实关系",
+                "counterparty": "关系双方",
+            }
+            return web.json_response({"error": f"缺少或无效的必要字段: {field_labels.get(exc.args[0], '请求内容')}"}, status=400)
+        except FileNotFoundError:
+            return web.json_response({"error": "图不存在或还没有可标注的图数据"}, status=404)
+        except Exception as exc:
+            return web.json_response({"error": f"标注现实关系失败: {exc}"}, status=502)
         return web.json_response(result)
 
     async def _handle_case_graph_state_get(self, request: Any) -> Any:
@@ -1364,6 +1648,33 @@ class WebUIChannel(BaseChannel):
         if focus is not None and not isinstance(focus, dict):
             return web.json_response({"error": "focus 必须是对象"}, status=400)
 
+        case_id = str(payload.get("caseId") or "").strip()
+        graph_name = str(payload.get("graphName") or "").strip()
+        chat_id = str(payload.get("chatId") or "").strip()
+        if case_id and hasattr(self._case_graph_state_service, "write_current_context"):
+            try:
+                context = await asyncio.to_thread(
+                    self._case_graph_state_service.write_current_context,
+                    case_id=case_id,
+                    graph_id=graph_id,
+                    graph_name=graph_name,
+                    chat_id=chat_id,
+                    focus=focus,
+                    latest_step_id=str(payload.get("latestStepId") or "").strip(),
+                    latest_operation=dict(payload.get("latestOperation") or {})
+                    if isinstance(payload.get("latestOperation"), dict)
+                    else None,
+                    latest_step_summary=dict(payload.get("latestStepSummary") or {})
+                    if isinstance(payload.get("latestStepSummary"), dict)
+                    else None,
+                    delta_summary=dict(payload.get("deltaSummary") or {})
+                    if isinstance(payload.get("deltaSummary"), dict)
+                    else None,
+                )
+                return web.json_response(context)
+            except (FileNotFoundError, KeyError, ValueError, json.JSONDecodeError):
+                pass
+
         try:
             context = await asyncio.to_thread(
                 self._case_graph_storage.write_current_context,
@@ -1371,8 +1682,6 @@ class WebUIChannel(BaseChannel):
                 focus,
             )
         except KeyError as exc:
-            case_id = str(payload.get("caseId") or "").strip()
-            graph_name = str(payload.get("graphName") or "").strip()
             if not case_id:
                 return web.json_response({"error": f"图不存在: {exc.args[0]}"}, status=404)
             try:
@@ -1381,7 +1690,7 @@ class WebUIChannel(BaseChannel):
                     graph_id=graph_id,
                     case_id=case_id,
                     graph_name=graph_name,
-                    chat_id=str(payload.get("chatId") or "").strip(),
+                    chat_id=chat_id,
                     focus=focus,
                 )
             except Exception as metadata_exc:

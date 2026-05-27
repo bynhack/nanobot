@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { normalizeCaseGraphOriginData, originDataToCanvasData } from './adapters';
+import { graphStepToStateSnapshot, graphStateToCanvasData, normalizeCaseGraphOriginData, originDataToCanvasData } from './adapters';
 
 describe('case graph adapters', () => {
   it('filters money edges whose endpoints are missing from the node set', () => {
@@ -80,5 +80,42 @@ describe('case graph adapters', () => {
     expect(originData?.groups.a1?.groupId).toBe('group_zhang');
     expect(originData?.groups.a2?.groupId).toBe('group_zhang');
     expect(originData?.groups.group_zhang).toBeUndefined();
+  });
+
+  it('adapts persisted step snapshots through the same state-to-canvas path', () => {
+    const state = graphStepToStateSnapshot({
+      schemaVersion: 'case-graph.step.v1',
+      caseId: 'case-1',
+      graphId: 'graph-1',
+      stepId: '0002',
+      operation: { type: 'seed_one_hop' },
+      revision: 2,
+      createdAt: '2026-05-23T10:50:52.000Z',
+      graph: {
+        nodes: [{ id: 'wu', label: '伍华中' }],
+        edges: [],
+        tradeCards: [],
+        groupMap: {},
+        sourceSelectId: [],
+        summarySelectedAccountId: [],
+        summarySelectedAccountName: [],
+        excludedTrades: [],
+        excludedAccountId: [],
+        excludedAccountName: [],
+        layout: {
+          nodePositions: { wu: { x: 320, y: 240 } },
+          viewport: { x: 0, y: 0, zoom: 1 },
+        },
+        filters: { minAmount: null, maxAmount: null, startTime: '', endTime: '' },
+        excludedNodes: [],
+        manualEdges: [],
+        annotations: [],
+      },
+    }, { graphName: '图1' });
+
+    expect(state?.schemaVersion).toBe('case-graph.state.v1');
+    expect(state?.lastStepId).toBe('0002');
+    expect(state?.graphName).toBe('图1');
+    expect(graphStateToCanvasData(state)?.nodes[0]).toMatchObject({ id: 'wu', x: 320, y: 240 });
   });
 });

@@ -1,16 +1,16 @@
-import { AssistantRuntimeProvider, Suggestions, useAui } from '@assistant-ui/react';
-import { memo, useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { AssistantRuntimeProvider, Suggestions, useAui, type AppendMessage } from '@assistant-ui/react';
+import { memo, useCallback, useEffect, useMemo, type ReactNode } from 'react';
 
 import { buildTextAppendMessage } from '../../app-helpers';
 import { appStore, useAppSelector } from '../../app-state';
 import { DEFAULT_THREAD_SUGGESTIONS } from '../../assistant-ui-runtime';
-import { loadSessionWorkspace } from '../../api';
 import type { SkillCandidate } from '../../skill-quick-select';
 import type { AuthUser, MediaItem, SessionWorkspaceFile } from '../../types';
 import { useAvailableSkills } from '../../use-available-skills';
 import { useWebsocketSession } from '../../use-websocket-session';
 import { useWebuiRuntime } from '../../use-webui-runtime';
 import { DetailPreviewContext, type DetailActions } from './detail-preview-context';
+import { CaseGraphActionContext, type CaseGraphActionContextValue } from './case-graph-action-context';
 import { ChatSidebar } from './sidebar';
 import { ChatThreadContent } from './thread-content';
 import { WorkspacePanel } from './workspace-panel';
@@ -46,11 +46,23 @@ export type ChatWorkspaceProps = {
   showWorkspaceButton?: boolean;
   showWorkspacePanel?: boolean;
   canOpenWorkspace?: boolean;
+  workspaceFileCount?: number;
+  workspaceLoading?: boolean;
+  onOpenWorkspace?: () => void;
+  contentPanelOpen?: boolean;
+  onToggleContentPanel?: () => void;
+  showContentHeader?: boolean;
+  showContentPanelToggle?: boolean;
   onOpenMedia?: (item: MediaItem) => void;
   onSessionReady?: (context: ChatWorkspaceRenderContext) => void;
   headerSlot?: (context: ChatWorkspaceRenderContext) => ReactNode;
   contextSlot?: (context: ChatWorkspaceRenderContext) => ReactNode;
   topControlsSlot?: (context: ChatWorkspaceRenderContext) => ReactNode;
+  composerTopSlot?: (context: ChatWorkspaceRenderContext) => ReactNode;
+  useDefaultSuggestions?: boolean;
+  showThreadWelcome?: boolean;
+  caseGraphActions?: CaseGraphActionContextValue | null;
+  prepareOutgoingMessage?: (message: AppendMessage, context: { availableSkills: SkillCandidate[] }) => AppendMessage;
 };
 
 export const ChatWorkspace = memo(function ChatWorkspace({
@@ -72,16 +84,24 @@ export const ChatWorkspace = memo(function ChatWorkspace({
   onToggleSidebar = noop,
   onOpenSettings = noop,
   onOpenCaseGraph = noop,
-  showWorkspaceButton = true,
   showWorkspacePanel = true,
-  canOpenWorkspace,
+  workspaceFileCount: workspaceFileCountProp,
+  workspaceLoading: workspaceLoadingProp,
+  contentPanelOpen = false,
+  onToggleContentPanel = noop,
+  showContentHeader = true,
+  showContentPanelToggle = true,
   onOpenMedia,
   onSessionReady,
   headerSlot,
   contextSlot,
   topControlsSlot,
+  composerTopSlot,
+  useDefaultSuggestions = true,
+  showThreadWelcome = true,
+  caseGraphActions = null,
+  prepareOutgoingMessage,
 }: ChatWorkspaceProps) {
-  const workspaceRequestCounterRef = useRef(0);
   const connectionState = useAppSelector((state) => state.connectionState);
   const currentChatId = useAppSelector((state) => state.currentChatId);
   const workspacePanel = useAppSelector((state) => state.workspacePanel);
@@ -97,6 +117,10 @@ export const ChatWorkspace = memo(function ChatWorkspace({
     authToken,
     currentUser,
   });
+  const prepareRuntimeMessage = useCallback(
+    (message: AppendMessage) => prepareOutgoingMessage?.(message, { availableSkills }) ?? message,
+    [availableSkills, prepareOutgoingMessage],
+  );
   const {
     runtime,
     sessionsById,
@@ -107,39 +131,24 @@ export const ChatWorkspace = memo(function ChatWorkspace({
   } = useWebuiRuntime({
     showFlash,
     actions: websocketSession,
+    prepareOutgoingMessage: prepareRuntimeMessage,
   });
-  const threadSuggestions = useMemo(() => [...DEFAULT_THREAD_SUGGESTIONS], []);
+  const threadSuggestions = useMemo(
+    () => (useDefaultSuggestions ? [...DEFAULT_THREAD_SUGGESTIONS] : []),
+    [useDefaultSuggestions],
+  );
   const aui = useAui({
     suggestions: Suggestions(threadSuggestions),
   });
-  const workspaceFileCount = currentWorkspace?.files.length ?? 0;
-  const workspaceLoading = Boolean(
+  const localWorkspaceFileCount = currentWorkspace?.files.length ?? 0;
+  const localWorkspaceLoading = Boolean(
     currentChatId && workspacePanel.loading && workspacePanel.chatId === currentChatId,
   );
-  const workspaceEnabled = canOpenWorkspace ?? Boolean(currentChatId);
-
-  const handleOpenWorkspace = useCallback(() => {
-    if (!currentChatId) {
-      return;
-    }
-    const chatId = currentChatId;
-    workspaceRequestCounterRef.current += 1;
-    const requestId = workspaceRequestCounterRef.current;
-    appStore.dispatch({ type: 'workspace.open', chatId });
-    appStore.dispatch({ type: 'workspace.loading', chatId, requestId });
-    loadSessionWorkspace(chatId, authToken)
-      .then((workspace) => {
-        appStore.dispatch({ type: 'workspace.loaded', chatId, requestId, workspace });
-      })
-      .catch((error: unknown) => {
-        appStore.dispatch({
-          type: 'workspace.failed',
-          chatId,
-          requestId,
-          error: error instanceof Error ? error.message : '加载工作空间失败',
-        });
-      });
-  }, [authToken, currentChatId]);
+  const workspaceFileCount = workspaceFileCountProp ?? localWorkspaceFileCount;
+  const workspaceLoading = workspaceLoadingProp ?? localWorkspaceLoading;
+  const conversationTitle = currentChatId
+    ? sessionsById.get(currentChatId)?.preview?.trim() || title
+    : title;
 
   const handleOpenWorkspaceFile = useCallback((file: SessionWorkspaceFile) => {
     onOpenMedia?.({ url: file.url, name: file.name, mime: file.mime });
@@ -161,6 +170,7 @@ export const ChatWorkspace = memo(function ChatWorkspace({
   const threadContent = (
     <ChatThreadContent
       title={title}
+      conversationTitle={conversationTitle}
       flashMessage={flashMessage}
       activeTurn={activeTurn}
       pendingAskUserPrompt={pendingAskUserPrompt}
@@ -175,12 +185,13 @@ export const ChatWorkspace = memo(function ChatWorkspace({
       sidebarCollapsed={sidebarCollapsed}
       showSidebarToggle={showSidebarToggle}
       onToggleSidebar={onToggleSidebar}
-      canOpenWorkspace={workspaceEnabled}
-      workspaceFileCount={workspaceFileCount}
-      workspaceLoading={workspaceLoading}
-      onOpenWorkspace={handleOpenWorkspace}
-      showWorkspaceButton={showWorkspaceButton}
+      contentPanelOpen={contentPanelOpen}
+      onToggleContentPanel={onToggleContentPanel}
+      showContentHeader={showContentHeader}
+      showContentPanelToggle={showContentPanelToggle}
       topControlsSlot={topControlsSlot?.(renderContext)}
+      composerTopSlot={composerTopSlot?.(renderContext)}
+      showThreadWelcome={showThreadWelcome}
     />
   );
 
@@ -188,39 +199,41 @@ export const ChatWorkspace = memo(function ChatWorkspace({
 
   return (
     <DetailPreviewContext.Provider value={previewActions}>
-      <AssistantRuntimeProvider runtime={runtime} aui={aui}>
-        <div className={resolvedClassName}>
-          {showSidebar ? (
-            <ChatSidebar
-              title={title}
-              sidebarCollapsed={sidebarCollapsed}
-              activeThreadId={currentChatId}
-              sessionsById={sessionsById}
-              connectionState={connectionState}
-              onOpenSettings={onOpenSettings}
-              onOpenCaseGraph={onOpenCaseGraph}
-            />
-          ) : null}
+      <CaseGraphActionContext.Provider value={caseGraphActions}>
+        <AssistantRuntimeProvider runtime={runtime} aui={aui}>
+          <div className={resolvedClassName}>
+            {showSidebar ? (
+              <ChatSidebar
+                title={title}
+                sidebarCollapsed={sidebarCollapsed}
+                activeThreadId={currentChatId}
+                sessionsById={sessionsById}
+                connectionState={connectionState}
+                onOpenSettings={onOpenSettings}
+                onOpenCaseGraph={onOpenCaseGraph}
+              />
+            ) : null}
 
-          {headerSlot?.(renderContext)}
-          {contextSlot?.(renderContext)}
+            {headerSlot?.(renderContext)}
+            {contextSlot?.(renderContext)}
 
-          {threadWrapperClassName ? (
-            <div className={threadWrapperClassName}>{threadContent}</div>
-          ) : threadContent}
+            {threadWrapperClassName ? (
+              <div className={threadWrapperClassName}>{threadContent}</div>
+            ) : threadContent}
 
-          {showWorkspacePanel ? (
-            <WorkspacePanel
-              open={workspacePanel.open}
-              loading={workspacePanel.loading}
-              error={workspacePanel.error}
-              workspace={panelWorkspace}
-              onClose={() => appStore.dispatch({ type: 'workspace.close' })}
-              onOpenFile={handleOpenWorkspaceFile}
-            />
-          ) : null}
-        </div>
-      </AssistantRuntimeProvider>
+            {showWorkspacePanel ? (
+              <WorkspacePanel
+                open={workspacePanel.open}
+                loading={workspacePanel.loading}
+                error={workspacePanel.error}
+                workspace={panelWorkspace}
+                onClose={() => appStore.dispatch({ type: 'workspace.close' })}
+                onOpenFile={handleOpenWorkspaceFile}
+              />
+            ) : null}
+          </div>
+        </AssistantRuntimeProvider>
+      </CaseGraphActionContext.Provider>
     </DetailPreviewContext.Provider>
   );
 });

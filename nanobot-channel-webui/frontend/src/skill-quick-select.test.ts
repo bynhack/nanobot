@@ -69,4 +69,16 @@ describe('skill quick select', () => {
     expect(messageContentWithSelectedSkill('', selected)).toBe('使用 ralph 技能');
     expect(messageContentWithSelectedSkill('普通文本', {})).toBe('普通文本');
   });
+
+  it('uses the Chinese display name for the case graph analyst skill', () => {
+    const selected = runConfigWithSelectedSkill({}, 'case-graph-analyst');
+
+    expect(messageContentWithSelectedSkill('总结刚刚的图谱变化', selected)).toBe('使用 图谱研判助手 技能 总结刚刚的图谱变化');
+  });
+
+  it('uses the Chinese display name for the case graph operator skill', () => {
+    const selected = runConfigWithSelectedSkill({}, 'case-graph-operator');
+
+    expect(messageContentWithSelectedSkill('恢复全部已取消上图的主体', selected)).toBe('使用 图谱操作助手 技能 恢复全部已取消上图的主体');
+  });
 });

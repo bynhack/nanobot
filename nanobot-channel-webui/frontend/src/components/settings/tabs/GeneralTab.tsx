@@ -73,12 +73,12 @@ export function GeneralTab({
             <span>{connectionStatusText(connectionState)}</span>
           </div>
         </SettingsRow>
-        <SettingsRow label="当前会话 ID" hint="当前正在对话的会话唯一标识符。">
+        <SettingsRow label="当前会话标识" hint="当前正在对话的会话唯一标识符。">
           <code className="text-xs text-muted-foreground">{currentChatId ?? '无'}</code>
         </SettingsRow>
         {currentUser ? (
           <>
-            <SettingsRow label="当前账号" hint="当前登录的 PocketBase 用户。">
+            <SettingsRow label="当前账号" hint="当前登录的后端用户。">
               <code className="text-xs text-muted-foreground">{currentUser.email}</code>
             </SettingsRow>
             <SettingsRow label="角色" hint="管理员可查看全局配置与运行数据，普通用户仅查看自己的数据。">

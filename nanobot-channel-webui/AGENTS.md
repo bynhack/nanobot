@@ -6,7 +6,7 @@ This file supplements the repository-level `../AGENTS.md` for work inside `nanob
 
 - Applies only to `nanobot-channel-webui/`
 - Prefer changes inside this plugin subtree unless the user explicitly asks for cross-repo work
-- Treat `/Users/brian/Documents/Project/nanobot/nanobot_webui` as the old in-repo implementation and reference surface, not the primary edit target for this package
+- Do not use older implementations such as `/Users/brian/Documents/Projects/nanobot/webui` or `/Users/brian/Documents/Projects/skyable` as default reference baselines; inspect them only when the user explicitly asks for historical comparison or migration archaeology
 
 ## Read First
 
@@ -18,19 +18,21 @@ Before changing behavior, read these in order:
 4. `docs/README.md`
 5. `docs/case-graph/README.md`
 
-For case-graph parity work, also read:
+For case-graph work, also read:
 
-1. `docs/case-graph/current-ga-implementation.md`
-2. `docs/case-graph/nanobot-gap-notes.md`
-3. `docs/case-graph/pending-fixes.md`
-4. `docs/case-graph/real-example/query-payload.json`
-5. `docs/case-graph/real-example/query-response.json`
+1. `docs/case-graph/feature-tracker.md`
+2. `docs/case-graph/pending-fixes.md`
+
+Do not use the old Ga-web / skyable-cloud implementation as a parity target unless the user explicitly
+asks for historical comparison. Some original behavior is known to be flawed; current planning should be
+based on this package's product goals, current code, process files, and user workflow.
 
 For case-graph layout, drill, relation-extension, persistence, or replay work, also inspect the
 current process files under:
 
 1. `~/.nanobot/workspace/.nanobot_channel_webui/case_graphs/**/graph.json`
 2. `~/.nanobot/workspace/.nanobot_channel_webui/case_graphs/**/steps/*.json`
+3. `~/.nanobot/workspace/.nanobot_channel_webui/case_graphs/**/facts/trades.jsonl`
 
 These files are the best local evidence for how every analysis step preserves the graph structure
 and layout positions over time.
@@ -135,6 +137,25 @@ Treat this as the default final verification and local release step for complete
 plugin, not an optional extra. After it succeeds, explicitly tell the user that the local publish
 has completed and that they can test it locally.
 
+If a runtime change touches Python backend code, routes, service logic, entry points, packaged
+backend data, or anything the running `nanobot gateway` process loads at startup, restart the local
+service after `./scripts/publish-local.sh` before browser acceptance testing. If the change is
+frontend-only, publishing the rebuilt static assets and reloading the page is enough.
+
+When starting or restarting the backend gateway, run it in `tmux`, not as a foreground tool session,
+`nohup` background job, or shell job that Codex cannot later inspect. Prefer a stable session name,
+for example `nanobot-gateway`, so later turns can check logs, stop, or restart the service without
+leaving orphaned processes.
+
+On this machine, prefer the uv tool executable when starting the gateway:
+
+```bash
+/Users/brian/.local/bin/nanobot gateway --config ~/.nanobot/config.json
+```
+
+Do not rely on a bare `nanobot` command without checking `which nanobot`; Anaconda may provide an
+older executable that starts the gateway without loading this WebUI plugin.
+
 Do not run extra standalone test passes before `publish-local.sh` unless the risk justifies it;
 the publish script already includes local verification. For small documentation-only changes,
 state that no runtime tests or local publish were needed.
@@ -148,7 +169,7 @@ state that no runtime tests or local publish were needed.
 
 ## Case-Graph Ground Truth
 
-The earlier "simplified graph only" understanding is stale. Current code has a much closer parity baseline.
+The earlier "simplified graph only" understanding is stale. Current code has a richer product baseline.
 
 ### Case-graph layout invariant
 
@@ -192,7 +213,18 @@ not disposable render output.
   - `/api/case-graph/query/drill`
 - target detail now supports `payerCards` and `payeeCards`
 - relation graph state uses `case_graphs/{caseId}/{graphId}/graph.json` as the authoritative current projection
-- every relation graph operation appends a complete step snapshot under `steps/*.json`
+- every relation graph operation appends a step snapshot under `steps/*.json`
+- graph conversation context uses the same relation graph state as ground truth: it should point to the canonical `graph.json`, `steps` directory, latest step metadata, graph stats, focus, and chat id
+- after relation graph operations, the frontend can invoke the right-side "图谱研判副驾" conversation through the "图谱研判助手" skill to explain the latest step in Chinese investigation language
+- "图谱研判助手" and "资金流水查询助手" are complementary but separate: the graph skill reads saved graph facts and explains graph steps; the database skill queries and verifies database facts from explicit case/subject/account/trade identifiers, and must not directly read graph state or mutate database state
+- imported bank/payment transaction rows are account-first evidence: transaction records may lack payer/payee names, and investigator-entered suspect names are linked through case account records; database skill/query logic should resolve suspect names to account ids/pay accounts first, query transactions by those account identifiers, and only use account-table names to enrich display output
+- transaction direction for investigation should be derived from payer/payee endpoints; `jd_flag` is an imported raw-flow field and must not be treated as the primary subject inflow/outflow direction
+- relation edges carry `tradeIds`, and relation query/detail-analysis flows persist transaction facts in `facts/trades.jsonl`; runtime graph loading hydrates these facts back into `graph.tradeFacts` for existing filtering and detail logic
+- `/api/case-graph/relation/filter` is full-graph filtering over the current graph projection; it must use persisted fact-file transactions and `edge.tradeIds` to recalculate edges, not query the database again
+- `/api/case-graph/relation/exclude-trades` applies detail-analysis trade exclusions from persisted facts and appends a `detail_trade_filter` step without re-querying graph relations
+- graph steps can be replayed in the frontend through the custom replay panel; historical preview is read-only, and selecting the latest step returns to the current graph state
+- graph step transitions use G6 animation/reveal state, and stale hover/click/reveal states must be cleared at render-cycle boundaries
+- node cancellation is implemented for single and multi-node selections, with excluded-node state persisted in relation graph snapshots and steps
 - graph layout positions are stored in `graph.layout.nodePositions`
 - `graphStateToCanvasData(...)` applies stored layout positions back onto canvas nodes during load
 - `computeCaseGraphLayout(...)` prefers persisted positions when coverage is sufficient, before falling back to structured layout
@@ -205,31 +237,36 @@ These are still real unless code and docs are updated together:
 
 1. `phone` is still unimplemented in practice
    - backend currently returns `phone: []`
-2. `excludedTrades` is not auto-repaired against the current node set the way the original system does
-3. the frontend does not yet provide the original summary-analysis and excluded-account-name interaction loop
-4. several context-menu actions are still disabled placeholders
-   - cancel uplink
+2. `excludedTrades` is not auto-repaired or pruned when the current graph node set changes
+3. `summarySelected*` and `excludedAccountName` are legacy fields without a current product decision or full frontend loop
+4. several graph actions are still missing as usable entry points
    - cancel group
-   - detail analysis
    - summary analysis
    - fund relation graph
-5. group support exists for query/render/detail resolution, but not the full original regroup/ungroup interaction model
-6. original full canvas serialization is still partial
+5. detail analysis is usable, but evidence export and restore for fully removed detail-filter edges are not implemented yet
+6. group support exists for query/render/detail resolution, but not the full current product regroup/ungroup interaction model
+7. full canvas persistence is still partial
    - current relation graph state already persists `graph.layout.nodePositions`
    - current canvas load path can restore persisted node coordinates
-   - original `graphContent`-based full canvas cell serialization, complex canvas elements, and arbitrary-step replay/reset are not fully replicated yet
+   - custom historical step preview exists, but restoring/resetting the current graph to an arbitrary historical step is not implemented
+   - non-relation canvas elements and complete reset/restore are not implemented yet
+8. conversation-to-graph operation is not implemented yet
+   - current "图谱研判副驾" reads graph facts and explains/suggests
+   - direct chat commands that execute filter, drill, exclude, restore, or other graph operations still need a structured action protocol
 
 ### Important implementation details
 
 - For unchanged selection (`isSelectedTradeCardChanged == false`), `sourceSelectId` is restored from stored graph state, not Redis
-- `summarySelectedAccountId` is already consumed by the backend query path
-- `excludedAccountName` is already consumed by backend filtering, even though frontend entry points are still incomplete
+- `summarySelectedAccountId` is already consumed by the backend query path, but the current product has not decided whether to keep that legacy-style flow
+- `excludedAccountName` is already consumed by backend filtering, but the current product has node-level exclude/restore through `excludedNodes`
 - The frontend workbench already maintains:
   - `queryBaselineTradeCards`
   - `groupMap`
   - `sourceSelectId`
   - `excludedTrades`
   - `excludedAccountId`
+  - `excludedNodes`
+  - loaded graph step snapshots for read-only replay
 - Drill flows are currently:
   1. call drill API
   2. merge returned `tradeCards`
@@ -239,6 +276,20 @@ These are still real unless code and docs are updated together:
   2. merge returned graph data into the current positioned graph
   3. persist/patch the latest step layout after render
   4. keep existing node coordinates stable while positioning new nodes
+
+### G6 graph interaction details
+
+- Prefer official G6 behaviors/plugins for graph interactions, but treat hover/click states as transient lifecycle state that must end at the source. Context menus, drill actions, data replacement, graph replay, and render transitions should explicitly terminate or suppress active `hover-activate` / `click-select` state before changing graph data.
+- Do not rely on delayed DOM cleanup loops to fix stale interaction visuals. If cleanup is needed, it should be tied to the interaction boundary (`contextmenu`, canvas click, drill start, `setData` / `render`) and should clear G6 element states before the next graph data render whenever possible.
+- G6 `html` nodes render user markup inside a G6-owned wrapper element. Official state styles such as `opacity` and `zIndex` may be written to that wrapper, not to `.case-graph-g6-node`; verification and cleanup must inspect the wrapper computed/inline style as well as the inner node classes.
+- Keep official transient interaction states separate from business focus state. Clearing hover/click should affect G6 states like `highlight`, `dim`, `click-highlight`, and `click-dim`; clearing user focus/selection should be handled through the canvas focus state (`activeNodeId`, `activeEdgeId`, `selectedNodeIds`, role filters) and the corresponding node render data.
+- Browser verification for graph interaction changes should cover the real flow that can strand state: hover a node, open the G6 context menu, run drill/extension, and assert both inner classes and wrapper opacity/z-index return to the expected state after render. Checking only `.case-graph-g6-node` classes is not sufficient for HTML-node visual bugs.
+
+### User-facing language
+
+- This product is ultimately for police investigators handling cases. User-facing page copy should be Chinese and should use investigation-oriented wording that helps officers understand the task, evidence, subject, account, transaction, and clue being handled.
+- Do not expose internal identifiers, API names, step types, implementation names, or English fallback labels in the interface. Examples such as `detail_trade_filter`, `seed_one_hop`, or raw provider/runtime terms should be mapped to clear Chinese labels at the UI boundary.
+- Technical identifiers may remain in code, tests, logs, JSON keys, filesystem paths, and machine-value examples when they are actual values the system must store or accept. Avoid adding English to visible labels, buttons, status text, empty states, tooltips, and modal copy unless the string is an unavoidable product or protocol name.
 
 ## Editing Guidance
 
@@ -257,9 +308,11 @@ These are still real unless code and docs are updated together:
   - `graph.json` and the latest relevant `steps/*.json` retain the expected `graph.layout.nodePositions`
 - When changing graph page behavior, prefer G6 official APIs/plugins/behaviors/layouts before adding custom canvas logic; document any custom fallback reason in code or docs when the choice is not obvious
 - Prefer updating durable docs when facts change:
-  - facts -> `docs/case-graph/current-ga-implementation.md`
-  - remaining differences -> `docs/case-graph/nanobot-gap-notes.md`
-  - confirmed pending fixes -> `docs/case-graph/pending-fixes.md`
+  - feature status and planning view -> `docs/case-graph/feature-tracker.md`
+  - confirmed pending fixes and open decisions -> `docs/case-graph/pending-fixes.md`
+- When an implementation completes, removes, renames, defers, or materially changes a feature, update the relevant fact files in the same turn. Do not leave older design, gap, pending-fix, or feature-tracker entries describing the previous state.
+- If a change invalidates an earlier design or planning assumption, rewrite the durable fact/tracker entry instead of adding a dated note that competes with it.
+- Do not add or revive original-implementation parity trackers unless the user explicitly asks for historical comparison.
 - Do not add new dated plan or release-note documents under `docs/` unless the user explicitly asks for process documentation
 
 ## Release Notes For Agents
@@ -268,6 +321,7 @@ These are still real unless code and docs are updated together:
 - Local install target is still the same upstream `nanobot-ai` tool environment
 - If you change frontend assets or package data, make sure the wheel-shipped static directory is updated before calling the work done
 - Before presenting a completed feature implementation or runtime/UI behavior modification to the user, run `./scripts/publish-local.sh`
+- If backend runtime behavior changed, restart the local gateway service after publishing and before saying the work is ready; frontend-only changes only need publish plus page reload.
 - After local publish succeeds, say so directly so the user knows they can perform manual acceptance testing
 - If the change is documentation-only and does not affect the installed runtime, say that explicitly; otherwise publish locally before handing back
 - Do not mechanically run Python/frontend tests for simple changes; use judgment and pick targeted verification only when it provides real confidence

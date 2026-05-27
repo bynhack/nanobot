@@ -4,18 +4,26 @@ import type {
   CaseGraphSelectableAccount,
   CaseGraphSnapshot,
   CaseGraphStateSnapshot,
+  CaseGraphStepSnapshot,
   CaseGraphConversationFocus,
   CaseGraphRelationResponse,
   CaseGraphTargetDetailPayload,
   CaseGraphTargetDetailResult,
+  AddCaseGraphManualNodePayload,
+  AddCaseGraphManualTradePayload,
+  AddCaseGraphRealityRelationPayload,
+  ApplyCaseGraphSummarySelectionPayload,
   CompleteCaseGraphRelationPayload,
   CreateCaseGraphPayload,
   ExcludeCaseGraphNodePayload,
+  ExcludeCaseGraphTradesPayload,
   FilterCaseGraphRelationPayload,
   QueryCaseGraphRelationPayload,
+  QueryCaseGraphSummaryCandidatesPayload,
   RestoreCaseGraphNodePayload,
   UpdateCaseGraphConfigPayload,
 } from './types';
+import type { SummaryAnalysisItem } from './summary-analysis-drawer';
 
 function authHeaders(token: string): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -130,6 +138,15 @@ export function loadCaseGraphState(caseId: string, graphId: string, token: strin
   );
 }
 
+export async function loadCaseGraphSteps(caseId: string, graphId: string, token: string): Promise<CaseGraphStepSnapshot[]> {
+  const payload = await getJson<{ items?: CaseGraphStepSnapshot[] }>(
+    `/api/case-graph/relation/state/${encodeURIComponent(caseId)}/${encodeURIComponent(graphId)}/steps`,
+    token,
+    '加载图谱步骤失败',
+  );
+  return Array.isArray(payload.items) ? payload.items : [];
+}
+
 export function saveCaseGraphLayoutOperation(
   caseId: string,
   graphId: string,
@@ -186,6 +203,27 @@ export function filterCaseGraphRelation(
   return postJson('/api/case-graph/relation/filter', payload, token, '筛选关系图失败');
 }
 
+export function excludeCaseGraphTrades(
+  payload: ExcludeCaseGraphTradesPayload,
+  token: string,
+): Promise<CaseGraphRelationResponse> {
+  return postJson('/api/case-graph/relation/exclude-trades', payload, token, '交易核查失败');
+}
+
+export function applyCaseGraphSummarySelection(
+  payload: ApplyCaseGraphSummarySelectionPayload,
+  token: string,
+): Promise<CaseGraphRelationResponse> {
+  return postJson('/api/case-graph/relation/summary-selection', payload, token, '线索扩展失败');
+}
+
+export function loadCaseGraphSummaryCandidates(
+  payload: QueryCaseGraphSummaryCandidatesPayload,
+  token: string,
+): Promise<{ items: SummaryAnalysisItem[] }> {
+  return postJson('/api/case-graph/relation/summary-candidates', payload, token, '线索候选读取失败');
+}
+
 export function excludeCaseGraphNode(
   payload: ExcludeCaseGraphNodePayload,
   token: string,
@@ -200,6 +238,27 @@ export function restoreCaseGraphNode(
   return postJson('/api/case-graph/relation/restore-node', payload, token, '恢复节点失败');
 }
 
+export function addCaseGraphManualTrade(
+  payload: AddCaseGraphManualTradePayload,
+  token: string,
+): Promise<CaseGraphRelationResponse> {
+  return postJson('/api/case-graph/relation/manual-trade', payload, token, '补充资金往来失败');
+}
+
+export function addCaseGraphManualNode(
+  payload: AddCaseGraphManualNodePayload,
+  token: string,
+): Promise<CaseGraphRelationResponse> {
+  return postJson('/api/case-graph/relation/manual-node', payload, token, '创建交易主体失败');
+}
+
+export function addCaseGraphRealityRelation(
+  payload: AddCaseGraphRealityRelationPayload,
+  token: string,
+): Promise<CaseGraphRelationResponse> {
+  return postJson('/api/case-graph/relation/reality-relation', payload, token, '标注现实关系失败');
+}
+
 export function loadCaseGraphTargetDetail(
   payload: CaseGraphTargetDetailPayload,
   token: string,
@@ -209,7 +268,15 @@ export function loadCaseGraphTargetDetail(
 
 export function updateCaseGraphContext(
   graphId: string,
-  graphMeta: { caseId: string; graphName: string; chatId?: string },
+  graphMeta: {
+    caseId: string;
+    graphName: string;
+    chatId?: string;
+    latestStepId?: string;
+    latestOperation?: Record<string, unknown>;
+    latestStepSummary?: Record<string, unknown>;
+    deltaSummary?: Record<string, unknown>;
+  },
   focus: Omit<CaseGraphConversationFocus, 'graphId' | 'caseId' | 'graphName'> | null,
   token: string,
 ): Promise<{
@@ -220,6 +287,11 @@ export function updateCaseGraphContext(
   graphFile: string;
   contextFile?: string;
   chatId?: string;
+  latestStepId?: string;
+  latestOperation?: Record<string, unknown>;
+  latestStepSummary?: Record<string, unknown>;
+  deltaSummary?: Record<string, unknown>;
+  graphStats?: Record<string, unknown>;
   focus: Record<string, unknown> | null;
 }> {
   return postJson('/api/case-graph/context', { graphId, ...graphMeta, focus }, token, '更新图上下文失败');

@@ -10,6 +10,8 @@ export interface GraphPoint {
   y: number;
 }
 
+export type CaseGraphLayoutMode = 'investigation' | 'directed-flow';
+
 interface LayoutOptions {
   graphContent?: string | null;
   graphWidth: number;
@@ -22,6 +24,7 @@ interface LayoutOptions {
   focusAccountIds?: string[];
   focusLabels?: string[];
   preferPersistedPositions?: boolean;
+  layoutMode?: CaseGraphLayoutMode;
   viewModel?: CaseGraphViewModel | null;
 }
 
@@ -43,6 +46,14 @@ interface StructuredLayoutInput {
   viewModel: CaseGraphViewModel;
 }
 
+interface DirectedFlowStats {
+  incoming: Set<string>;
+  outgoing: Set<string>;
+  incomingAmount: number;
+  outgoingAmount: number;
+  totalDegree: number;
+}
+
 export function computeCaseGraphLayout(
   graphData: CaseGraphData | null,
   options: LayoutOptions,
@@ -51,6 +62,10 @@ export function computeCaseGraphLayout(
   const edges = graphData?.edges ?? [];
   if (!nodes.length) {
     return new Map();
+  }
+
+  if (options.layoutMode === 'directed-flow') {
+    return buildDirectedFlowLayout(nodes, edges, options);
   }
 
   const viewModel =
@@ -66,12 +81,295 @@ export function computeCaseGraphLayout(
     if (persistedPositions.size === nodes.length) {
       return persistedPositions;
     }
-    if (persistedPositions.size >= minimumPersistedCoverage(nodes.length)) {
-      return fitPositionsToCanvas(persistedPositions, options);
+    if (persistedPositions.size > 0) {
+      return completeMissingPositions({
+        nodes,
+        edges,
+        options,
+        viewModel,
+        persistedPositions,
+      });
     }
   }
 
   return buildStructuredLayout({ nodes, edges, options, viewModel });
+}
+
+function buildDirectedFlowLayout(
+  nodes: CaseGraphData['nodes'],
+  edges: CaseGraphData['edges'],
+  options: LayoutOptions,
+): Map<string, GraphPoint> {
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const stats = new Map<string, DirectedFlowStats>();
+  for (const node of nodes) {
+    stats.set(node.id, {
+      incoming: new Set(),
+      outgoing: new Set(),
+      incomingAmount: 0,
+      outgoingAmount: 0,
+      totalDegree: 0,
+    });
+  }
+
+  for (const edge of edges) {
+    const source = String(edge.source || edge.from || '').trim();
+    const target = String(edge.target || edge.to || '').trim();
+    if (!nodeIds.has(source) || !nodeIds.has(target) || source === target) {
+      continue;
+    }
+    const amount = Number(edge.tradeAmount || edge.amount || 0);
+    stats.get(source)!.outgoing.add(target);
+    stats.get(source)!.outgoingAmount += amount;
+    stats.get(source)!.totalDegree += 1;
+    stats.get(target)!.incoming.add(source);
+    stats.get(target)!.incomingAmount += amount;
+    stats.get(target)!.totalDegree += 1;
+  }
+
+  const nodeColumns = resolveDirectedFlowColumns(nodes, stats);
+  const grouped = new Map<number, CaseGraphData['nodes']>();
+  for (const node of nodes) {
+    const column = nodeColumns.get(node.id) ?? 0;
+    const bucket = grouped.get(column);
+    if (bucket) {
+      bucket.push(node);
+    } else {
+      grouped.set(column, [node]);
+    }
+  }
+
+  const orderedColumns = [...grouped.keys()].sort((left, right) => left - right);
+  const orderedColumnNodes = orderDirectedFlowColumnNodes(orderedColumns, grouped, stats);
+  const columnGap = Math.max(options.columnGap, 176);
+  const rowGap = Math.max(options.rowGap, 76);
+  const totalWidth = orderedColumns.length
+    ? orderedColumns.length * options.nodeWidth + (orderedColumns.length - 1) * columnGap
+    : options.nodeWidth;
+  const left = Math.max(36, (options.graphWidth - totalWidth) / 2);
+
+  const positions = new Map<string, GraphPoint>();
+  orderedColumns.forEach((column, columnIndex) => {
+    const columnNodes = orderedColumnNodes.get(column) ?? [];
+    const columnHeight =
+      columnNodes.length * options.nodeHeight +
+      Math.max(columnNodes.length - 1, 0) * rowGap;
+    const top = Math.max(32, (options.graphHeight - columnHeight) / 2);
+    columnNodes.forEach((node, rowIndex) => {
+      positions.set(node.id, {
+        x: left + columnIndex * (options.nodeWidth + columnGap) + options.nodeWidth / 2,
+        y: top + rowIndex * (options.nodeHeight + rowGap) + options.nodeHeight / 2,
+      });
+    });
+  });
+
+  return positions;
+}
+
+function resolveDirectedFlowColumns(
+  nodes: CaseGraphData['nodes'],
+  stats: Map<string, DirectedFlowStats>,
+): Map<string, number> {
+  const indegree = new Map<string, number>();
+  const columns = new Map<string, number>();
+  for (const node of nodes) {
+    const nodeStats = stats.get(node.id);
+    indegree.set(node.id, nodeStats?.incoming.size ?? 0);
+    columns.set(node.id, 0);
+  }
+
+  const queue = nodes
+    .filter((node) => (indegree.get(node.id) ?? 0) === 0)
+    .sort((left, right) => directedFlowPriority(right, stats) - directedFlowPriority(left, stats) || nodeSortLabel(left).localeCompare(nodeSortLabel(right)));
+  const processed = new Set<string>();
+  for (let cursor = 0; cursor < queue.length; cursor += 1) {
+    const node = queue[cursor]!;
+    if (processed.has(node.id)) {
+      continue;
+    }
+    processed.add(node.id);
+    const currentColumn = columns.get(node.id) ?? 0;
+    const outgoing = [...(stats.get(node.id)?.outgoing ?? [])].sort();
+    for (const targetId of outgoing) {
+      columns.set(targetId, Math.max(columns.get(targetId) ?? 0, currentColumn + 1));
+      indegree.set(targetId, Math.max(0, (indegree.get(targetId) ?? 0) - 1));
+      if ((indegree.get(targetId) ?? 0) === 0) {
+        const targetNode = nodes.find((item) => item.id === targetId);
+        if (targetNode) {
+          queue.push(targetNode);
+        }
+      }
+    }
+  }
+
+  const remaining = nodes
+    .filter((node) => !processed.has(node.id))
+    .sort((left, right) => directedFlowPriority(right, stats) - directedFlowPriority(left, stats) || nodeSortLabel(left).localeCompare(nodeSortLabel(right)));
+  for (const node of remaining) {
+    const predecessorColumns = [...(stats.get(node.id)?.incoming ?? [])]
+      .map((sourceId) => columns.get(sourceId))
+      .filter((column): column is number => typeof column === 'number');
+    const nextColumn = predecessorColumns.length
+      ? Math.max(...predecessorColumns) + 1
+      : columns.get(node.id) ?? 0;
+    columns.set(node.id, Math.min(nextColumn, Math.max(nodes.length - 1, 0)));
+  }
+
+  const orderedUniqueColumns = [...new Set([...columns.values()])].sort((left, right) => left - right);
+  const compactColumnByRaw = new Map<number, number>();
+  orderedUniqueColumns.forEach((column, index) => {
+    compactColumnByRaw.set(column, index);
+  });
+
+  const compacted = new Map<string, number>();
+  for (const node of nodes) {
+    compacted.set(node.id, compactColumnByRaw.get(columns.get(node.id) ?? 0) ?? 0);
+  }
+  return compacted;
+}
+
+function orderDirectedFlowColumnNodes(
+  orderedColumns: number[],
+  grouped: Map<number, CaseGraphData['nodes']>,
+  stats: Map<string, DirectedFlowStats>,
+): Map<number, CaseGraphData['nodes']> {
+  const ordered = new Map<number, CaseGraphData['nodes']>();
+  const rowLookup = new Map<string, number>();
+
+  orderedColumns.forEach((column) => {
+    const candidateNodes = [...(grouped.get(column) ?? [])];
+    candidateNodes.sort((left, right) => {
+      const barycenterDelta = resolveDirectedFlowBarycenter(left.id, rowLookup, stats)
+        - resolveDirectedFlowBarycenter(right.id, rowLookup, stats);
+      if (barycenterDelta !== 0) return barycenterDelta;
+      const priorityDelta = directedFlowPriority(right, stats) - directedFlowPriority(left, stats);
+      if (priorityDelta !== 0) return priorityDelta;
+      return nodeSortLabel(left).localeCompare(nodeSortLabel(right), 'zh-Hans-CN');
+    });
+    ordered.set(column, candidateNodes);
+    candidateNodes.forEach((node, rowIndex) => {
+      rowLookup.set(node.id, rowIndex);
+    });
+  });
+
+  return ordered;
+}
+
+function resolveDirectedFlowBarycenter(
+  nodeId: string,
+  rowLookup: Map<string, number>,
+  stats: Map<string, DirectedFlowStats>,
+): number {
+  const incomingRowIndexes = [...(stats.get(nodeId)?.incoming ?? [])]
+    .map((sourceId) => rowLookup.get(sourceId))
+    .filter((rowIndex): rowIndex is number => typeof rowIndex === 'number');
+  if (!incomingRowIndexes.length) {
+    return Number.MAX_SAFE_INTEGER;
+  }
+  return incomingRowIndexes.reduce((sum, value) => sum + value, 0) / incomingRowIndexes.length;
+}
+
+function directedFlowPriority(
+  node: CaseGraphData['nodes'][number],
+  stats: Map<string, DirectedFlowStats>,
+): number {
+  const nodeStats = stats.get(node.id);
+  if (!nodeStats) return 0;
+  return (
+    (nodeStats.outgoingAmount - nodeStats.incomingAmount) * 0.01 +
+    nodeStats.outgoing.size * 4 -
+    nodeStats.incoming.size * 2 +
+    nodeStats.totalDegree
+  );
+}
+
+function completeMissingPositions(input: StructuredLayoutInput & {
+  persistedPositions: Map<string, GraphPoint>;
+}): Map<string, GraphPoint> {
+  const positions = new Map(input.persistedPositions);
+  const structuredPositions = buildStructuredLayout(input);
+  for (const node of input.nodes) {
+    if (positions.has(node.id)) {
+      continue;
+    }
+    const preferred = structuredPositions.get(node.id)
+      ?? resolvePositionNearPersistedNeighbor(node.id, input.edges, positions, input.options)
+      ?? { x: input.options.nodeWidth / 2, y: input.options.nodeHeight / 2 };
+    positions.set(node.id, resolveNonOverlappingPosition(preferred, positions, input.options));
+  }
+  return positions;
+}
+
+function resolvePositionNearPersistedNeighbor(
+  nodeId: string,
+  edges: CaseGraphData['edges'],
+  positions: Map<string, GraphPoint>,
+  options: LayoutOptions,
+): GraphPoint | null {
+  const related: Array<{ point: GraphPoint; direction: -1 | 1 }> = [];
+  for (const edge of edges) {
+    const source = String(edge.source || edge.from || '').trim();
+    const target = String(edge.target || edge.to || '').trim();
+    if (source === nodeId && positions.has(target)) {
+      related.push({ point: positions.get(target)!, direction: -1 });
+    } else if (target === nodeId && positions.has(source)) {
+      related.push({ point: positions.get(source)!, direction: 1 });
+    }
+  }
+  if (!related.length) {
+    return null;
+  }
+  const center = related.reduce(
+    (acc, item) => ({
+      x: acc.x + item.point.x,
+      y: acc.y + item.point.y,
+      direction: acc.direction + item.direction,
+    }),
+    { x: 0, y: 0, direction: 0 },
+  );
+  const direction = center.direction < 0 ? -1 : 1;
+  return {
+    x: center.x / related.length + direction * Math.max(options.columnGap, 176),
+    y: center.y / related.length,
+  };
+}
+
+function resolveNonOverlappingPosition(
+  preferred: GraphPoint,
+  positions: Map<string, GraphPoint>,
+  options: LayoutOptions,
+): GraphPoint {
+  const stepX = options.nodeWidth + Math.max(80, options.columnGap * 0.6);
+  const stepY = options.nodeHeight + Math.max(40, options.rowGap * 0.6);
+  const candidates: GraphPoint[] = [preferred];
+  for (let ring = 1; ring <= 6; ring += 1) {
+    candidates.push(
+      { x: preferred.x + stepX * ring, y: preferred.y },
+      { x: preferred.x - stepX * ring, y: preferred.y },
+      { x: preferred.x, y: preferred.y + stepY * ring },
+      { x: preferred.x, y: preferred.y - stepY * ring },
+      { x: preferred.x + stepX * ring, y: preferred.y + stepY * ring },
+      { x: preferred.x - stepX * ring, y: preferred.y + stepY * ring },
+      { x: preferred.x + stepX * ring, y: preferred.y - stepY * ring },
+      { x: preferred.x - stepX * ring, y: preferred.y - stepY * ring },
+    );
+  }
+  return candidates.find((point) => !hasPositionCollision(point, positions, options)) ?? preferred;
+}
+
+function hasPositionCollision(
+  point: GraphPoint,
+  positions: Map<string, GraphPoint>,
+  options: LayoutOptions,
+): boolean {
+  const minDx = options.nodeWidth + 24;
+  const minDy = options.nodeHeight + 16;
+  for (const existing of positions.values()) {
+    if (Math.abs(existing.x - point.x) < minDx && Math.abs(existing.y - point.y) < minDy) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function extractGraphContentNodePositions(
@@ -159,7 +457,7 @@ function resolvePersistedPositions(
     }
     directNodePositions.set(node.id, { x, y });
   }
-  if (directNodePositions.size >= minimumPersistedCoverage(nodes.length)) {
+  if (directNodePositions.size > 0) {
     return directNodePositions;
   }
 

@@ -132,6 +132,8 @@ class FakeCaseGraphService:
         self.relation_query_calls: list[dict[str, Any]] = []
         self.relation_complete_calls: list[dict[str, Any]] = []
         self.relation_filter_calls: list[dict[str, Any]] = []
+        self.relation_summary_candidate_calls: list[dict[str, Any]] = []
+        self.relation_summary_selection_calls: list[dict[str, Any]] = []
         self.relation_exclude_calls: list[dict[str, Any]] = []
         self.relation_restore_calls: list[dict[str, Any]] = []
         self.state_load_calls: list[dict[str, str]] = []
@@ -200,6 +202,28 @@ class FakeCaseGraphService:
             "graph": {"nodes": [], "edges": [{"id": "money:filtered"}]},
             "delta": {"addedNodes": [], "addedEdges": [{"id": "money:filtered"}]},
             "step": {"stepId": "0003", "type": "filter_current_graph"},
+        }
+        self.relation_summary_candidate_result: dict[str, Any] = {
+            "caseId": "case-1",
+            "graphId": "graph-1",
+            "focusNodeId": "subject:suspect:1",
+            "items": [{"nodeId": "account:39", "label": "蔡金海", "status": "candidate"}],
+        }
+        self.relation_summary_selection_result: dict[str, Any] = {
+            "schemaVersion": "case-graph.relation.v1",
+            "caseId": "case-1",
+            "graphId": "graph-1",
+            "queryMode": "summary_analysis",
+            "graph": {
+                "nodes": [
+                    {"id": "account:1", "isExcluded": False},
+                    {"id": "account:35", "isExcluded": True},
+                ],
+                "edges": [],
+                "excludedNodes": [{"nodeId": "account:35"}],
+            },
+            "delta": {"addedNodes": [], "addedEdges": [], "updatedNodes": [{"nodeId": "account:35"}]},
+            "step": {"stepId": "0004", "type": "summary_analysis"},
         }
         self.relation_exclude_result: dict[str, Any] = {
             "schemaVersion": "case-graph.relation.v1",
@@ -316,6 +340,18 @@ class FakeCaseGraphService:
             raise self.query_error
         self.relation_filter_calls.append(payload)
         return self.relation_filter_result
+
+    def query_summary_candidates(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.query_error is not None:
+            raise self.query_error
+        self.relation_summary_candidate_calls.append(payload)
+        return self.relation_summary_candidate_result
+
+    def apply_summary_selection(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if self.query_error is not None:
+            raise self.query_error
+        self.relation_summary_selection_calls.append(payload)
+        return self.relation_summary_selection_result
 
     def exclude_node(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self.query_error is not None:
@@ -1485,6 +1521,154 @@ async def test_http_relation_filter_route_calls_service_and_returns_payload() ->
 
 
 @pytest.mark.anyio
+async def test_http_relation_summary_candidates_route_calls_service_and_returns_payload() -> None:
+    service = FakeCaseGraphService()
+
+    async with _case_graph_client(service=service) as (client, _channel):
+        response = await client.post(
+            "/api/case-graph/relation/summary-candidates",
+            json={
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "focusNodeId": "subject:suspect:1",
+                "direction": "both",
+                "drillNums": 7,
+                "drillType": 2,
+                "filters": {"minAmount": 1000},
+            },
+        )
+
+        assert response.status == 200
+        assert await response.json() == service.relation_summary_candidate_result
+        assert service.relation_summary_candidate_calls == [
+            {
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "focusNodeId": "subject:suspect:1",
+                "direction": "both",
+                "drillNums": 7,
+                "drillType": 2,
+                "filters": {"minAmount": 1000},
+            }
+        ]
+
+
+@pytest.mark.anyio
+async def test_http_relation_summary_candidates_global_route_allows_no_focus_node() -> None:
+    service = FakeCaseGraphService()
+
+    async with _case_graph_client(service=service) as (client, _channel):
+        response = await client.post(
+            "/api/case-graph/relation/summary-candidates",
+            json={
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "scope": "global",
+                "direction": "both",
+                "filters": {"minAmount": 1000},
+            },
+        )
+
+        assert response.status == 200
+        assert await response.json() == service.relation_summary_candidate_result
+        assert service.relation_summary_candidate_calls == [
+            {
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "scope": "global",
+                "direction": "both",
+                "filters": {"minAmount": 1000},
+            }
+        ]
+
+
+@pytest.mark.anyio
+async def test_http_relation_summary_selection_route_calls_service_and_returns_payload() -> None:
+    service = FakeCaseGraphService()
+
+    async with _case_graph_client(service=service) as (client, _channel):
+        response = await client.post(
+            "/api/case-graph/relation/summary-selection",
+            json={
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "focusNodeId": "subject:suspect:1",
+                "candidateNodeIds": ["account:35", "account:39"],
+                "selectedNodeIds": ["account:39"],
+                "direction": "both",
+                "drillNums": 7,
+                "drillType": 2,
+                "filters": {"minAmount": 1000},
+                "options": {"nodePositions": {"subject:suspect:1": {"x": 100, "y": 200}}},
+            },
+        )
+
+        assert response.status == 200
+        assert await response.json() == service.relation_summary_selection_result
+        assert service.relation_summary_selection_calls == [
+            {
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "focusNodeId": "subject:suspect:1",
+                "candidateNodeIds": ["account:35", "account:39"],
+                "selectedNodeIds": ["account:39"],
+                "direction": "both",
+                "drillNums": 7,
+                "drillType": 2,
+                "filters": {"minAmount": 1000},
+                "options": {"nodePositions": {"subject:suspect:1": {"x": 100, "y": 200}}},
+            }
+        ]
+
+
+@pytest.mark.anyio
+async def test_http_relation_summary_selection_global_route_allows_no_focus_node() -> None:
+    service = FakeCaseGraphService()
+
+    async with _case_graph_client(service=service) as (client, _channel):
+        response = await client.post(
+            "/api/case-graph/relation/summary-selection",
+            json={
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "scope": "global",
+                "candidateNodeIds": ["account:35", "account:39"],
+                "selectedNodeIds": ["account:39"],
+                "selectedCandidates": [
+                    {
+                        "nodeId": "account:39",
+                        "label": "蔡金海",
+                        "cards": [{"accountId": "39", "accountName": "蔡金海", "tradeCard": "6222"}],
+                    }
+                ],
+                "filters": {"minAmount": 1000},
+                "options": {"nodePositions": {"subject:suspect:1": {"x": 100, "y": 200}}},
+            },
+        )
+
+        assert response.status == 200
+        assert await response.json() == service.relation_summary_selection_result
+        assert service.relation_summary_selection_calls == [
+            {
+                "graphId": "graph-1",
+                "caseId": "case-1",
+                "scope": "global",
+                "candidateNodeIds": ["account:35", "account:39"],
+                "selectedNodeIds": ["account:39"],
+                "selectedCandidates": [
+                    {
+                        "nodeId": "account:39",
+                        "label": "蔡金海",
+                        "cards": [{"accountId": "39", "accountName": "蔡金海", "tradeCard": "6222"}],
+                    }
+                ],
+                "filters": {"minAmount": 1000},
+                "options": {"nodePositions": {"subject:suspect:1": {"x": 100, "y": 200}}},
+            }
+        ]
+
+
+@pytest.mark.anyio
 async def test_http_relation_exclude_and_restore_routes_call_service() -> None:
     service = FakeCaseGraphService()
 
@@ -1494,7 +1678,10 @@ async def test_http_relation_exclude_and_restore_routes_call_service() -> None:
             json={
                 "graphId": "graph-1",
                 "caseId": "case-1",
-                "node": {"nodeId": "account:35", "label": "冯燕青", "type": "account"},
+                "nodes": [
+                    {"nodeId": "account:35", "label": "冯燕青", "type": "account"},
+                    {"nodeId": "account:39", "label": "蔡金海", "type": "account"},
+                ],
             },
         )
         restore_response = await client.post(
@@ -1512,7 +1699,10 @@ async def test_http_relation_exclude_and_restore_routes_call_service() -> None:
             {
                 "graphId": "graph-1",
                 "caseId": "case-1",
-                "node": {"nodeId": "account:35", "label": "冯燕青", "type": "account"},
+                "nodes": [
+                    {"nodeId": "account:35", "label": "冯燕青", "type": "account"},
+                    {"nodeId": "account:39", "label": "蔡金海", "type": "account"},
+                ],
             }
         ]
         assert restore_response.status == 200
@@ -1665,6 +1855,58 @@ async def test_http_delete_graph_route_removes_graph_files() -> None:
         assert response.status == 200
         assert await response.json() == {"ok": True}
         assert service.delete_calls == ["graph-existing"]
+
+
+@pytest.mark.anyio
+async def test_http_delete_graph_route_also_deletes_bound_chat() -> None:
+    service = FakeCaseGraphService()
+    storage = FakeCaseGraphStorage()
+    chat_id = "11111111-1111-4111-8111-111111111111"
+    storage.graphs["graph-existing"] = {
+        "graph_id": "graph-existing",
+        "caseId": "case-1",
+        "graphName": "存量图",
+        "tradeCards": [],
+        "excludedTrades": [],
+        "excludedAccountId": "",
+        "drillNums": 0,
+        "drillType": None,
+        "chatId": chat_id,
+    }
+
+    class FakeSessionStore:
+        def __init__(self) -> None:
+            self.delete_calls: list[str] = []
+
+        def delete_session(self, deleted_chat_id: str) -> bool:
+            self.delete_calls.append(deleted_chat_id)
+            return True
+
+    class FakeRegistry:
+        def __init__(self) -> None:
+            self.delete_calls: list[dict[str, Any]] = []
+
+        async def delete_chat(self, deleted_chat_id: str, payload: dict[str, Any]) -> None:
+            self.delete_calls.append({"chat_id": deleted_chat_id, "payload": payload})
+
+    async with _case_graph_client(service=service, storage=storage) as (client, channel):
+        session_store = FakeSessionStore()
+        registry = FakeRegistry()
+        channel._sessions = session_store
+        channel._registry = registry
+
+        response = await client.delete("/api/case-graph/graph/graph-existing")
+
+        assert response.status == 200
+        assert await response.json() == {"ok": True}
+        assert service.delete_calls == ["graph-existing"]
+        assert session_store.delete_calls == [chat_id]
+        assert registry.delete_calls == [
+            {
+                "chat_id": chat_id,
+                "payload": {"type": "session.deleted", "chatId": chat_id},
+            }
+        ]
 
 
 @pytest.mark.anyio

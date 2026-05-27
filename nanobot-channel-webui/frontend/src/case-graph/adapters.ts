@@ -7,6 +7,7 @@ import type {
   CaseGraphQueryResult,
   CaseGraphSnapshot,
   CaseGraphStateSnapshot,
+  CaseGraphStepSnapshot,
   CaseGraphTradeCard,
 } from './types';
 
@@ -48,6 +49,11 @@ export function normalizeCaseGraphOriginData(
     excludedTrades: Array.isArray((value as CaseGraphQueryResult).excludedTrades)
       ? [...((value as CaseGraphQueryResult).excludedTrades ?? [])]
       : [],
+    tradeFacts: isPlainObject((value as CaseGraphQueryResult).tradeFacts)
+      ? { ...((value as CaseGraphQueryResult).tradeFacts ?? {}) }
+      : isPlainObject((value as { graph?: { tradeFacts?: CaseGraphQueryResult['tradeFacts'] } }).graph?.tradeFacts)
+        ? { ...((value as { graph?: { tradeFacts?: CaseGraphQueryResult['tradeFacts'] } }).graph?.tradeFacts ?? {}) }
+        : {},
     excludedAccountId:
       'excludedAccountId' in (value as object)
         ? ((value as CaseGraphQueryResult).excludedAccountId ?? null)
@@ -114,7 +120,9 @@ export function originDataToCanvasData(originData: CaseGraphOriginData | null): 
     edges: originData.money
       .filter((edge) => validNodeIds.has(String(edge.from || '').trim()) && validNodeIds.has(String(edge.to || '').trim()))
       .map((edge) => normalizeMoneyEdge(edge)),
+    tradeFacts: { ...(originData.tradeFacts ?? {}) },
     excludedNodes: [...(originData.excludedNodes ?? [])],
+    realityRelations: [],
   };
 }
 
@@ -127,7 +135,9 @@ export function graphStateToCanvasData(state: CaseGraphStateSnapshot | null | un
       return point ? { ...node, x: point.x, y: point.y } : node;
     }),
     edges: state.graph.edges.map((edge) => normalizeMoneyEdge(edge)),
+    tradeFacts: { ...(state.graph.tradeFacts ?? {}) },
     excludedNodes: [...(state.graph.excludedNodes ?? [])],
+    realityRelations: [...(state.graph.realityRelations ?? [])],
   };
 }
 
@@ -141,9 +151,27 @@ export function graphStateToOriginData(state: CaseGraphStateSnapshot | null | un
     phone: [],
     groups: normalizeCaseGraphGroupMap(state.graph.groupMap),
     excludedTrades: [...(state.graph.excludedTrades ?? [])],
+    tradeFacts: { ...(state.graph.tradeFacts ?? {}) },
     excludedAccountId: state.graph.excludedAccountId?.[0] ?? null,
     excludedNodes: [...(state.graph.excludedNodes ?? [])],
     sourceSelectId: [...(state.graph.sourceSelectId ?? [])],
+  };
+}
+
+export function graphStepToStateSnapshot(
+  step: CaseGraphStepSnapshot | null | undefined,
+  fallback: Partial<Pick<CaseGraphStateSnapshot, 'graphName' | 'updatedAt'>> = {},
+): CaseGraphStateSnapshot | null {
+  if (!step?.graph) return null;
+  return {
+    schemaVersion: 'case-graph.state.v1',
+    caseId: step.caseId,
+    graphId: step.graphId,
+    graphName: fallback.graphName || '',
+    revision: Number(step.revision || 0),
+    updatedAt: step.createdAt || fallback.updatedAt || '',
+    lastStepId: step.stepId,
+    graph: step.graph,
   };
 }
 

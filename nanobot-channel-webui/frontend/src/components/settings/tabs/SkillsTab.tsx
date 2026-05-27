@@ -285,7 +285,7 @@ export function SkillsTab({
                     <div>
                       <h4 className="text-lg font-semibold leading-tight">{detail.name}</h4>
                       <div className="text-xs text-muted-foreground mt-0.5">
-                        技能 · 作者：{detail.source === 'workspace' ? '工作区' : 'Nanobot'}
+                        技能 · 作者：{detail.source === 'workspace' ? '工作区' : '内置'}
                       </div>
                     </div>
                   </div>
@@ -331,11 +331,11 @@ export function SkillsTab({
                     {/* Summary Card */}
                     <div className="settings-skill-summary-card">
                       <div className="summary-row">
-                        <span className="summary-label">Name</span>
+                        <span className="summary-label">名称</span>
                         <span className="summary-value font-semibold">{detail.name}</span>
                       </div>
                       <div className="summary-row">
-                        <span className="summary-label">Description</span>
+                        <span className="summary-label">说明</span>
                         <span className="summary-value text-muted-foreground leading-relaxed">
                           {detail.description || '暂无详细描述。'}
                         </span>
@@ -345,7 +345,7 @@ export function SkillsTab({
                     {/* Content Preview */}
                     <div className="mt-10">
                       {selectedFilePath === detail.path && (
-                        <h3 className="text-xl font-bold mb-4">Overview</h3>
+                        <h3 className="text-xl font-bold mb-4">概览</h3>
                       )}
                       {fileLoading ? (
                         <div className="py-20 text-center text-sm text-muted-foreground italic opacity-50">读取内容中...</div>

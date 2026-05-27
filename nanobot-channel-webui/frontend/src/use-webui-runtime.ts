@@ -17,7 +17,7 @@ import {
   uploadedToCompleteAttachment,
 } from './app-helpers';
 import { appStore, bootstrap, useAppSelector } from './app-state';
-import { buildExternalThreadListAdapter, buildThreadSuggestions } from './assistant-ui-runtime';
+import { DRAFT_THREAD_ID, buildExternalThreadListAdapter, buildThreadSuggestions } from './assistant-ui-runtime';
 import { findPendingAskUserPrompt } from './ask-user';
 import { uploadFiles } from './api';
 import { messageContentWithSelectedSkill } from './skill-quick-select';
@@ -27,6 +27,7 @@ const EMPTY_MESSAGES: readonly RuntimeMessageSource[] = [];
 export function useWebuiRuntime({
   showFlash,
   actions,
+  prepareOutgoingMessage,
 }: {
   showFlash: (message: string) => void;
   actions: {
@@ -41,6 +42,7 @@ export function useWebuiRuntime({
     createServerThread: () => Promise<string | null>;
     cancelTurn: () => void;
   };
+  prepareOutgoingMessage?: (message: AppendMessage) => AppendMessage;
 }) {
   const { sendMessage, switchThread, createThread, deleteThread, ensureThread, cancelTurn } = actions;
   const authToken = useAppSelector((state) => state.authToken);
@@ -73,10 +75,7 @@ export function useWebuiRuntime({
 
   const convertMessage = useCallback(
     (message: RuntimeMessageSource, index: number) => {
-      const chatId = currentChatIdRef.current;
-      if (!chatId) {
-        throw new Error('缺少当前会话 ID');
-      }
+      const chatId = currentChatIdRef.current ?? DRAFT_THREAD_ID;
       return historyMessageToThreadMessage(
         message,
         chatId,
@@ -141,9 +140,10 @@ export function useWebuiRuntime({
   );
 
   const handleNewMessage = useCallback(async (message: AppendMessage) => {
-    const content = extractTextInput(message);
-    const uploadedAttachments = extractUploadedAttachments(message);
-    const sendContent = messageContentWithSelectedSkill(content, message.runConfig);
+    const preparedMessage = prepareOutgoingMessage?.(message) ?? message;
+    const content = extractTextInput(preparedMessage);
+    const uploadedAttachments = extractUploadedAttachments(preparedMessage);
+    const sendContent = messageContentWithSelectedSkill(content, preparedMessage.runConfig);
     if (!sendContent && !uploadedAttachments.length) {
       showFlash('请输入消息或添加附件');
       return;
@@ -175,7 +175,7 @@ export function useWebuiRuntime({
       content: sendContent,
       attachments: uploadedAttachments.map(({ path, name, mime }) => ({ path, name, mime })),
     });
-  }, [ensureThread, sendMessage, showFlash]);
+  }, [ensureThread, prepareOutgoingMessage, sendMessage, showFlash]);
 
   const threadListAdapter = useMemo(
     () =>

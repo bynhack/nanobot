@@ -1,10 +1,15 @@
-import { FileSearch, X } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Check, FileSearch, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
+import {
+  SortableColumnHeader,
+  sortItemsByState,
+  sortableHeaderAria,
+  type SortAccessors,
+  type SortState,
+} from './sortable-table';
+import { CaseGraphDateInput } from './date-input';
 import type { CaseGraphTargetDetailItem, CaseGraphTargetDetailResult } from './types';
-
-const DEFAULT_PAGE_SIZE = 10;
-const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
 export interface EdgeDetailPartyContext {
   payerName?: string;
@@ -15,24 +20,85 @@ interface EdgeDetailDrawerProps {
   detail: CaseGraphTargetDetailResult | null;
   loading: boolean;
   open: boolean;
+  selectedTradeIds: string[];
+  excludedTradeIds?: string[];
+  applying: boolean;
+  onToggleTrade: (tradeId: string) => void;
+  onToggleTrades: (tradeIds: string[], selected: boolean) => void;
+  onApplyExclude: () => void;
+  onRestoreExcludedTrades?: (tradeIds: string[]) => void;
   onClose: () => void;
   partyContext?: EdgeDetailPartyContext | null;
 }
 
-export function EdgeDetailDrawer({ detail, loading, open, onClose, partyContext }: EdgeDetailDrawerProps) {
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+type EdgeDetailSortKey = 'payer' | 'payee' | 'amount' | 'time';
+
+export function EdgeDetailDrawer({
+  detail,
+  loading,
+  open,
+  selectedTradeIds,
+  excludedTradeIds = [],
+  applying,
+  onToggleTrade,
+  onToggleTrades,
+  onApplyExclude,
+  onRestoreExcludedTrades,
+  onClose,
+  partyContext,
+}: EdgeDetailDrawerProps) {
+  const [keyword, setKeyword] = useState('');
+  const [minAmount, setMinAmount] = useState('');
+  const [maxAmount, setMaxAmount] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [sortState, setSortState] = useState<SortState<EdgeDetailSortKey> | null>(null);
 
   useEffect(() => {
-    if (open) {
-      setPage(1);
+    if (!open) {
+      setKeyword('');
+      setMinAmount('');
+      setMaxAmount('');
+      setStartTime('');
+      setEndTime('');
+      setSortState(null);
     }
-  }, [detail, open]);
+  }, [open]);
 
-  const paginatedDetail = useMemo(
-    () => getPaginatedEdgeDetail(detail ?? [], page, pageSize),
-    [detail, page, pageSize],
+  const filteredDetail = useMemo(
+    () => filterEdgeDetailItems(detail ?? [], { keyword, minAmount, maxAmount, startTime, endTime }),
+    [detail, endTime, keyword, maxAmount, minAmount, startTime],
   );
+  const sortedDetail = useMemo(
+    () => sortItemsByState(filteredDetail, sortState, edgeDetailSortAccessors),
+    [filteredDetail, sortState],
+  );
+  const selectedSet = useMemo(() => new Set(selectedTradeIds), [selectedTradeIds]);
+  const excludedSet = useMemo(
+    () => new Set(excludedTradeIds.map((tradeId) => tradeId.trim()).filter(Boolean)),
+    [excludedTradeIds],
+  );
+  const allTradeIds = useMemo(
+    () => uniqueTradeIds((detail ?? []).map(resolveEdgeDetailTradeKey)),
+    [detail],
+  );
+  const filteredTradeIds = useMemo(
+    () => uniqueTradeIds(filteredDetail.map(resolveEdgeDetailTradeKey)),
+    [filteredDetail],
+  );
+  const activeTradeIds = useMemo(
+    () => allTradeIds.filter((tradeId) => !excludedSet.has(tradeId)),
+    [allTradeIds, excludedSet],
+  );
+  const activeFilteredTradeIds = useMemo(
+    () => filteredTradeIds.filter((tradeId) => !excludedSet.has(tradeId)),
+    [excludedSet, filteredTradeIds],
+  );
+  const excludedInDetailCount = allTradeIds.filter((tradeId) => excludedSet.has(tradeId)).length;
+  const selectedInDetailCount = activeTradeIds.filter((tradeId) => selectedSet.has(tradeId)).length;
+  const selectedFilteredCount = activeFilteredTradeIds.filter((tradeId) => selectedSet.has(tradeId)).length;
+  const allFilteredSelected = activeFilteredTradeIds.length > 0 && selectedFilteredCount === activeFilteredTradeIds.length;
+  const someFilteredSelected = selectedFilteredCount > 0 && selectedFilteredCount < activeFilteredTradeIds.length;
 
   if (!open) {
     return null;
@@ -90,64 +156,143 @@ export function EdgeDetailDrawer({ detail, loading, open, onClose, partyContext 
               </dl>
             </section>
 
-            <section className="case-graph-edge-detail-section">
+            <section className="case-graph-edge-detail-section case-graph-edge-detail-section--table">
               <h3>交易明细</h3>
-              <div className="case-graph-edge-table-wrap">
-                <table className="case-graph-edge-table">
-                  <thead>
-                    <tr>
-                      <th>付款方</th>
-                      <th>收款方</th>
-                      <th>交易金额</th>
-                      <th>交易时间</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paginatedDetail.items.map((item, index) => (
-                      <tr key={`${item.tradeId || item.serialNumber || 'edge'}-${index}`}>
-                        <td>{renderPartyCell(resolveEdgeDetailParty(item, 'payer', partyContext))}</td>
-                        <td>{renderPartyCell(resolveEdgeDetailParty(item, 'payee', partyContext))}</td>
-                        <td>{formatRowAmount(item.tradeAmount)}</td>
-                        <td>{item.tradeTime || '-'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+              <div className="case-graph-detail-analysis-toolbar">
+                <input
+                  type="search"
+                  value={keyword}
+                  onChange={(event) => setKeyword(event.target.value)}
+                  placeholder="姓名、卡号、流水号、摘要"
+                />
+                <input
+                  type="number"
+                  min="0"
+                  value={minAmount}
+                  onChange={(event) => setMinAmount(event.target.value)}
+                  placeholder="最小金额"
+                />
+                <input
+                  type="number"
+                  min="0"
+                  value={maxAmount}
+                  onChange={(event) => setMaxAmount(event.target.value)}
+                  placeholder="最大金额"
+                />
+                <CaseGraphDateInput
+                  value={startTime}
+                  onChange={setStartTime}
+                  ariaLabel="开始日期"
+                  placeholder="开始日期"
+                />
+                <CaseGraphDateInput
+                  value={endTime}
+                  onChange={setEndTime}
+                  ariaLabel="结束日期"
+                  placeholder="结束日期"
+                />
               </div>
-              <div className="case-graph-edge-pagination">
-                <span>
-                  共 {paginatedDetail.total} 条，第 {paginatedDetail.page} / {paginatedDetail.pageCount} 页
-                </span>
-                <label>
-                  <span>每页</span>
-                  <select
-                    value={pageSize}
-                    onChange={(event) => {
-                      setPageSize(Number(event.target.value));
-                      setPage(1);
-                    }}
-                  >
-                    {PAGE_SIZE_OPTIONS.map((option) => (
-                      <option key={option} value={option}>{option} 条</option>
-                    ))}
-                  </select>
-                </label>
+
+              <div className="case-graph-detail-analysis-selection-tools">
+                <span>当前结果 {filteredTradeIds.length} 笔，已勾选排除 {selectedFilteredCount} 笔，已排除 {excludedInDetailCount} 笔</span>
                 <button
                   type="button"
-                  className="case-graph-edge-page-button"
-                  disabled={paginatedDetail.page <= 1}
-                  onClick={() => setPage((current) => Math.max(1, current - 1))}
+                  disabled={!activeFilteredTradeIds.length || allFilteredSelected}
+                  onClick={() => onToggleTrades(activeFilteredTradeIds, true)}
                 >
-                  上一页
+                  全选当前结果
                 </button>
                 <button
                   type="button"
-                  className="case-graph-edge-page-button"
-                  disabled={paginatedDetail.page >= paginatedDetail.pageCount}
-                  onClick={() => setPage((current) => Math.min(paginatedDetail.pageCount, current + 1))}
+                  disabled={!selectedFilteredCount}
+                  onClick={() => onToggleTrades(activeFilteredTradeIds, false)}
                 >
-                  下一页
+                  清空当前结果
                 </button>
+              </div>
+
+              <div className="case-graph-edge-table-wrap">
+                {filteredDetail.length ? (
+                  <table className="case-graph-edge-table case-graph-edge-table--selectable">
+                    <thead>
+                      <tr>
+                        <th>
+                          <SelectionCheckbox
+                            ariaLabel="全选当前结果交易流水"
+                            checked={allFilteredSelected}
+                            disabled={!activeFilteredTradeIds.length}
+                            indeterminate={someFilteredSelected}
+                            onChange={(checked) => onToggleTrades(activeFilteredTradeIds, checked)}
+                          />
+                        </th>
+                        <th aria-sort={sortableHeaderAria(sortState, 'payer')}>
+                          <SortableColumnHeader label="付款方" sortKey="payer" sortState={sortState} onSortChange={setSortState} />
+                        </th>
+                        <th aria-sort={sortableHeaderAria(sortState, 'payee')}>
+                          <SortableColumnHeader label="收款方" sortKey="payee" sortState={sortState} onSortChange={setSortState} />
+                        </th>
+                        <th aria-sort={sortableHeaderAria(sortState, 'amount')}>
+                          <SortableColumnHeader label="交易金额" sortKey="amount" sortState={sortState} defaultDirection="desc" onSortChange={setSortState} />
+                        </th>
+                        <th aria-sort={sortableHeaderAria(sortState, 'time')}>
+                          <SortableColumnHeader label="交易时间" sortKey="time" sortState={sortState} defaultDirection="desc" onSortChange={setSortState} />
+                        </th>
+                        <th>状态</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sortedDetail.map((item, index) => {
+                        const tradeId = resolveEdgeDetailTradeKey(item);
+                        const excluded = Boolean(tradeId && excludedSet.has(tradeId));
+                        const checked = selectedSet.has(tradeId);
+                        return (
+                          <tr key={`${tradeId || 'edge'}-${index}`} className={`${checked ? 'is-selected' : ''} ${excluded ? 'is-excluded' : ''}`.trim()}>
+                            <td>
+                              <input
+                                type="checkbox"
+                                checked={checked}
+                                disabled={!tradeId || excluded}
+                                onChange={() => tradeId && onToggleTrade(tradeId)}
+                                aria-label="排除交易流水"
+                              />
+                            </td>
+                            <td>{renderPartyCell(resolveEdgeDetailParty(item, 'payer', partyContext))}</td>
+                            <td>{renderPartyCell(resolveEdgeDetailParty(item, 'payee', partyContext))}</td>
+                            <td>{formatRowAmount(item.tradeAmount)}</td>
+                            <td>{item.tradeTime || '-'}</td>
+                            <td>
+                              {excluded ? (
+                                <span className="case-graph-edge-row-status is-excluded">已排除</span>
+                              ) : (
+                                <span className="case-graph-edge-row-status">保留中</span>
+                              )}
+                            </td>
+                            <td>
+                              {excluded && tradeId ? (
+                                <button
+                                  type="button"
+                                  className="case-graph-secondary-button case-graph-edge-row-action"
+                                  disabled={applying}
+                                  onClick={() => onRestoreExcludedTrades?.([tradeId])}
+                                >
+                                  恢复
+                                </button>
+                              ) : (
+                                <span className="case-graph-edge-row-muted">-</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                ) : (
+                  <div className="case-graph-empty">
+                    <FileSearch size={18} />
+                    <span>当前筛选条件下没有交易明细。</span>
+                  </div>
+                )}
               </div>
             </section>
           </div>
@@ -159,34 +304,125 @@ export function EdgeDetailDrawer({ detail, loading, open, onClose, partyContext 
             <span>这条交易线暂时没有可展示的明细。</span>
           </div>
         ) : null}
+
+        {!loading && detail?.length ? (
+          <footer className="case-graph-detail-analysis-footer">
+            <span>本线已勾选排除 {selectedInDetailCount} / {activeTradeIds.length} 笔交易，已排除 {excludedInDetailCount} 笔</span>
+            <button type="button" className="case-graph-secondary-button" onClick={onClose}>
+              取消
+            </button>
+            <button
+              type="button"
+              className="case-graph-primary-button"
+              disabled={applying || !selectedInDetailCount}
+              onClick={onApplyExclude}
+            >
+              <Check size={14} />
+              <span>{applying ? '应用中' : '应用到图'}</span>
+            </button>
+          </footer>
+        ) : null}
       </section>
     </div>
   );
 }
 
-export function getPaginatedEdgeDetail(
+const edgeDetailSortAccessors: SortAccessors<CaseGraphTargetDetailItem, EdgeDetailSortKey> = {
+  payer: (item) => [item.payerAccountName, item.payerTradeCard],
+  payee: (item) => [item.payeeAccountName, item.payeeTradeCard],
+  amount: (item) => Number(item.tradeAmount || 0),
+  time: (item) => item.tradeTime,
+};
+
+export function resolveEdgeDetailTradeKey(item: CaseGraphTargetDetailItem): string {
+  return String(item.tradeId ?? item.serialNumber ?? '').trim();
+}
+
+export function filterEdgeDetailItemsForGraphEdge(
   detail: CaseGraphTargetDetailResult,
-  page: number,
-  pageSize: number,
-): {
-  items: CaseGraphTargetDetailResult;
-  page: number;
-  pageCount: number;
-  pageSize: number;
-  total: number;
-} {
-  const total = detail.length;
-  const normalizedPageSize = PAGE_SIZE_OPTIONS.includes(pageSize) ? pageSize : DEFAULT_PAGE_SIZE;
-  const pageCount = Math.max(1, Math.ceil(total / normalizedPageSize));
-  const normalizedPage = Math.min(Math.max(1, page), pageCount);
-  const start = (normalizedPage - 1) * normalizedPageSize;
-  return {
-    items: detail.slice(start, start + normalizedPageSize),
-    page: normalizedPage,
-    pageCount,
-    pageSize: normalizedPageSize,
-    total,
-  };
+  edgeTradeIds: string[] | undefined,
+  excludedTradeIds: string[],
+): CaseGraphTargetDetailResult {
+  const currentEdgeTradeIds = new Set((edgeTradeIds ?? []).map((value) => String(value || '').trim()).filter(Boolean));
+  const excludedSet = new Set(excludedTradeIds.map((value) => String(value || '').trim()).filter(Boolean));
+
+  return detail.filter((item) => {
+    const tradeId = resolveEdgeDetailTradeKey(item);
+    if (currentEdgeTradeIds.size > 0) {
+      return Boolean(tradeId && (currentEdgeTradeIds.has(tradeId) || excludedSet.has(tradeId)));
+    }
+    return true;
+  });
+}
+
+export function filterEdgeDetailItems(
+  items: CaseGraphTargetDetailResult,
+  filters: { keyword: string; minAmount: string; maxAmount: string; startTime: string; endTime: string },
+): CaseGraphTargetDetailResult {
+  const keyword = filters.keyword.trim().toLowerCase();
+  const minAmount = parseOptionalNumber(filters.minAmount);
+  const maxAmount = parseOptionalNumber(filters.maxAmount);
+
+  return items.filter((item) => {
+    const amount = Number(item.tradeAmount || 0);
+    if (minAmount !== null && amount < minAmount) return false;
+    if (maxAmount !== null && amount > maxAmount) return false;
+    const tradeTime = String(item.tradeTime || '');
+    if (filters.startTime && tradeTime.slice(0, 10) < filters.startTime) return false;
+    if (filters.endTime && tradeTime.slice(0, 10) > filters.endTime) return false;
+    if (!keyword) return true;
+    return [
+      item.tradeId,
+      item.serialNumber,
+      item.tradeAbstract,
+      item.payerAccountName,
+      item.payerTradeCard,
+      item.payeeAccountName,
+      item.payeeTradeCard,
+    ].some((value) => String(value ?? '').toLowerCase().includes(keyword));
+  });
+}
+
+function SelectionCheckbox({
+  ariaLabel,
+  checked,
+  disabled,
+  indeterminate,
+  onChange,
+}: {
+  ariaLabel: string;
+  checked: boolean;
+  disabled?: boolean;
+  indeterminate?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.indeterminate = Boolean(indeterminate);
+    }
+  }, [indeterminate]);
+
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      aria-label={ariaLabel}
+      checked={checked}
+      disabled={disabled}
+      onChange={(event) => onChange(event.currentTarget.checked)}
+    />
+  );
+}
+
+function uniqueTradeIds(values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function parseOptionalNumber(value: string): number | null {
+  if (!value.trim()) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 interface ResolvedEdgeParty {

@@ -61,9 +61,9 @@ export function ConfigTab({ token }: { token: string }) {
 
   return (
     <section className="settings-section">
-      <SettingsSectionTitle title="工作区配置" subtitle="管理当前 Nanobot 工作区的核心设置与模型参数。" />
+      <SettingsSectionTitle title="工作区配置" subtitle="管理当前工作区的核心设置与模型参数。" />
       
-      <SettingsRow label="当前工作区" hint="当前 Nanobot 实例绑定的物理目录。">
+      <SettingsRow label="当前工作区" hint="当前系统实例绑定的物理目录。">
         <code className="text-xs">{data.workspace}</code>
       </SettingsRow>
       <SettingsRow label="主配置文件" hint="所有配置更改都将持久化到此文件。">
@@ -77,7 +77,7 @@ export function ConfigTab({ token }: { token: string }) {
         <>
           <div className="settings-header mt-8">
             <h3 className="settings-header-title">模型与推理</h3>
-            <p className="settings-header-subtitle">配置默认使用的 AI 模型及其对应的 API 服务商。</p>
+            <p className="settings-header-subtitle">配置默认使用的智能模型及其对应的接口服务商。</p>
           </div>
           
           <SettingsRow label="模型名称" hint="例如 gpt-4o, kimi-k2.5 等。">
@@ -89,7 +89,7 @@ export function ConfigTab({ token }: { token: string }) {
             />
           </SettingsRow>
 
-          <SettingsRow label="服务商 (Provider)" hint="指定模型所属的后端集成。">
+          <SettingsRow label="服务商" hint="指定模型所属的后端集成。">
             <select
               className="settings-select"
               value={visualDraft.provider}
@@ -103,7 +103,7 @@ export function ConfigTab({ token }: { token: string }) {
             </select>
           </SettingsRow>
 
-          <SettingsRow label="API 令牌" hint="用于鉴权的 API Key。">
+          <SettingsRow label="接口令牌" hint="用于接口鉴权的访问令牌。">
             <input
               className="settings-input"
               type="password"
@@ -113,7 +113,7 @@ export function ConfigTab({ token }: { token: string }) {
             />
           </SettingsRow>
 
-          <SettingsRow label="API 基准地址" hint="自定义 API 端点，留空则使用默认值。">
+          <SettingsRow label="接口基准地址" hint="自定义接口端点，留空则使用默认值。">
             <input
               className="settings-input"
               value={visualDraft.apiBase}
@@ -122,7 +122,7 @@ export function ConfigTab({ token }: { token: string }) {
             />
           </SettingsRow>
 
-          <SettingsRow label="时区" hint="影响 Cron 任务和日志的时间戳显示。">
+          <SettingsRow label="时区" hint="影响定时任务和日志的时间戳显示。">
             <input
               className="settings-input"
               value={visualDraft.timezone}
@@ -136,7 +136,7 @@ export function ConfigTab({ token }: { token: string }) {
             <p className="settings-header-subtitle">配置飞书机器人的集成参数。</p>
           </div>
 
-          <SettingsRow label="启用飞书" hint="开启后 Nanobot 将通过飞书机器人提供服务。">
+          <SettingsRow label="启用飞书" hint="开启后系统将通过飞书机器人提供服务。">
             <button
               type="button"
               className={`settings-modern-toggle${visualDraft.feishuEnabled ? ' active' : ''}`}
@@ -149,7 +149,7 @@ export function ConfigTab({ token }: { token: string }) {
             </button>
           </SettingsRow>
 
-          <SettingsRow label="App ID" hint="飞书开放平台的应用标识。">
+          <SettingsRow label="应用编号" hint="飞书开放平台的应用标识。">
             <input
               className="settings-input"
               value={visualDraft.feishuAppId}
@@ -160,7 +160,7 @@ export function ConfigTab({ token }: { token: string }) {
             />
           </SettingsRow>
 
-          <SettingsRow label="App Secret" hint="应用的访问密钥。">
+          <SettingsRow label="应用密钥" hint="应用的访问密钥。">
             <input
               className="settings-input"
               type="password"
@@ -168,7 +168,7 @@ export function ConfigTab({ token }: { token: string }) {
               onChange={(event) =>
                 setVisualDraft((current) => current ? { ...current, feishuAppSecret: event.target.value } : current)
               }
-              placeholder="app secret"
+              placeholder="请输入应用密钥"
             />
           </SettingsRow>
 
@@ -216,10 +216,10 @@ export function ConfigTab({ token }: { token: string }) {
 
       <div className="settings-header mt-8">
         <h3 className="settings-header-title">高级配置</h3>
-        <p className="settings-header-subtitle">直接编辑配置文件 JSON，适合高级用户。</p>
+        <p className="settings-header-subtitle">直接编辑结构化配置文件，适合高级用户。</p>
       </div>
 
-      <SettingsRow label="专家模式" hint="启用直接编辑配置文件的 JSON。">
+      <SettingsRow label="专家模式" hint="启用直接编辑结构化配置内容。">
         <button
           type="button"
           className="ghost-button"
@@ -259,7 +259,7 @@ export function ConfigTab({ token }: { token: string }) {
                   setData(next);
                   setDraftRaw(next.raw);
                   setVisualDraft(buildVisualConfigDraft(next.parsed));
-                  setNotice('JSON 已保存');
+                  setNotice('结构化配置已保存');
                 } catch (cause) {
                   setError(cause instanceof Error ? cause.message : '保存失败');
                 } finally {
@@ -267,7 +267,7 @@ export function ConfigTab({ token }: { token: string }) {
                 }
               }}
             >
-              {saving ? '保存中...' : '保存 JSON'}
+              {saving ? '保存中...' : '保存配置'}
             </button>
           </div>
         </div>

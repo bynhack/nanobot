@@ -1,0 +1,955 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>审计流向图 Mock</title>
+    <style>
+      :root {
+        --bg: #f5f7fa;
+        --panel: #ffffff;
+        --line: #d9e0e8;
+        --line-strong: #aab7c4;
+        --text: #1f2933;
+        --muted: #66727f;
+        --primary: #1d7f75;
+        --primary-soft: #e6f4f2;
+        --risk: #b7412e;
+        --risk-soft: #fae9e5;
+        --warn: #a96f13;
+        --warn-soft: #fff3d8;
+        --in: #2f7d32;
+        --out: #b84a2f;
+        --canvas: #fbfcfd;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+          "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      }
+
+      button,
+      select,
+      input {
+        font: inherit;
+      }
+
+      .app {
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .topbar {
+        height: 64px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 0 24px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .topbar-left,
+      .topbar-right {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-width: 0;
+      }
+
+      .title {
+        font-size: 18px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .select {
+        height: 36px;
+        min-width: 180px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0 10px;
+        background: #fff;
+        color: var(--text);
+      }
+
+      .btn {
+        height: 36px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0 12px;
+        background: #fff;
+        color: var(--text);
+        cursor: pointer;
+      }
+
+      .btn:hover {
+        border-color: var(--line-strong);
+        background: #f9fafb;
+      }
+
+      .btn-primary {
+        border-color: var(--primary);
+        background: var(--primary);
+        color: #fff;
+      }
+
+      .btn-primary:hover {
+        background: #176960;
+      }
+
+      .main {
+        flex: 1;
+        display: grid;
+        grid-template-columns: 280px minmax(0, 1fr);
+        min-height: 0;
+      }
+
+      .sidebar {
+        border-right: 1px solid var(--line);
+        background: var(--panel);
+        padding: 18px;
+        overflow: auto;
+      }
+
+      .section {
+        padding: 16px 0;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .section:first-child {
+        padding-top: 0;
+      }
+
+      .section:last-child {
+        border-bottom: 0;
+      }
+
+      .section-title {
+        margin: 0 0 12px;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .metric {
+        min-height: 74px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: #fbfcfd;
+      }
+
+      .metric-value {
+        font-size: 22px;
+        font-weight: 750;
+        line-height: 1.2;
+      }
+
+      .metric-label {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .account-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .account-row {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        background: #fbfcfd;
+      }
+
+      .account-name {
+        font-weight: 700;
+      }
+
+      .account-no {
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .legend {
+        display: grid;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--primary);
+      }
+
+      .dot-risk {
+        background: var(--risk);
+      }
+
+      .dot-warn {
+        background: var(--warn);
+      }
+
+      .workspace {
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .toolbar {
+        height: 52px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        padding: 0 18px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+      }
+
+      .toolbar .search {
+        height: 34px;
+        width: 180px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0 10px;
+      }
+
+      .canvas-wrap {
+        position: relative;
+        flex: 1;
+        overflow: auto;
+        background: var(--canvas);
+      }
+
+      .canvas {
+        position: relative;
+        width: 1260px;
+        min-height: 980px;
+        padding: 28px;
+      }
+
+      .file-band {
+        position: relative;
+        height: 270px;
+        margin-bottom: 34px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+      }
+
+      .file-head {
+        position: absolute;
+        top: 14px;
+        left: 16px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        z-index: 3;
+      }
+
+      .file-title {
+        font-weight: 700;
+      }
+
+      .file-sub {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        height: 24px;
+        border-radius: 999px;
+        padding: 0 9px;
+        background: var(--primary-soft);
+        color: var(--primary);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .node {
+        position: absolute;
+        width: 218px;
+        min-height: 66px;
+        border: 1px solid var(--line-strong);
+        border-radius: 8px;
+        background: #fff;
+        box-shadow: 0 8px 18px rgb(31 41 51 / 8%);
+        padding: 10px 12px;
+        z-index: 2;
+      }
+
+      .node-victim {
+        border-color: #93c6aa;
+        background: #f5fbf7;
+      }
+
+      .node-suspect {
+        border-color: #e0a395;
+        background: #fff7f5;
+      }
+
+      .node-middle {
+        border-color: #b9c7d4;
+        background: #fbfcff;
+      }
+
+      .node-name {
+        font-size: 14px;
+        font-weight: 750;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .node-card {
+        margin-top: 5px;
+        color: var(--muted);
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .node-type {
+        margin-top: 7px;
+        display: inline-flex;
+        align-items: center;
+        height: 22px;
+        border-radius: 5px;
+        padding: 0 7px;
+        color: var(--muted);
+        background: #edf1f5;
+        font-size: 12px;
+      }
+
+      .node-victim .node-type {
+        color: var(--in);
+        background: #e9f6ee;
+      }
+
+      .node-suspect .node-type {
+        color: var(--risk);
+        background: var(--risk-soft);
+      }
+
+      .edge-layer {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+      }
+
+      .edge-label {
+        position: absolute;
+        z-index: 4;
+        min-width: 142px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: rgb(255 255 255 / 96%);
+        padding: 6px 8px;
+        color: var(--text);
+        font-size: 12px;
+        line-height: 1.45;
+        box-shadow: 0 6px 14px rgb(31 41 51 / 8%);
+      }
+
+      .edge-label strong {
+        color: var(--risk);
+      }
+
+      .minimap {
+        position: fixed;
+        right: 22px;
+        bottom: 22px;
+        width: 180px;
+        height: 112px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgb(255 255 255 / 94%);
+        box-shadow: 0 12px 28px rgb(31 41 51 / 14%);
+        padding: 10px;
+      }
+
+      .mini-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--muted);
+        margin-bottom: 8px;
+      }
+
+      .mini-line {
+        height: 12px;
+        border-radius: 3px;
+        background: #e8edf2;
+        margin-bottom: 8px;
+        position: relative;
+      }
+
+      .mini-line::after {
+        content: "";
+        position: absolute;
+        left: 16px;
+        top: 3px;
+        width: 82px;
+        height: 6px;
+        border-radius: 3px;
+        background: #95b8b4;
+      }
+
+      .drawer {
+        position: fixed;
+        top: 0;
+        right: 0;
+        width: min(920px, 92vw);
+        height: 100vh;
+        background: #fff;
+        border-left: 1px solid var(--line);
+        box-shadow: -16px 0 40px rgb(31 41 51 / 18%);
+        transform: translateX(105%);
+        transition: transform 160ms ease;
+        z-index: 20;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .drawer.open {
+        transform: translateX(0);
+      }
+
+      .drawer-head,
+      .modal-head {
+        min-height: 62px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 0 20px;
+        border-bottom: 1px solid var(--line);
+      }
+
+      .drawer-title,
+      .modal-title {
+        font-size: 18px;
+        font-weight: 750;
+      }
+
+      .drawer-body {
+        padding: 18px;
+        overflow: auto;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid var(--line);
+        padding: 12px 10px;
+        text-align: left;
+      }
+
+      th {
+        background: #f7f9fb;
+        color: var(--muted);
+        font-weight: 700;
+      }
+
+      .amount {
+        font-variant-numeric: tabular-nums;
+        font-weight: 750;
+      }
+
+      .risk-text {
+        color: var(--risk);
+      }
+
+      .overlay {
+        position: fixed;
+        inset: 0;
+        background: rgb(31 41 51 / 26%);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 160ms ease;
+        z-index: 15;
+      }
+
+      .overlay.open {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      .modal {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        width: min(760px, 92vw);
+        max-height: 82vh;
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 20px 54px rgb(31 41 51 / 22%);
+        transform: translate(-50%, -48%) scale(0.98);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 160ms ease, transform 160ms ease;
+        z-index: 21;
+        overflow: hidden;
+      }
+
+      .modal.open {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translate(-50%, -50%) scale(1);
+      }
+
+      .modal-body {
+        padding: 18px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+        overflow: auto;
+      }
+
+      .upload-box {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 14px;
+        background: #fbfcfd;
+      }
+
+      .upload-title {
+        font-weight: 750;
+        margin-bottom: 12px;
+      }
+
+      .file-chip {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #fff;
+        padding: 10px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .close {
+        width: 34px;
+        height: 34px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #fff;
+        cursor: pointer;
+      }
+
+      @media (max-width: 900px) {
+        .topbar {
+          height: auto;
+          align-items: stretch;
+          flex-direction: column;
+          padding: 12px;
+        }
+
+        .topbar-left,
+        .topbar-right {
+          flex-wrap: wrap;
+        }
+
+        .main {
+          grid-template-columns: 1fr;
+        }
+
+        .sidebar {
+          border-right: 0;
+          border-bottom: 1px solid var(--line);
+          max-height: 260px;
+        }
+
+        .modal-body {
+          grid-template-columns: 1fr;
+        }
+
+        .minimap {
+          display: none;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="topbar-left">
+          <div class="title">涉诈资金审计</div>
+          <select class="select" aria-label="选择案件">
+            <option>案件 37</option>
+          </select>
+          <button class="btn" id="openAccount">账号列表</button>
+          <button class="btn btn-primary" id="openResult">审计结果</button>
+          <button class="btn">流水下载</button>
+        </div>
+        <div class="topbar-right">
+          <button class="btn">缩放</button>
+          <button class="btn">移动</button>
+          <input class="search" value="" placeholder="节点名称" />
+          <button class="btn">导出图片</button>
+          <button class="btn">打印</button>
+        </div>
+      </header>
+
+      <main class="main">
+        <aside class="sidebar">
+          <section class="section">
+            <h2 class="section-title">案件概况</h2>
+            <div class="metric-grid">
+              <div class="metric">
+                <div class="metric-value">8</div>
+                <div class="metric-label">交易文件</div>
+              </div>
+              <div class="metric">
+                <div class="metric-value">703</div>
+                <div class="metric-label">流水笔数</div>
+              </div>
+              <div class="metric">
+                <div class="metric-value">238</div>
+                <div class="metric-label">账户</div>
+              </div>
+              <div class="metric">
+                <div class="metric-value">3</div>
+                <div class="metric-label">嫌疑人</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <h2 class="section-title">被害人账号</h2>
+            <div class="account-list">
+              <div class="account-row">
+                <div class="account-name">张某</div>
+                <div class="account-no">6222 **** 8190</div>
+              </div>
+              <div class="account-row">
+                <div class="account-name">李某</div>
+                <div class="account-no">支付宝 13****2471</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <h2 class="section-title">嫌疑人账号</h2>
+            <div class="account-list">
+              <div class="account-row">
+                <div class="account-name">王某</div>
+                <div class="account-no">6217 **** 4308</div>
+              </div>
+              <div class="account-row">
+                <div class="account-name">赵某</div>
+                <div class="account-no">微信 18****6052</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="section">
+            <h2 class="section-title">图例</h2>
+            <div class="legend">
+              <div class="legend-item"><span class="dot"></span>被害人入账线索</div>
+              <div class="legend-item"><span class="dot dot-warn"></span>中转账户</div>
+              <div class="legend-item"><span class="dot dot-risk"></span>嫌疑人出账线索</div>
+            </div>
+          </section>
+        </aside>
+
+        <section class="workspace">
+          <div class="toolbar">
+            <div>
+              <strong>审计流向图</strong>
+              <span class="file-sub">按交易文件分组展示，节点从左到右表示资金方向</span>
+            </div>
+            <div class="topbar-right">
+              <span class="tag">已生成</span>
+              <button class="btn btn-primary">重新审计</button>
+            </div>
+          </div>
+
+          <div class="canvas-wrap">
+            <div class="canvas">
+              <div class="file-band" style="height: 286px">
+                <div class="file-head">
+                  <div class="file-title">文件 1795</div>
+                  <div class="file-sub">216 笔流水</div>
+                  <span class="tag">命中 3 笔</span>
+                </div>
+                <svg class="edge-layer" viewBox="0 0 1204 286" preserveAspectRatio="none">
+                  <defs>
+                    <marker id="arrow-risk" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                      <path d="M0,0 L0,6 L9,3 z" fill="#b7412e"></path>
+                    </marker>
+                    <marker id="arrow-main" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+                      <path d="M0,0 L0,6 L9,3 z" fill="#1d7f75"></path>
+                    </marker>
+                  </defs>
+                  <path d="M246,132 C335,132 350,92 438,92" fill="none" stroke="#1d7f75" stroke-width="2" marker-end="url(#arrow-main)"></path>
+                  <path d="M656,92 C745,92 760,132 848,132" fill="none" stroke="#b7412e" stroke-width="2.2" marker-end="url(#arrow-risk)"></path>
+                  <path d="M656,92 C750,92 762,212 848,212" fill="none" stroke="#a96f13" stroke-width="1.8" stroke-dasharray="6 5" marker-end="url(#arrow-risk)"></path>
+                </svg>
+                <div class="node node-victim" style="left: 28px; top: 98px">
+                  <div class="node-name">张某</div>
+                  <div class="node-card">6222 **** 8190</div>
+                  <div class="node-type">被害人</div>
+                </div>
+                <div class="node node-middle" style="left: 438px; top: 58px">
+                  <div class="node-name">刘某中转账户</div>
+                  <div class="node-card">6214 **** 7066</div>
+                  <div class="node-type">中转</div>
+                </div>
+                <div class="node node-suspect" style="left: 848px; top: 98px">
+                  <div class="node-name">王某</div>
+                  <div class="node-card">6217 **** 4308</div>
+                  <div class="node-type">嫌疑人</div>
+                </div>
+                <div class="node node-suspect" style="left: 848px; top: 184px">
+                  <div class="node-name">赵某</div>
+                  <div class="node-card">微信 18****6052</div>
+                  <div class="node-type">嫌疑人</div>
+                </div>
+                <div class="edge-label" style="left: 295px; top: 106px">
+                  进账:<strong>500.00</strong><br />交易ID: 10021
+                </div>
+                <div class="edge-label" style="left: 700px; top: 106px">
+                  出账:<strong>420.00</strong><br />最低可确认 180.00<br />关联ID: 10021
+                </div>
+              </div>
+
+              <div class="file-band" style="height: 286px">
+                <div class="file-head">
+                  <div class="file-title">文件 1796</div>
+                  <div class="file-sub">182 笔流水</div>
+                  <span class="tag">命中 2 笔</span>
+                </div>
+                <svg class="edge-layer" viewBox="0 0 1204 286" preserveAspectRatio="none">
+                  <path d="M246,142 C350,142 350,142 438,142" fill="none" stroke="#1d7f75" stroke-width="2" marker-end="url(#arrow-main)"></path>
+                  <path d="M656,142 C760,142 760,142 848,142" fill="none" stroke="#b7412e" stroke-width="2.2" marker-end="url(#arrow-risk)"></path>
+                </svg>
+                <div class="node node-victim" style="left: 28px; top: 108px">
+                  <div class="node-name">李某</div>
+                  <div class="node-card">支付宝 13****2471</div>
+                  <div class="node-type">被害人</div>
+                </div>
+                <div class="node node-middle" style="left: 438px; top: 108px">
+                  <div class="node-name">周某账户</div>
+                  <div class="node-card">财付通 20****9188</div>
+                  <div class="node-type">中转</div>
+                </div>
+                <div class="node node-suspect" style="left: 848px; top: 108px">
+                  <div class="node-name">王某</div>
+                  <div class="node-card">6217 **** 4308</div>
+                  <div class="node-type">嫌疑人</div>
+                </div>
+                <div class="edge-label" style="left: 294px; top: 114px">
+                  进账:<strong>800.00</strong><br />交易ID: 10104
+                </div>
+                <div class="edge-label" style="left: 704px; top: 114px">
+                  出账:<strong>760.00</strong><br />最低可确认 280.00<br />关联ID: 10104
+                </div>
+              </div>
+
+              <div class="file-band" style="height: 286px">
+                <div class="file-head">
+                  <div class="file-title">文件 1800</div>
+                  <div class="file-sub">64 笔流水</div>
+                  <span class="tag">命中 2 笔</span>
+                </div>
+                <svg class="edge-layer" viewBox="0 0 1204 286" preserveAspectRatio="none">
+                  <path d="M246,142 C350,142 350,142 438,142" fill="none" stroke="#1d7f75" stroke-width="2" marker-end="url(#arrow-main)"></path>
+                  <path d="M656,142 C760,142 760,142 848,142" fill="none" stroke="#b7412e" stroke-width="2.2" marker-end="url(#arrow-risk)"></path>
+                </svg>
+                <div class="node node-victim" style="left: 28px; top: 108px">
+                  <div class="node-name">张某</div>
+                  <div class="node-card">6222 **** 8190</div>
+                  <div class="node-type">被害人</div>
+                </div>
+                <div class="node node-middle" style="left: 438px; top: 108px">
+                  <div class="node-name">刘某中转账户</div>
+                  <div class="node-card">6214 **** 7066</div>
+                  <div class="node-type">中转</div>
+                </div>
+                <div class="node node-suspect" style="left: 848px; top: 108px">
+                  <div class="node-name">赵某</div>
+                  <div class="node-card">微信 18****6052</div>
+                  <div class="node-type">嫌疑人</div>
+                </div>
+                <div class="edge-label" style="left: 294px; top: 114px">
+                  进账:<strong>500.00</strong><br />交易ID: 10218
+                </div>
+                <div class="edge-label" style="left: 704px; top: 114px">
+                  出账:<strong>300.00</strong><br />最低可确认 120.00<br />关联ID: 10218
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="minimap">
+      <div class="mini-title">小地图</div>
+      <div class="mini-line"></div>
+      <div class="mini-line"></div>
+      <div class="mini-line"></div>
+      <div class="mini-line"></div>
+    </div>
+
+    <div class="overlay" id="overlay"></div>
+
+    <aside class="drawer" id="resultDrawer" aria-label="审计结果">
+      <div class="drawer-head">
+        <div class="drawer-title">审计结果</div>
+        <button class="close" data-close>×</button>
+      </div>
+      <div class="drawer-body">
+        <table>
+          <thead>
+            <tr>
+              <th>文件ID</th>
+              <th>嫌疑人</th>
+              <th>合计涉诈金额</th>
+              <th>审计认定最低涉诈金额</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1795</td>
+              <td>王某、赵某</td>
+              <td class="amount risk-text">920.00 元人民币</td>
+              <td class="amount">180.00 元人民币</td>
+            </tr>
+            <tr>
+              <td>1796</td>
+              <td>王某</td>
+              <td class="amount risk-text">760.00 元人民币</td>
+              <td class="amount">280.00 元人民币</td>
+            </tr>
+            <tr>
+              <td>1800</td>
+              <td>赵某</td>
+              <td class="amount risk-text">300.00 元人民币</td>
+              <td class="amount">120.00 元人民币</td>
+            </tr>
+            <tr>
+              <td>1794</td>
+              <td>--</td>
+              <td class="amount">0.00 元人民币</td>
+              <td class="amount">0.00 元人民币</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </aside>
+
+    <section class="modal" id="accountModal" aria-label="账号列表">
+      <div class="modal-head">
+        <div class="modal-title">账号列表</div>
+        <button class="close" data-close>×</button>
+      </div>
+      <div class="modal-body">
+        <div class="upload-box">
+          <div class="upload-title">被害人账号列表</div>
+          <div class="file-chip">
+            <span>victims.xlsx</span>
+            <span>2 条</span>
+          </div>
+          <div class="account-list" style="margin-top: 12px">
+            <div class="account-row">
+              <div class="account-name">张某</div>
+              <div class="account-no">6222 **** 8190</div>
+            </div>
+            <div class="account-row">
+              <div class="account-name">李某</div>
+              <div class="account-no">支付宝 13****2471</div>
+            </div>
+          </div>
+        </div>
+        <div class="upload-box">
+          <div class="upload-title">嫌疑人账号列表</div>
+          <div class="file-chip">
+            <span>suspects.xlsx</span>
+            <span>2 条</span>
+          </div>
+          <div class="account-list" style="margin-top: 12px">
+            <div class="account-row">
+              <div class="account-name">王某</div>
+              <div class="account-no">6217 **** 4308</div>
+            </div>
+            <div class="account-row">
+              <div class="account-name">赵某</div>
+              <div class="account-no">微信 18****6052</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <script>
+      const overlay = document.getElementById("overlay");
+      const drawer = document.getElementById("resultDrawer");
+      const modal = document.getElementById("accountModal");
+
+      function closeAll() {
+        overlay.classList.remove("open");
+        drawer.classList.remove("open");
+        modal.classList.remove("open");
+      }
+
+      document.getElementById("openResult").addEventListener("click", () => {
+        overlay.classList.add("open");
+        drawer.classList.add("open");
+      });
+
+      document.getElementById("openAccount").addEventListener("click", () => {
+        overlay.classList.add("open");
+        modal.classList.add("open");
+      });
+
+      overlay.addEventListener("click", closeAll);
+      document.querySelectorAll("[data-close]").forEach((el) => {
+        el.addEventListener("click", closeAll);
+      });
+    </script>
+  </body>
+</html>

@@ -13,9 +13,9 @@ describe('preview layout helpers', () => {
   });
 
   it('prefers a large preview width but keeps it bounded', () => {
-    expect(getPreferredDetailPanelWidth(1280)).toBe(922);
+    expect(getPreferredDetailPanelWidth(1280)).toBe(720);
     expect(getPreferredDetailPanelWidth(900)).toBe(720);
-    expect(getPreferredDetailPanelWidth(2200)).toBe(1584);
-    expect(getPreferredDetailPanelWidth(2400)).toBe(DETAIL_PANEL_MAX_WIDTH);
+    expect(getPreferredDetailPanelWidth(2200)).toBe(1144);
+    expect(getPreferredDetailPanelWidth(3200)).toBe(DETAIL_PANEL_MAX_WIDTH);
   });
 });

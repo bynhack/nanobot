@@ -257,8 +257,14 @@ class PyMySQLCaseGraphQueryClient:
         order_by_sql = "trade_amount DESC, trade_count DESC"
         if self._drill_sort_type(query_filters) == 2:
             order_by_sql = "trade_count DESC, trade_amount DESC"
+        limit_sql = "" if self._is_unbounded_relation_query(query_filters) else "LIMIT %s"
+        params = seed_params + filter_params
+        if limit_sql:
+            params += (self._query_limit(query_filters),)
+        trade_info_cte = self._trade_info_cte(parsed_case_id)
         rows = self._query(
             f"""
+            {trade_info_cte}
             SELECT
                 payer_account_id,
                 payer_pay_account,
@@ -269,8 +275,9 @@ class PyMySQLCaseGraphQueryClient:
                 COUNT(*) AS trade_count,
                 SUM(trade_amount) AS trade_amount,
                 MIN(trade_time) AS start_time,
-                MAX(trade_time) AS end_time
-            FROM ga_trade_{parsed_case_id}
+                MAX(trade_time) AS end_time,
+                GROUP_CONCAT(id ORDER BY trade_time DESC, id DESC SEPARATOR ',') AS trade_ids
+            FROM trade_info
             WHERE {" AND ".join(seed_clauses)}
               {"".join(f" AND {clause}" for clause in filter_sql)}
             GROUP BY
@@ -279,11 +286,13 @@ class PyMySQLCaseGraphQueryClient:
                 payee_account_id,
                 payee_pay_account
             ORDER BY {order_by_sql}
-            LIMIT %s
+            {limit_sql}
             """,
-            seed_params + filter_params + (self._query_limit(query_filters),),
+            params,
         )
-        return self._relation_graph_from_one_hop_rows(rows, seed_accounts=seed_accounts)
+        graph = self._relation_graph_from_one_hop_rows(rows, seed_accounts=seed_accounts)
+        graph["tradeFacts"] = self._relation_trade_facts_for_rows(parsed_case_id, rows)
+        return graph
 
     def query_relation_between_accounts(
         self,
@@ -297,9 +306,13 @@ class PyMySQLCaseGraphQueryClient:
         if len(account_ids) < 2:
             return {"nodes": [], "edges": []}
         placeholders = ", ".join(["%s"] * len(account_ids))
-        filter_sql, filter_params = self._trade_filter_clauses(filters or {})
+        query_filters = filters or {}
+        filter_sql, filter_params = self._trade_filter_clauses(query_filters)
+        limit_sql = "" if self._is_unbounded_relation_query(query_filters) else "LIMIT 500"
+        trade_info_cte = self._trade_info_cte(parsed_case_id)
         rows = self._query(
             f"""
+            {trade_info_cte}
             SELECT
                 payer_account_id,
                 payer_pay_account,
@@ -310,8 +323,9 @@ class PyMySQLCaseGraphQueryClient:
                 COUNT(*) AS trade_count,
                 SUM(trade_amount) AS trade_amount,
                 MIN(trade_time) AS start_time,
-                MAX(trade_time) AS end_time
-            FROM ga_trade_{parsed_case_id}
+                MAX(trade_time) AS end_time,
+                GROUP_CONCAT(id ORDER BY trade_time DESC, id DESC SEPARATOR ',') AS trade_ids
+            FROM trade_info
             WHERE payer_account_id IN ({placeholders})
               AND payee_account_id IN ({placeholders})
               {"".join(f" AND {clause}" for clause in filter_sql)}
@@ -321,11 +335,86 @@ class PyMySQLCaseGraphQueryClient:
                 payee_account_id,
                 payee_pay_account
             ORDER BY trade_amount DESC, trade_count DESC
-            LIMIT 500
+            {limit_sql}
             """,
             tuple(account_ids + account_ids) + filter_params,
         )
-        return self._relation_graph_from_account_rows(rows, scope="graph_internal")
+        graph = self._relation_graph_from_account_rows(rows, scope="graph_internal")
+        graph["tradeFacts"] = self._relation_trade_facts_for_rows(parsed_case_id, rows)
+        return graph
+
+    def query_relation_global_candidates(
+        self,
+        *,
+        case_id: int | str,
+        filters: QueryPayload | None = None,
+    ) -> QueryResult:
+        parsed_case_id = self._parse_case_id(case_id)
+        query_filters = filters or {}
+        filter_sql, filter_params = self._trade_filter_clauses(query_filters)
+        filter_clause = "".join(f" AND {clause}" for clause in filter_sql)
+        trade_info_cte = self._trade_info_cte(parsed_case_id)
+        rows = self._query(
+            f"""
+            {trade_info_cte}
+            SELECT
+                account_id,
+                pay_account,
+                MAX(NULLIF(account_name, '')) AS account_name,
+                SUM(received_amount) AS received_amount,
+                SUM(received_count) AS received_count,
+                SUM(paid_amount) AS paid_amount,
+                SUM(paid_count) AS paid_count,
+                MIN(min_amount) AS min_amount,
+                MAX(max_amount) AS max_amount,
+                MIN(start_time) AS start_time,
+                MAX(end_time) AS end_time,
+                GROUP_CONCAT(trade_ids ORDER BY end_time DESC SEPARATOR ',') AS trade_ids
+            FROM (
+                SELECT
+                    payer_account_id AS account_id,
+                    payer_pay_account AS pay_account,
+                    MAX(NULLIF(payer_account_name, '')) AS account_name,
+                    0 AS received_amount,
+                    0 AS received_count,
+                    SUM(trade_amount) AS paid_amount,
+                    COUNT(*) AS paid_count,
+                    MIN(trade_amount) AS min_amount,
+                    MAX(trade_amount) AS max_amount,
+                    MIN(trade_time) AS start_time,
+                    MAX(trade_time) AS end_time,
+                    GROUP_CONCAT(id ORDER BY trade_time DESC, id DESC SEPARATOR ',') AS trade_ids
+                FROM trade_info
+                WHERE (payer_account_id IS NOT NULL OR COALESCE(payer_pay_account, '') <> '')
+                  {filter_clause}
+                GROUP BY payer_account_id, payer_pay_account
+                UNION ALL
+                SELECT
+                    payee_account_id AS account_id,
+                    payee_pay_account AS pay_account,
+                    MAX(NULLIF(payee_account_name, '')) AS account_name,
+                    SUM(trade_amount) AS received_amount,
+                    COUNT(*) AS received_count,
+                    0 AS paid_amount,
+                    0 AS paid_count,
+                    MIN(trade_amount) AS min_amount,
+                    MAX(trade_amount) AS max_amount,
+                    MIN(trade_time) AS start_time,
+                    MAX(trade_time) AS end_time,
+                    GROUP_CONCAT(id ORDER BY trade_time DESC, id DESC SEPARATOR ',') AS trade_ids
+                FROM trade_info
+                WHERE (payee_account_id IS NOT NULL OR COALESCE(payee_pay_account, '') <> '')
+                  {filter_clause}
+                GROUP BY payee_account_id, payee_pay_account
+            ) AS party_flows
+            GROUP BY account_id, pay_account
+            ORDER BY
+                (SUM(received_amount) + SUM(paid_amount)) DESC,
+                (SUM(received_count) + SUM(paid_count)) DESC
+            """,
+            filter_params + filter_params,
+        )
+        return {"items": self._relation_global_candidate_items(rows)}
 
     def query_graph(self, payload: QueryPayload) -> QueryResult:
         case_id = self._parse_case_id(payload.get("caseId"))
@@ -1094,6 +1183,7 @@ class PyMySQLCaseGraphQueryClient:
         )
         try:
             with connection.cursor() as cursor:
+                cursor.execute("SET SESSION group_concat_max_len = 16777216")
                 cursor.execute(sql, params)
                 return list(cursor.fetchall())
         finally:
@@ -1349,6 +1439,7 @@ class PyMySQLCaseGraphQueryClient:
                     "tradeCount": int(row.get("trade_count") or 0),
                     "startTime": _json_safe_scalar(row.get("start_time") or row.get("startDate")),
                     "endTime": _json_safe_scalar(row.get("end_time") or row.get("endDate")),
+                    "tradeIds": cls._relation_trade_ids(row),
                 }
             )
         return {"nodes": list(nodes_by_id.values()), "edges": edges}
@@ -1448,9 +1539,165 @@ class PyMySQLCaseGraphQueryClient:
                     "tradeCount": int(row.get("trade_count") or 0),
                     "startTime": _json_safe_scalar(row.get("start_time") or row.get("startDate")),
                     "endTime": _json_safe_scalar(row.get("end_time") or row.get("endDate")),
+                    "tradeIds": cls._relation_trade_ids(row),
                 }
             )
         return {"nodes": list(nodes_by_id.values()), "edges": edges}
+
+    @classmethod
+    def _relation_global_candidate_items(cls, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        for row in rows:
+            account_id = str(row.get("account_id") or "").strip()
+            trade_card = str(row.get("pay_account") or "").strip()
+            if not account_id and not trade_card:
+                continue
+            node = cls._relation_party_node(
+                {
+                    "payer_account_id": account_id,
+                    "payer_pay_account": trade_card,
+                    "payer_account_name": row.get("account_name") or "",
+                },
+                "payer",
+            )
+            received_amount = float(row.get("received_amount") or 0)
+            paid_amount = float(row.get("paid_amount") or 0)
+            received_count = int(row.get("received_count") or 0)
+            paid_count = int(row.get("paid_count") or 0)
+            items.append(
+                {
+                    "nodeId": node["id"],
+                    "label": node["label"],
+                    "accountText": "、".join(
+                        value for value in [account_id, trade_card] if value
+                    ),
+                    "accounts": node["accounts"],
+                    "receivedAmount": received_amount,
+                    "receivedCount": received_count,
+                    "paidAmount": paid_amount,
+                    "paidCount": paid_count,
+                    "totalAmount": received_amount + paid_amount,
+                    "netAmount": received_amount - paid_amount,
+                    "minAmount": None if row.get("min_amount") is None else float(row.get("min_amount") or 0),
+                    "maxAmount": None if row.get("max_amount") is None else float(row.get("max_amount") or 0),
+                    "startTime": _json_safe_scalar(row.get("start_time")),
+                    "endTime": _json_safe_scalar(row.get("end_time")),
+                    "tradeIds": cls._relation_trade_ids(row),
+                }
+            )
+        return items
+
+    @staticmethod
+    def _relation_trade_ids(row: dict[str, Any]) -> list[str]:
+        raw_trade_ids = row.get("trade_ids")
+        if raw_trade_ids is None:
+            return []
+        return [
+            item
+            for item in (str(raw).strip() for raw in str(raw_trade_ids).split(","))
+            if item
+        ]
+
+    def _relation_trade_facts_for_rows(
+        self,
+        case_id: int,
+        rows: list[dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        trade_ids = list(
+            dict.fromkeys(
+                trade_id
+                for row in rows
+                for trade_id in self._relation_trade_ids(row)
+            )
+        )
+        if not trade_ids:
+            return {}
+
+        facts: dict[str, dict[str, Any]] = {}
+        for index in range(0, len(trade_ids), 500):
+            chunk = trade_ids[index:index + 500]
+            placeholders = ", ".join(["%s"] * len(chunk))
+            trade_info_cte = self._trade_info_cte(case_id)
+            detail_rows = self._query(
+                f"""
+                {trade_info_cte}
+                SELECT
+                    id,
+                    serial_number,
+                    trade_amount,
+                    trade_time,
+                    trade_abstract,
+                    remark,
+                    jd_flag,
+                    trade_type,
+                    trade_network_name,
+                    trade_network_code,
+                    third_pay_type,
+                    third_pay_type_code,
+                    ip_addr,
+                    mac_addr,
+                    terminal_no,
+                    pos_no,
+                    trade_device_type,
+                    trade_device_no,
+                    order_no,
+                    third_order,
+                    outer_serial_number,
+                    payee_marchant_name,
+                    payee_marchant_code,
+                    payee_organ_info,
+                    payer_bank_name,
+                    payee_bank_name,
+                    payer_account_id,
+                    payer_account_name,
+                    payer_pay_account,
+                    payee_account_id,
+                    payee_account_name,
+                    payee_pay_account
+                FROM trade_info
+                WHERE id IN ({placeholders})
+                """,
+                tuple(chunk),
+            )
+            for row in detail_rows:
+                trade_id = str(row.get("id") or "").strip()
+                if not trade_id:
+                    continue
+                facts[trade_id] = {
+                    "tradeId": trade_id,
+                    "serialNumber": row.get("serial_number"),
+                    "tradeAmount": float(row.get("trade_amount") or 0),
+                    "tradeTime": _json_safe_scalar(row.get("trade_time")),
+                    "tradeAbstract": row.get("trade_abstract") or "",
+                    "remark": row.get("remark") or "",
+                    "debitCreditFlag": row.get("jd_flag") or "",
+                    "tradeType": row.get("trade_type") or "",
+                    "tradeChannel": row.get("trade_network_name") or row.get("third_pay_type") or "",
+                    "tradeChannelCode": row.get("trade_network_code") or row.get("third_pay_type_code") or "",
+                    "thirdPayType": row.get("third_pay_type") or "",
+                    "thirdPayTypeCode": row.get("third_pay_type_code") or "",
+                    "ipAddress": row.get("ip_addr") or "",
+                    "macAddress": row.get("mac_addr") or "",
+                    "terminalNo": row.get("terminal_no") or "",
+                    "posNo": row.get("pos_no") or "",
+                    "deviceType": row.get("trade_device_type") or "",
+                    "deviceNo": row.get("trade_device_no") or "",
+                    "orderNo": row.get("order_no") or "",
+                    "thirdOrderNo": row.get("third_order") or "",
+                    "outerSerialNumber": row.get("outer_serial_number") or "",
+                    "merchantName": row.get("payee_marchant_name") or "",
+                    "merchantCode": row.get("payee_marchant_code") or "",
+                    "counterpartyInstitution": row.get("payee_organ_info") or "",
+                    "payerBankName": row.get("payer_bank_name") or "",
+                    "payeeBankName": row.get("payee_bank_name") or "",
+                    "payerAccountId": row.get("payer_account_id"),
+                    "payerAccountName": row.get("payer_account_name") or "",
+                    "payerTradeCard": row.get("payer_pay_account") or "",
+                    "payeeAccountId": row.get("payee_account_id"),
+                    "payeeAccountName": row.get("payee_account_name") or "",
+                    "payeeTradeCard": row.get("payee_pay_account") or "",
+                }
+        return facts
 
     @staticmethod
     def _relation_account_ids(accounts: list[dict[str, Any]]) -> list[int]:
@@ -1851,8 +2098,25 @@ class PyMySQLCaseGraphQueryClient:
                     serial_number,
                     trade_amount,
                     trade_time,
+                    trade_abstract,
+                    remark,
+                    trade_type,
+                    trade_network_name,
+                    trade_network_code,
+                    third_pay_type,
+                    third_pay_type_code,
                     ip_addr,
                     mac_addr,
+                    terminal_no,
+                    pos_no,
+                    trade_device_type,
+                    trade_device_no,
+                    order_no,
+                    third_order,
+                    outer_serial_number,
+                    payee_marchant_name,
+                    payee_marchant_code,
+                    payee_organ_info,
                     jd_flag,
                     payee_suspect_id,
                     payee_id_number,
@@ -1887,8 +2151,25 @@ class PyMySQLCaseGraphQueryClient:
                         gt.serial_number,
                         gt.trade_amount,
                         gt.trade_time,
+                        gt.trade_abstract,
+                        gt.remark,
+                        gt.trade_type,
+                        gt.trade_network_name,
+                        gt.trade_network_code,
+                        gt.third_pay_type,
+                        gt.third_pay_type_code,
                         gt.ip_addr,
                         gt.mac_addr,
+                        gt.terminal_no,
+                        gt.pos_no,
+                        gt.trade_device_type,
+                        gt.trade_device_no,
+                        gt.order_no,
+                        gt.third_order,
+                        gt.outer_serial_number,
+                        gt.payee_marchant_name,
+                        gt.payee_marchant_code,
+                        gt.payee_organ_info,
                         gt.jd_flag,
                         payee.suspect_id AS payee_suspect_id,
                         gt.payee_id_number,
@@ -2164,6 +2445,10 @@ class PyMySQLCaseGraphQueryClient:
             return max(1, min(int(raw), 1000))
         except (TypeError, ValueError):
             return 200
+
+    @staticmethod
+    def _is_unbounded_relation_query(payload: QueryPayload) -> bool:
+        return payload.get("_relationUnbounded") is True
 
     @staticmethod
     def _trade_filter_clauses(payload: QueryPayload) -> tuple[list[str], tuple[Any, ...]]:

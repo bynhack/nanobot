@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildEdgeDetailSummaryForTest, getPaginatedEdgeDetail, resolveEdgeDetailParty } from './edge-detail-drawer';
+import {
+  buildEdgeDetailSummaryForTest,
+  filterEdgeDetailItems,
+  filterEdgeDetailItemsForGraphEdge,
+  resolveEdgeDetailParty,
+} from './edge-detail-drawer';
 import type { CaseGraphTargetDetailItem } from './types';
 
 const detailItem: CaseGraphTargetDetailItem = {
@@ -29,25 +34,57 @@ describe('edge detail display names', () => {
     });
   });
 
-  it('paginates transaction detail rows', () => {
+  it('filters transaction detail rows by amount, time, and keyword', () => {
     const rows = Array.from({ length: 18 }, (_, index) => ({
+      ...detailItem,
+      tradeId: `t-${index + 1}`,
+      tradeAmount: index + 1,
+      tradeTime: `2026-05-${String(index + 1).padStart(2, '0')} 10:00:00`,
+      tradeAbstract: index === 14 ? '重点转账' : '',
+    }));
+
+    expect(filterEdgeDetailItems(rows, {
+      keyword: '',
+      minAmount: '11',
+      maxAmount: '14',
+      startTime: '2026-05-12',
+      endTime: '2026-05-14',
+    }).map((item) => item.tradeId)).toEqual([
+      't-12',
+      't-13',
+      't-14',
+    ]);
+    expect(filterEdgeDetailItems(rows, {
+      keyword: '重点',
+      minAmount: '',
+      maxAmount: '',
+      startTime: '',
+      endTime: '',
+    }).map((item) => item.tradeId)).toEqual(['t-15']);
+  });
+
+  it('keeps edge detail aligned with the current graph edge trade ids and keeps excluded rows visible', () => {
+    const rows = Array.from({ length: 4 }, (_, index) => ({
       ...detailItem,
       tradeId: `t-${index + 1}`,
       tradeAmount: index + 1,
     }));
 
-    expect(getPaginatedEdgeDetail(rows, 1, 10).items).toHaveLength(10);
-    expect(getPaginatedEdgeDetail(rows, 2, 10).items.map((item) => item.tradeId)).toEqual([
-      't-11',
-      't-12',
-      't-13',
-      't-14',
-      't-15',
-      't-16',
-      't-17',
-      't-18',
+    expect(filterEdgeDetailItemsForGraphEdge(rows, ['t-1', 't-3'], ['t-2']).map((item) => item.tradeId)).toEqual([
+      't-1',
+      't-2',
+      't-3',
     ]);
-    expect(getPaginatedEdgeDetail(rows, 3, 10).page).toBe(2);
+    expect(filterEdgeDetailItemsForGraphEdge(rows, ['t-1', 't-3'], ['t-3']).map((item) => item.tradeId)).toEqual([
+      't-1',
+      't-3',
+    ]);
+    expect(filterEdgeDetailItemsForGraphEdge(rows, [], ['t-2']).map((item) => item.tradeId)).toEqual([
+      't-1',
+      't-2',
+      't-3',
+      't-4',
+    ]);
   });
 
   it('summarizes all accounts involved when one side is an aggregated node', () => {

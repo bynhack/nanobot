@@ -2,18 +2,20 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 
 import { AuthTokenModal } from './auth-token-modal';
 import { readAppearanceMode, readUiTheme } from './app-helpers';
-import { bootstrap, DETAIL_PANEL_WIDTH_KEY, useAppSelector } from './app-state';
+import { bootstrap, DETAIL_PANEL_WIDTH_KEY, appStore, useAppSelector } from './app-state';
+import { loadSessionWorkspace } from './api';
 import { ChatWorkspace } from './components/chat/chat-workspace';
+import { ConversationContentPane } from './components/chat/conversation-content-pane';
 import { DetailPreviewContext, type ToolDetailPayload } from './components/chat/detail-preview-context';
 import { WorkspaceModeSwitch } from './components/workspace-mode-switch';
 import { DEFAULT_UI_THEME } from './components/settings/types';
 import { CaseGraphWorkbench } from './case-graph/workbench';
-import { DetailPreviewPane, type DetailView } from './detail-preview-pane';
+import type { DetailView } from './detail-preview-pane';
 import { LoginPage } from './login-page';
 import { SettingsScreen, type AppearanceMode, type UiTheme } from './settings-page';
 import { STORAGE_KEYS } from './store';
 import './styles.css';
-import type { MediaItem } from './types';
+import type { MediaItem, SessionWorkspaceFile } from './types';
 import { useAuthSession } from './use-auth-session';
 import {
   DETAIL_PANEL_MAX_WIDTH,
@@ -44,11 +46,14 @@ export function App() {
   const authToken = useAppSelector((state) => state.authToken);
   const connectionState = useAppSelector((state) => state.connectionState);
   const currentChatId = useAppSelector((state) => state.currentChatId);
+  const workspacePanel = useAppSelector((state) => state.workspacePanel);
+  const workspaceByChat = useAppSelector((state) => state.workspaceByChat);
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [previewSidebarOpen, setPreviewSidebarOpen] = useState(false);
   const [appView, setAppView] = useState<AppView>('chat');
   const [detailView, setDetailView] = useState<DetailView | null>(null);
+  const [contentPanelPinnedOpen, setContentPanelPinnedOpen] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [detailPanelWidth, setDetailPanelWidth] = useState(() => {
     const raw = window.localStorage.getItem(DETAIL_PANEL_WIDTH_KEY);
@@ -62,6 +67,7 @@ export function App() {
   const [uiTheme, setUiTheme] = useState<UiTheme>(() => readUiTheme(DEFAULT_UI_THEME));
 
   const flashTimerRef = useRef<number | null>(null);
+  const workspaceRequestCounterRef = useRef(0);
 
   const showFlash = useCallback((message: string) => {
     setFlashMessage(message);
@@ -86,7 +92,15 @@ export function App() {
     handleLogout,
   } = useAuthSession(authToken);
 
-  const previewOpen = appView === 'chat' && Boolean(detailView);
+  const currentWorkspace = currentChatId ? workspaceByChat[currentChatId] ?? null : null;
+  const panelWorkspace = workspacePanel.chatId ? workspaceByChat[workspacePanel.chatId] ?? null : null;
+  const workspacePanelOpen = appView === 'chat' && workspacePanel.open;
+  const workspaceLoading = Boolean(
+    currentChatId && workspacePanel.loading && workspacePanel.chatId === currentChatId,
+  );
+  const workspaceFileCount = currentWorkspace?.files.length ?? 0;
+  const contentPanelOpen = appView === 'chat' && (contentPanelPinnedOpen || Boolean(detailView) || workspacePanelOpen);
+  const previewOpen = contentPanelOpen;
   const immersivePreview = previewOpen && shouldUseImmersivePreview(viewportWidth);
   const effectiveSidebarCollapsed = immersivePreview ? !previewSidebarOpen : sidebarCollapsed;
   const immersiveSidebarWidth = immersivePreview && previewSidebarOpen ? SIDEBAR_EXPANDED_WIDTH : 0;
@@ -101,9 +115,9 @@ export function App() {
 
   const ensurePreferredDetailWidth = useCallback(() => {
     const preferredWidth = getPreferredDetailPanelWidth(window.innerWidth);
-    setDetailPanelWidth((current) =>
+    setDetailPanelWidth(() =>
       clampDetailWidth(
-        Math.max(current, preferredWidth),
+        preferredWidth,
         window.innerWidth,
         shouldUseImmersivePreview(window.innerWidth),
         false,
@@ -114,14 +128,70 @@ export function App() {
   const openMedia = useCallback((item: MediaItem) => {
     setAppView('chat');
     ensurePreferredDetailWidth();
+    setContentPanelPinnedOpen(true);
     setDetailView({ type: 'media', item });
   }, [ensurePreferredDetailWidth]);
 
   const openTool = useCallback((title: string, payload: ToolDetailPayload) => {
     setAppView('chat');
     ensurePreferredDetailWidth();
+    setContentPanelPinnedOpen(true);
     setDetailView({ type: 'tool', title, payload });
   }, [ensurePreferredDetailWidth]);
+
+  const openWorkspace = useCallback(() => {
+    if (!currentChatId) {
+      return;
+    }
+    setAppView('chat');
+    ensurePreferredDetailWidth();
+    setContentPanelPinnedOpen(true);
+    const chatId = currentChatId;
+    workspaceRequestCounterRef.current += 1;
+    const requestId = workspaceRequestCounterRef.current;
+    appStore.dispatch({ type: 'workspace.open', chatId });
+    appStore.dispatch({ type: 'workspace.loading', chatId, requestId });
+    loadSessionWorkspace(chatId, authToken)
+      .then((workspace) => {
+        appStore.dispatch({ type: 'workspace.loaded', chatId, requestId, workspace });
+      })
+      .catch((error: unknown) => {
+        appStore.dispatch({
+          type: 'workspace.failed',
+          chatId,
+          requestId,
+          error: error instanceof Error ? error.message : '加载工作空间失败',
+        });
+      });
+  }, [authToken, currentChatId, ensurePreferredDetailWidth]);
+
+  const closeWorkspacePanel = useCallback(() => {
+    appStore.dispatch({ type: 'workspace.close' });
+  }, []);
+
+  const openWorkspaceFile = useCallback((file: SessionWorkspaceFile) => {
+    openMedia({ url: file.url, name: file.name, mime: file.mime });
+  }, [openMedia]);
+
+  const closeContentDetail = useCallback(() => {
+    setDetailView(null);
+  }, []);
+
+  const closeContentPanel = useCallback(() => {
+    setContentPanelPinnedOpen(false);
+    setDetailView(null);
+    appStore.dispatch({ type: 'workspace.close' });
+  }, []);
+
+  const toggleContentPanel = useCallback(() => {
+    if (contentPanelOpen) {
+      closeContentPanel();
+      return;
+    }
+    setAppView('chat');
+    ensurePreferredDetailWidth();
+    setContentPanelPinnedOpen(true);
+  }, [closeContentPanel, contentPanelOpen, ensurePreferredDetailWidth]);
 
   const previewActions = useMemo(
     () => ({ openMedia, openTool }),
@@ -164,6 +234,7 @@ export function App() {
 
   useEffect(() => {
     setDetailView(null);
+    setContentPanelPinnedOpen(false);
   }, [currentChatId]);
 
   useEffect(() => {
@@ -174,6 +245,7 @@ export function App() {
     if (appView !== 'chat') {
       setPreviewSidebarOpen(false);
       setDetailView(null);
+      appStore.dispatch({ type: 'workspace.close' });
     }
   }, [appView]);
 
@@ -282,15 +354,30 @@ export function App() {
               showFlash={showFlash}
               previewActions={previewActions}
               onOpenMedia={openMedia}
+              showWorkspacePanel={false}
+              workspaceFileCount={workspaceFileCount}
+              workspaceLoading={workspaceLoading}
+              onOpenWorkspace={openWorkspace}
+              contentPanelOpen={contentPanelOpen}
+              onToggleContentPanel={toggleContentPanel}
             />
 
-            <DetailPreviewPane
+            <ConversationContentPane
               detailView={detailView}
               immersive={immersivePreview}
-              open={Boolean(detailView)}
+              open={contentPanelOpen}
               width={detailPanelWidth}
               token={authToken}
-              onClose={() => setDetailView(null)}
+              workspaceAvailable={Boolean(currentChatId)}
+              workspaceOpen={workspacePanelOpen}
+              workspaceLoading={workspaceLoading}
+              workspaceError={workspacePanel.error}
+              workspace={panelWorkspace}
+              workspaceFileCount={workspaceFileCount}
+              onOpenWorkspace={openWorkspace}
+              onCloseWorkspace={closeWorkspacePanel}
+              onOpenWorkspaceFile={openWorkspaceFile}
+              onCloseDetail={closeContentDetail}
               onResizeStart={() => setResizingDetailPanel(true)}
             />
           </>

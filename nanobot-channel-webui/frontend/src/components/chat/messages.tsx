@@ -14,20 +14,13 @@ import {
 } from '@assistant-ui/react';
 import { StreamdownTextPrimitive } from '@assistant-ui/react-streamdown';
 import { cjk } from '@streamdown/cjk';
-import { useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react';
+import { useContext, useEffect, useMemo, type PropsWithChildren } from 'react';
 
 import { showToolResult, toolStatusText } from '../../app-helpers';
-import {
-  caseGraphActionSummary,
-  caseGraphActionTitle,
-  parseCaseGraphChatActionsFromText,
-  type CaseGraphChatAction,
-} from '../../case-graph/chat-action-protocol';
 import { streamdownZhTranslations } from '../../streamdown-i18n';
 import { File as AssistantUiFile } from '../assistant-ui/file';
 import { Image as AssistantUiImage } from '../assistant-ui/image';
 import { MermaidDiagram } from '../assistant-ui/mermaid-diagram';
-import { CaseGraphActionContext } from './case-graph-action-context';
 import { DetailPreviewContext } from './detail-preview-context';
 import type { MediaItem } from '../../types';
 
@@ -88,7 +81,6 @@ function UserTextPart(_props: TextMessagePartProps) {
 
 function AssistantTextPart(_props: TextMessagePartProps) {
   const streamdownPlugins = useMemo(() => ({ cjk }), []);
-  const { text } = useMessagePartText();
   const componentsByLanguage = useMemo(
     () => ({
       mermaid: {
@@ -108,7 +100,6 @@ function AssistantTextPart(_props: TextMessagePartProps) {
       <MessagePartPrimitive.InProgress>
         <span className="streaming-caret">▊</span>
       </MessagePartPrimitive.InProgress>
-      <CaseGraphActionList text={text} />
     </div>
   );
 }
@@ -216,63 +207,6 @@ function MessageAttachmentChip() {
         </span>
       </button>
     </AttachmentPrimitive.Root>
-  );
-}
-
-function CaseGraphActionCard({ action }: { action: CaseGraphChatAction }) {
-  const actionContext = useContext(CaseGraphActionContext);
-  const [submitted, setSubmitted] = useState(false);
-  const [running, setRunning] = useState(false);
-  const preview = actionContext?.preview(action) ?? {
-    title: caseGraphActionTitle(action),
-    summary: caseGraphActionSummary(action),
-    disabledReason: '当前页面没有可执行的图谱上下文',
-  };
-  const disabled = Boolean(preview.disabledReason || running || submitted);
-
-  return (
-    <div className="case-graph-message-action">
-      <div className="case-graph-message-action-main">
-        <span>图谱操作</span>
-        <strong>{preview.title}</strong>
-        <p>{preview.summary}</p>
-        {preview.disabledReason ? <em>{preview.disabledReason}</em> : null}
-      </div>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => {
-          if (!actionContext || disabled) return;
-          setRunning(true);
-          Promise.resolve(actionContext.execute(action))
-            .then(() => {
-              setSubmitted(true);
-            })
-            .catch(() => undefined)
-            .finally(() => {
-              setRunning(false);
-            });
-        }}
-      >
-        {submitted ? '已提交' : running ? '执行中' : '执行'}
-      </button>
-    </div>
-  );
-}
-
-function CaseGraphActionList({ text }: { text: string }) {
-  const actionContext = useContext(CaseGraphActionContext);
-  const actions = useMemo(() => parseCaseGraphChatActionsFromText(text), [text]);
-
-  if (!actionContext || !actions.length) {
-    return null;
-  }
-  return (
-    <div className="case-graph-message-actions">
-      {actions.map((action, index) => (
-        <CaseGraphActionCard key={`${action.type}:${action.nodeId || action.nodeQuery || index}`} action={action} />
-      ))}
-    </div>
   );
 }
 

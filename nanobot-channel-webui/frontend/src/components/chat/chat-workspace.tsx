@@ -10,7 +10,6 @@ import { useAvailableSkills } from '../../use-available-skills';
 import { useWebsocketSession } from '../../use-websocket-session';
 import { useWebuiRuntime } from '../../use-webui-runtime';
 import { DetailPreviewContext, type DetailActions } from './detail-preview-context';
-import { CaseGraphActionContext, type CaseGraphActionContextValue } from './case-graph-action-context';
 import { ChatSidebar } from './sidebar';
 import { ChatThreadContent } from './thread-content';
 import { WorkspacePanel } from './workspace-panel';
@@ -60,7 +59,6 @@ export type ChatWorkspaceProps = {
   composerTopSlot?: (context: ChatWorkspaceRenderContext) => ReactNode;
   useDefaultSuggestions?: boolean;
   showThreadWelcome?: boolean;
-  caseGraphActions?: CaseGraphActionContextValue | null;
   prepareOutgoingMessage?: (message: AppendMessage, context: { availableSkills: SkillCandidate[] }) => AppendMessage;
 };
 
@@ -97,7 +95,6 @@ export const ChatWorkspace = memo(function ChatWorkspace({
   composerTopSlot,
   useDefaultSuggestions = true,
   showThreadWelcome = true,
-  caseGraphActions = null,
   prepareOutgoingMessage,
 }: ChatWorkspaceProps) {
   const connectionState = useAppSelector((state) => state.connectionState);
@@ -197,40 +194,38 @@ export const ChatWorkspace = memo(function ChatWorkspace({
 
   return (
     <DetailPreviewContext.Provider value={previewActions}>
-      <CaseGraphActionContext.Provider value={caseGraphActions}>
-        <AssistantRuntimeProvider runtime={runtime} aui={aui}>
-          <div className={resolvedClassName}>
-            {showSidebar ? (
-              <ChatSidebar
-                title={title}
-                sidebarCollapsed={sidebarCollapsed}
-                activeThreadId={currentChatId}
-                sessionsById={sessionsById}
-                connectionState={connectionState}
-                onOpenSettings={onOpenSettings}
-              />
-            ) : null}
+      <AssistantRuntimeProvider runtime={runtime} aui={aui}>
+        <div className={resolvedClassName}>
+          {showSidebar ? (
+            <ChatSidebar
+              title={title}
+              sidebarCollapsed={sidebarCollapsed}
+              activeThreadId={currentChatId}
+              sessionsById={sessionsById}
+              connectionState={connectionState}
+              onOpenSettings={onOpenSettings}
+            />
+          ) : null}
 
-            {headerSlot?.(renderContext)}
-            {contextSlot?.(renderContext)}
+          {headerSlot?.(renderContext)}
+          {contextSlot?.(renderContext)}
 
-            {threadWrapperClassName ? (
-              <div className={threadWrapperClassName}>{threadContent}</div>
-            ) : threadContent}
+          {threadWrapperClassName ? (
+            <div className={threadWrapperClassName}>{threadContent}</div>
+          ) : threadContent}
 
-            {showWorkspacePanel ? (
-              <WorkspacePanel
-                open={workspacePanel.open}
-                loading={workspacePanel.loading}
-                error={workspacePanel.error}
-                workspace={panelWorkspace}
-                onClose={() => appStore.dispatch({ type: 'workspace.close' })}
-                onOpenFile={handleOpenWorkspaceFile}
-              />
-            ) : null}
-          </div>
-        </AssistantRuntimeProvider>
-      </CaseGraphActionContext.Provider>
+          {showWorkspacePanel ? (
+            <WorkspacePanel
+              open={workspacePanel.open}
+              loading={workspacePanel.loading}
+              error={workspacePanel.error}
+              workspace={panelWorkspace}
+              onClose={() => appStore.dispatch({ type: 'workspace.close' })}
+              onOpenFile={handleOpenWorkspaceFile}
+            />
+          ) : null}
+        </div>
+      </AssistantRuntimeProvider>
     </DetailPreviewContext.Provider>
   );
 });

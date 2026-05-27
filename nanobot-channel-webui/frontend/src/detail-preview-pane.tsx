@@ -26,6 +26,11 @@ type DetailPreviewPaneProps = {
   width: number;
   immersive?: boolean;
   token: string;
+  headerTabs?: ReactNode;
+  headerActions?: ReactNode;
+  mainContent?: ReactNode;
+  emptyTitle?: string;
+  emptyMessage?: string;
   onClose: () => void;
   onResizeStart: () => void;
 };
@@ -272,78 +277,51 @@ function ToolSection({
 }
 
 function ToolPreview({
-  title,
   payload,
-  onClose,
 }: {
-  title: string;
   payload: ToolDetailPayload;
-  onClose: () => void;
 }) {
   const formattedResult = useMemo(() => formatToolResult(payload.result), [payload.result]);
 
   return (
-    <>
-      <div className="detail-header">
-        <div>
-          <div className="detail-kicker">查看器</div>
-          <h3>{title}</h3>
-        </div>
-        <div className="detail-actions">
-          <button className="ghost-button" type="button" onClick={onClose}>
-            关闭
-          </button>
-        </div>
+    <div className="detail-body detail-body--tool">
+      <div className="tool-summary">
+        {payload.durationMs
+          ? `${translateToolStatus(payload.status)} · ${payload.durationMs} 毫秒`
+          : translateToolStatus(payload.status)}
       </div>
-      <div className="detail-body">
-        <div className="tool-summary">
-          {payload.durationMs
-            ? `${translateToolStatus(payload.status)} · ${payload.durationMs} 毫秒`
-            : translateToolStatus(payload.status)}
-        </div>
-        <ToolSection title="参数">
-          <ToolArgsBlock args={payload.args} />
+      <ToolSection title="参数">
+        <ToolArgsBlock args={payload.args} />
+      </ToolSection>
+      <ToolSection title="结果">
+        {looksLikeMarkdown(formattedResult.primary) ? (
+          <MarkdownBlock value={formattedResult.primary} />
+        ) : (
+          <JsonOrTextBlock value={formattedResult.primary} />
+        )}
+      </ToolSection>
+      {formattedResult.trailing ? (
+        <ToolSection title="附加输出">
+          <JsonOrTextBlock value={formattedResult.trailing} muted />
         </ToolSection>
-        <ToolSection title="结果">
-          {looksLikeMarkdown(formattedResult.primary) ? (
-            <MarkdownBlock value={formattedResult.primary} />
-          ) : (
-            <JsonOrTextBlock value={formattedResult.primary} />
-          )}
-        </ToolSection>
-        {formattedResult.trailing ? (
-          <ToolSection title="附加输出">
-            <JsonOrTextBlock value={formattedResult.trailing} muted />
-          </ToolSection>
-        ) : null}
-      </div>
-    </>
+      ) : null}
+    </div>
   );
 }
 
-function MediaPane({ item, token, onClose }: { item: MediaItem; token: string; onClose: () => void }) {
+function MediaPane({
+  item,
+  token,
+}: {
+  item: MediaItem;
+  token: string;
+}) {
   const downloadUrl = useMemo(() => withAuthQuery(item.url, token), [item.url, token]);
 
   return (
-    <>
-      <div className="detail-header">
-        <div>
-          <div className="detail-kicker">查看器</div>
-          <h3>{item.name || '附件'}</h3>
-        </div>
-        <div className="detail-actions">
-          <a className="ghost-button" href={downloadUrl} download={item.name || '下载文件'}>
-            下载
-          </a>
-          <button className="ghost-button" type="button" onClick={onClose}>
-            关闭
-          </button>
-        </div>
-      </div>
-      <div className="detail-body">
-        <MediaPreviewRouter item={item} downloadUrl={downloadUrl} token={token} />
-      </div>
-    </>
+    <div className="detail-body">
+      <MediaPreviewRouter item={item} downloadUrl={downloadUrl} token={token} />
+    </div>
   );
 }
 
@@ -353,6 +331,11 @@ export function DetailPreviewPane({
   width,
   immersive = false,
   token,
+  headerTabs,
+  headerActions,
+  mainContent,
+  emptyTitle = '详情',
+  emptyMessage = '请选择一项内容查看详情',
   onClose,
   onResizeStart,
 }: DetailPreviewPaneProps) {
@@ -367,23 +350,37 @@ export function DetailPreviewPane({
         aria-label="调整查看器宽度"
         onMouseDown={onResizeStart}
       />
-      {detailView?.type === 'media' ? (
-        <MediaPane item={detailView.item} token={token} onClose={onClose} />
-      ) : detailView?.type === 'tool' ? (
-        <ToolPreview title={detailView.title} payload={detailView.payload} onClose={onClose} />
-      ) : (
-        <>
-          <div className="detail-header">
-            <div>
-              <div className="detail-kicker">查看器</div>
-              <h3>详情</h3>
+      <header className="detail-workspace-header">
+        <div className="detail-workspace-tabs">
+          {headerTabs ?? (
+            <div className="detail-workspace-tab is-active">
+              <span>内容区</span>
             </div>
-          </div>
-          <div className="detail-body">
-            <div className="panel-empty">请选择一项内容查看详情</div>
-          </div>
-        </>
-      )}
+          )}
+        </div>
+        {headerActions ? <div className="detail-actions">{headerActions}</div> : null}
+      </header>
+      <div className="detail-panel-shell">
+        <div className="detail-panel-main">
+          {mainContent ?? (detailView?.type === 'media' ? (
+            <MediaPane item={detailView.item} token={token} />
+          ) : detailView?.type === 'tool' ? (
+            <ToolPreview payload={detailView.payload} />
+          ) : (
+            <>
+              <div className="detail-header">
+                <div>
+                  <div className="detail-kicker">内容区</div>
+                  <h3>{emptyTitle}</h3>
+                </div>
+              </div>
+              <div className="detail-body">
+                <div className="panel-empty">{emptyMessage}</div>
+              </div>
+            </>
+          ))}
+        </div>
+      </div>
     </section>
   );
 }

@@ -12,6 +12,6 @@ export function shouldUseImmersivePreview(viewportWidth: number): boolean {
 }
 
 export function getPreferredDetailPanelWidth(viewportWidth: number): number {
-  const roomyWidth = Math.round(viewportWidth * 0.72);
+  const roomyWidth = Math.round(viewportWidth * 0.52);
   return Math.min(DETAIL_PANEL_MAX_WIDTH, Math.max(720, roomyWidth));
 }

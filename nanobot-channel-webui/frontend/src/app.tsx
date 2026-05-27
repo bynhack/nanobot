@@ -1,26 +1,22 @@
-import { AssistantRuntimeProvider, Suggestions, useAui } from '@assistant-ui/react';
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 import { AuthTokenModal } from './auth-token-modal';
-import { buildTextAppendMessage, readAppearanceMode, readUiTheme } from './app-helpers';
-import { appStore, bootstrap, DETAIL_PANEL_WIDTH_KEY, useAppSelector } from './app-state';
+import { readAppearanceMode, readUiTheme } from './app-helpers';
+import { bootstrap, DETAIL_PANEL_WIDTH_KEY, appStore, useAppSelector } from './app-state';
 import { loadSessionWorkspace } from './api';
+import { ChatWorkspace } from './components/chat/chat-workspace';
+import { ConversationContentPane } from './components/chat/conversation-content-pane';
 import { DetailPreviewContext, type ToolDetailPayload } from './components/chat/detail-preview-context';
-import { ChatSidebar } from './components/chat/sidebar';
-import { ChatThreadContent } from './components/chat/thread-content';
-import { WorkspacePanel } from './components/chat/workspace-panel';
+import { WorkspaceModeSwitch } from './components/workspace-mode-switch';
 import { DEFAULT_UI_THEME } from './components/settings/types';
-import { DetailPreviewPane, type DetailView } from './detail-preview-pane';
+import { CaseGraphWorkbench } from './case-graph/workbench';
+import type { DetailView } from './detail-preview-pane';
 import { LoginPage } from './login-page';
 import { SettingsScreen, type AppearanceMode, type UiTheme } from './settings-page';
 import { STORAGE_KEYS } from './store';
 import './styles.css';
 import type { MediaItem, SessionWorkspaceFile } from './types';
 import { useAuthSession } from './use-auth-session';
-import { useAvailableSkills } from './use-available-skills';
-import { useWebsocketSession } from './use-websocket-session';
-import { useWebuiRuntime } from './use-webui-runtime';
-import { DEFAULT_THREAD_SUGGESTIONS } from './assistant-ui-runtime';
 import {
   DETAIL_PANEL_MAX_WIDTH,
   DETAIL_PANEL_MIN_WIDTH,
@@ -33,7 +29,7 @@ import {
   shouldUseImmersivePreview,
 } from './preview-layout';
 
-type AppView = 'chat' | 'settings';
+type AppView = 'chat' | 'settings' | 'case_graph';
 
 function clampDetailWidth(width: number, viewportWidth: number, immersive: boolean, sidebarOpen: boolean): number {
   if (!immersive) {
@@ -50,11 +46,14 @@ export function App() {
   const authToken = useAppSelector((state) => state.authToken);
   const connectionState = useAppSelector((state) => state.connectionState);
   const currentChatId = useAppSelector((state) => state.currentChatId);
+  const workspacePanel = useAppSelector((state) => state.workspacePanel);
+  const workspaceByChat = useAppSelector((state) => state.workspaceByChat);
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [previewSidebarOpen, setPreviewSidebarOpen] = useState(false);
   const [appView, setAppView] = useState<AppView>('chat');
   const [detailView, setDetailView] = useState<DetailView | null>(null);
+  const [contentPanelPinnedOpen, setContentPanelPinnedOpen] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [detailPanelWidth, setDetailPanelWidth] = useState(() => {
     const raw = window.localStorage.getItem(DETAIL_PANEL_WIDTH_KEY);
@@ -68,6 +67,7 @@ export function App() {
   const [uiTheme, setUiTheme] = useState<UiTheme>(() => readUiTheme(DEFAULT_UI_THEME));
 
   const flashTimerRef = useRef<number | null>(null);
+  const workspaceRequestCounterRef = useRef(0);
 
   const showFlash = useCallback((message: string) => {
     setFlashMessage(message);
@@ -92,7 +92,15 @@ export function App() {
     handleLogout,
   } = useAuthSession(authToken);
 
-  const previewOpen = appView === 'chat' && Boolean(detailView);
+  const currentWorkspace = currentChatId ? workspaceByChat[currentChatId] ?? null : null;
+  const panelWorkspace = workspacePanel.chatId ? workspaceByChat[workspacePanel.chatId] ?? null : null;
+  const workspacePanelOpen = appView === 'chat' && workspacePanel.open;
+  const workspaceLoading = Boolean(
+    currentChatId && workspacePanel.loading && workspacePanel.chatId === currentChatId,
+  );
+  const workspaceFileCount = currentWorkspace?.files.length ?? 0;
+  const contentPanelOpen = appView === 'chat' && (contentPanelPinnedOpen || Boolean(detailView) || workspacePanelOpen);
+  const previewOpen = contentPanelOpen;
   const immersivePreview = previewOpen && shouldUseImmersivePreview(viewportWidth);
   const effectiveSidebarCollapsed = immersivePreview ? !previewSidebarOpen : sidebarCollapsed;
   const immersiveSidebarWidth = immersivePreview && previewSidebarOpen ? SIDEBAR_EXPANDED_WIDTH : 0;
@@ -107,9 +115,9 @@ export function App() {
 
   const ensurePreferredDetailWidth = useCallback(() => {
     const preferredWidth = getPreferredDetailPanelWidth(window.innerWidth);
-    setDetailPanelWidth((current) =>
+    setDetailPanelWidth(() =>
       clampDetailWidth(
-        Math.max(current, preferredWidth),
+        preferredWidth,
         window.innerWidth,
         shouldUseImmersivePreview(window.innerWidth),
         false,
@@ -120,14 +128,70 @@ export function App() {
   const openMedia = useCallback((item: MediaItem) => {
     setAppView('chat');
     ensurePreferredDetailWidth();
+    setContentPanelPinnedOpen(true);
     setDetailView({ type: 'media', item });
   }, [ensurePreferredDetailWidth]);
 
   const openTool = useCallback((title: string, payload: ToolDetailPayload) => {
     setAppView('chat');
     ensurePreferredDetailWidth();
+    setContentPanelPinnedOpen(true);
     setDetailView({ type: 'tool', title, payload });
   }, [ensurePreferredDetailWidth]);
+
+  const openWorkspace = useCallback(() => {
+    if (!currentChatId) {
+      return;
+    }
+    setAppView('chat');
+    ensurePreferredDetailWidth();
+    setContentPanelPinnedOpen(true);
+    const chatId = currentChatId;
+    workspaceRequestCounterRef.current += 1;
+    const requestId = workspaceRequestCounterRef.current;
+    appStore.dispatch({ type: 'workspace.open', chatId });
+    appStore.dispatch({ type: 'workspace.loading', chatId, requestId });
+    loadSessionWorkspace(chatId, authToken)
+      .then((workspace) => {
+        appStore.dispatch({ type: 'workspace.loaded', chatId, requestId, workspace });
+      })
+      .catch((error: unknown) => {
+        appStore.dispatch({
+          type: 'workspace.failed',
+          chatId,
+          requestId,
+          error: error instanceof Error ? error.message : '加载工作空间失败',
+        });
+      });
+  }, [authToken, currentChatId, ensurePreferredDetailWidth]);
+
+  const closeWorkspacePanel = useCallback(() => {
+    appStore.dispatch({ type: 'workspace.close' });
+  }, []);
+
+  const openWorkspaceFile = useCallback((file: SessionWorkspaceFile) => {
+    openMedia({ url: file.url, name: file.name, mime: file.mime });
+  }, [openMedia]);
+
+  const closeContentDetail = useCallback(() => {
+    setDetailView(null);
+  }, []);
+
+  const closeContentPanel = useCallback(() => {
+    setContentPanelPinnedOpen(false);
+    setDetailView(null);
+    appStore.dispatch({ type: 'workspace.close' });
+  }, []);
+
+  const toggleContentPanel = useCallback(() => {
+    if (contentPanelOpen) {
+      closeContentPanel();
+      return;
+    }
+    setAppView('chat');
+    ensurePreferredDetailWidth();
+    setContentPanelPinnedOpen(true);
+  }, [closeContentPanel, contentPanelOpen, ensurePreferredDetailWidth]);
 
   const previewActions = useMemo(
     () => ({ openMedia, openTool }),
@@ -170,6 +234,7 @@ export function App() {
 
   useEffect(() => {
     setDetailView(null);
+    setContentPanelPinnedOpen(false);
   }, [currentChatId]);
 
   useEffect(() => {
@@ -180,6 +245,7 @@ export function App() {
     if (appView !== 'chat') {
       setPreviewSidebarOpen(false);
       setDetailView(null);
+      appStore.dispatch({ type: 'workspace.close' });
     }
   }, [appView]);
 
@@ -256,30 +322,66 @@ export function App() {
         }
       >
         {resizingDetailPanel ? <div className="detail-resize-overlay" aria-hidden="true" /> : null}
-        <ChatWorkspace
-          authResolved={authResolved}
-          authToken={authToken}
-          currentUser={currentUser}
-          title={bootstrap.title}
-          flashMessage={flashMessage}
-          onOpenSettings={handleOpenSettings}
-          sidebarCollapsed={effectiveSidebarCollapsed}
-          onToggleSidebar={handleToggleSidebar}
-          previewOpen={previewOpen}
-          immersivePreview={immersivePreview}
-          showFlash={showFlash}
-          onOpenMedia={openMedia}
-        />
+        {appView === 'case_graph' ? (
+          <CaseGraphWorkbench
+            token={authToken}
+            onBack={() => setAppView('chat')}
+            title={bootstrap.title}
+            authResolved={authResolved}
+            currentUser={currentUser}
+            showFlash={showFlash}
+            headerSlot={(
+              <WorkspaceModeSwitch
+                activeMode="case_graph"
+                onSelectChat={() => setAppView('chat')}
+              />
+            )}
+          />
+        ) : (
+          <>
+            <ChatWorkspace
+              authResolved={authResolved}
+              authToken={authToken}
+              currentUser={currentUser}
+              title={bootstrap.title}
+              flashMessage={flashMessage}
+              onOpenSettings={handleOpenSettings}
+              onOpenCaseGraph={() => setAppView('case_graph')}
+              sidebarCollapsed={effectiveSidebarCollapsed}
+              onToggleSidebar={handleToggleSidebar}
+              previewOpen={previewOpen}
+              immersivePreview={immersivePreview}
+              showFlash={showFlash}
+              previewActions={previewActions}
+              onOpenMedia={openMedia}
+              showWorkspacePanel={false}
+              workspaceFileCount={workspaceFileCount}
+              workspaceLoading={workspaceLoading}
+              onOpenWorkspace={openWorkspace}
+              contentPanelOpen={contentPanelOpen}
+              onToggleContentPanel={toggleContentPanel}
+            />
 
-        <DetailPreviewPane
-          detailView={detailView}
-          immersive={immersivePreview}
-          open={Boolean(detailView)}
-          width={detailPanelWidth}
-          token={authToken}
-          onClose={() => setDetailView(null)}
-          onResizeStart={() => setResizingDetailPanel(true)}
-        />
+            <ConversationContentPane
+              detailView={detailView}
+              immersive={immersivePreview}
+              open={contentPanelOpen}
+              width={detailPanelWidth}
+              token={authToken}
+              workspaceAvailable={Boolean(currentChatId)}
+              workspaceOpen={workspacePanelOpen}
+              workspaceLoading={workspaceLoading}
+              workspaceError={workspacePanel.error}
+              workspace={panelWorkspace}
+              workspaceFileCount={workspaceFileCount}
+              onOpenWorkspace={openWorkspace}
+              onCloseWorkspace={closeWorkspacePanel}
+              onOpenWorkspaceFile={openWorkspaceFile}
+              onCloseDetail={closeContentDetail}
+              onResizeStart={() => setResizingDetailPanel(true)}
+            />
+          </>
+        )}
 
         {appView === 'settings' ? (
           <SettingsScreen
@@ -315,137 +417,3 @@ export function App() {
     </DetailPreviewContext.Provider>
   );
 }
-
-const ChatWorkspace = memo(function ChatWorkspace({
-  authResolved,
-  authToken,
-  currentUser,
-  title,
-  flashMessage,
-  onOpenSettings,
-  sidebarCollapsed,
-  onToggleSidebar,
-  previewOpen,
-  immersivePreview,
-  showFlash,
-  onOpenMedia,
-}: {
-  authResolved: boolean;
-  authToken: string;
-  currentUser: ReturnType<typeof useAuthSession>['currentUser'];
-  title: string;
-  flashMessage: string | null;
-  onOpenSettings: () => void;
-  sidebarCollapsed: boolean;
-  onToggleSidebar: () => void;
-  previewOpen: boolean;
-  immersivePreview: boolean;
-  showFlash: (message: string) => void;
-  onOpenMedia: (item: MediaItem) => void;
-}) {
-  const workspaceRequestCounterRef = useRef(0);
-  const connectionState = useAppSelector((state) => state.connectionState);
-  const currentChatId = useAppSelector((state) => state.currentChatId);
-  const workspacePanel = useAppSelector((state) => state.workspacePanel);
-  const workspaceByChat = useAppSelector((state) => state.workspaceByChat);
-  const currentWorkspace = currentChatId ? workspaceByChat[currentChatId] ?? null : null;
-  const panelWorkspace = workspacePanel.chatId ? workspaceByChat[workspacePanel.chatId] ?? null : null;
-  const websocketSession = useWebsocketSession({
-    authResolved,
-    showFlash,
-  });
-  const availableSkills = useAvailableSkills({
-    authResolved,
-    authToken,
-    currentUser,
-  });
-  const {
-    runtime,
-    sessionsById,
-    isReadOnlySession,
-    pendingAskUserPrompt,
-    activeTurn,
-    sendAppendMessage,
-  } = useWebuiRuntime({
-    showFlash,
-    actions: websocketSession,
-  });
-  const threadSuggestions = useMemo(() => [...DEFAULT_THREAD_SUGGESTIONS], []);
-  const aui = useAui({
-    suggestions: Suggestions(threadSuggestions),
-  });
-  const workspaceFileCount = currentWorkspace?.files.length ?? 0;
-  const workspaceLoadingForCurrentChat = Boolean(
-    currentChatId && workspacePanel.loading && workspacePanel.chatId === currentChatId,
-  );
-  const handleOpenWorkspace = useCallback(() => {
-    if (!currentChatId) {
-      return;
-    }
-    const chatId = currentChatId;
-    workspaceRequestCounterRef.current += 1;
-    const requestId = workspaceRequestCounterRef.current;
-    appStore.dispatch({ type: 'workspace.open', chatId });
-    appStore.dispatch({ type: 'workspace.loading', chatId, requestId });
-    loadSessionWorkspace(chatId, authToken)
-      .then((workspace) => {
-        appStore.dispatch({ type: 'workspace.loaded', chatId, requestId, workspace });
-      })
-      .catch((error: unknown) => {
-        appStore.dispatch({
-          type: 'workspace.failed',
-          chatId,
-          requestId,
-          error: error instanceof Error ? error.message : '加载工作空间失败',
-        });
-      });
-  }, [authToken, currentChatId]);
-  const handleOpenWorkspaceFile = useCallback((file: SessionWorkspaceFile) => {
-    onOpenMedia({ url: file.url, name: file.name, mime: file.mime });
-  }, [onOpenMedia]);
-
-  return (
-    <AssistantRuntimeProvider runtime={runtime} aui={aui}>
-      <div className={`chat-workspace${previewOpen ? ' preview-open' : ''}${immersivePreview ? ' immersive-preview' : ''}`}>
-        <ChatSidebar
-          title={title}
-          sidebarCollapsed={sidebarCollapsed}
-          activeThreadId={currentChatId}
-          sessionsById={sessionsById}
-          connectionState={connectionState}
-          onOpenSettings={onOpenSettings}
-        />
-
-        <ChatThreadContent
-          title={title}
-          flashMessage={flashMessage}
-          activeTurn={activeTurn}
-          pendingAskUserPrompt={pendingAskUserPrompt}
-          connectionState={connectionState}
-          currentChatId={currentChatId}
-          isReadOnlySession={isReadOnlySession}
-          onAnswer={(answer) => {
-            void sendAppendMessage(buildTextAppendMessage(answer));
-          }}
-          availableSkills={availableSkills}
-          compact={immersivePreview}
-          sidebarCollapsed={sidebarCollapsed}
-          showSidebarToggle={previewOpen || sidebarCollapsed}
-          onToggleSidebar={onToggleSidebar}
-          canOpenWorkspace={Boolean(currentChatId)}
-          workspaceFileCount={workspaceFileCount}
-          workspaceLoading={workspaceLoadingForCurrentChat}
-          onOpenWorkspace={handleOpenWorkspace}
-        />
-        <WorkspacePanel
-          open={workspacePanel.open}
-          loading={workspacePanel.loading}
-          error={workspacePanel.error}
-          workspace={panelWorkspace}
-          onClose={() => appStore.dispatch({ type: 'workspace.close' })}
-          onOpenFile={handleOpenWorkspaceFile}
-        />
-      </div>
-    </AssistantRuntimeProvider>
-  );
-});

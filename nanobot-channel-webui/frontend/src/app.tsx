@@ -334,6 +334,10 @@ export function App() {
           showFlash={showFlash}
           previewActions={previewActions}
           onOpenMedia={openMedia}
+          welcomeTitle={bootstrap.ui?.welcomeTitle}
+          welcomeSubtitle={bootstrap.ui?.welcomeSubtitle}
+          composerPlaceholder={bootstrap.ui?.composerPlaceholder}
+          compactComposerPlaceholder={bootstrap.ui?.compactComposerPlaceholder}
           showWorkspacePanel={false}
           workspaceFileCount={workspaceFileCount}
           workspaceLoading={workspaceLoading}

@@ -6,7 +6,13 @@ import {
 } from '@assistant-ui/react';
 import { DRAFT_THREAD_ID } from '../../assistant-ui-runtime';
 
-export function ThreadWelcome() {
+export function ThreadWelcome({
+  title = '从一个问题开始。',
+  subtitle = '选择一个常用任务，或直接输入你想处理的内容。',
+}: {
+  title?: string;
+  subtitle?: string;
+}) {
   return (
     <div className="thread-welcome">
       <div className="hero-welcome">
@@ -17,8 +23,8 @@ export function ThreadWelcome() {
             <path d="M4.5 4c0 0 .4 1.8 1.5 2-1.1.4-1.5 2-1.5 2s-.4-1.8-1.5-2c1.1-.4 1.5-2 1.5-2z" opacity=".48" />
           </svg>
         </div>
-        <div className="hero-title">先从证据开始。</div>
-        <div className="hero-subtitle">试试这些常用的资金流与线索分析任务</div>
+        <div className="hero-title">{title}</div>
+        <div className="hero-subtitle">{subtitle}</div>
       </div>
       <div className="thread-suggestion-grid">
         <ThreadPrimitive.Suggestions>

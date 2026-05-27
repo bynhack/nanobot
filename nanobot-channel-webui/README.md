@@ -91,6 +91,38 @@ Minimal config:
 }
 ```
 
+### Conversation UI copy
+
+The WebUI conversation entry can be reused for different assistant scenarios without changing
+frontend source. Configure welcome copy, composer placeholders, and starter suggestions under
+`channels.webui_plugin.ui`:
+
+```json
+{
+  "channels": {
+    "webui_plugin": {
+      "enabled": true,
+      "title": "业务助手",
+      "ui": {
+        "welcomeTitle": "从一个问题开始。",
+        "welcomeSubtitle": "选择一个常用任务，或直接输入你想处理的内容。",
+        "composerPlaceholder": "输入问题、任务或 / 选择技能…",
+        "compactComposerPlaceholder": "发消息…",
+        "conversationStarters": [
+          {
+            "title": "整理思路",
+            "label": "把零散信息归纳成清晰结构",
+            "prompt": "请帮我把现有信息整理成要点、问题和下一步行动"
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+Set `conversationStarters` to an empty array if the instance should not show starter cards.
+
 ### PocketBase auth (minimal)
 
 If you want to enable the new account system, run PocketBase separately and add these fields:

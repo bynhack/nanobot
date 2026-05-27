@@ -78,9 +78,13 @@ const ComposerAction: FC<{ onSend?: () => void }> = ({ onSend }) => {
 export function Composer({
   skills,
   compact = false,
+  placeholder = '输入问题、任务或 / 选择技能…',
+  compactPlaceholder = '发消息…',
 }: {
   skills: SkillCandidate[];
   compact?: boolean;
+  placeholder?: string;
+  compactPlaceholder?: string;
 }) {
   const aui = useAui();
   const composerText = useAuiState((state) => state.composer.text);
@@ -143,7 +147,7 @@ export function Composer({
               </div>
               <ComposerPrimitive.Input
                 className="composer-input"
-                placeholder={compact ? '发消息...' : '例如：梳理 TEST99 案件的资金流向（输入 / 选择技能）'}
+                placeholder={compact ? compactPlaceholder : placeholder}
                 submitMode="enter"
                 rows={1}
                 aria-label="消息输入"

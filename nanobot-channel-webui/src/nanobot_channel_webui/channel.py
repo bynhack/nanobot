@@ -472,6 +472,7 @@ class WebUIChannel(BaseChannel):
                 "title": self._resolved_title,
                 "authRequired": self._access.auth_required,
                 "authMode": self._access.auth_mode,
+                "ui": self.config.ui.model_dump(by_alias=True),
             },
             ensure_ascii=False,
         )

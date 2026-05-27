@@ -3,10 +3,25 @@ export type TurnPhase = 'idle' | 'streaming' | 'running_tools' | 'finalizing' | 
 export type AuthStatus = 'anonymous' | 'authenticating' | 'authenticated';
 export type UserRole = 'admin' | 'user';
 
+export interface ConversationStarter {
+  title: string;
+  label?: string;
+  prompt: string;
+}
+
+export interface WebUIBootstrapUI {
+  welcomeTitle?: string;
+  welcomeSubtitle?: string;
+  composerPlaceholder?: string;
+  compactComposerPlaceholder?: string;
+  conversationStarters?: ConversationStarter[];
+}
+
 export interface BootstrapConfig {
   title: string;
   authRequired: boolean;
   authMode?: 'none' | 'token' | 'pocketbase';
+  ui?: WebUIBootstrapUI;
 }
 
 export interface AuthUser {

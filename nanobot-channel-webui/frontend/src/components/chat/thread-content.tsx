@@ -32,6 +32,10 @@ export function ChatThreadContent({
   topControlsSlot,
   composerTopSlot,
   showThreadWelcome = true,
+  welcomeTitle,
+  welcomeSubtitle,
+  composerPlaceholder,
+  compactComposerPlaceholder,
 }: {
   title: string;
   conversationTitle: string;
@@ -54,6 +58,10 @@ export function ChatThreadContent({
   topControlsSlot?: ReactNode;
   composerTopSlot?: ReactNode;
   showThreadWelcome?: boolean;
+  welcomeTitle?: string;
+  welcomeSubtitle?: string;
+  composerPlaceholder?: string;
+  compactComposerPlaceholder?: string;
 }) {
   return (
     <main className={`chat${compact ? ' compact' : ''}${showContentHeader ? ' with-content-header' : ' without-content-header'}`}>
@@ -115,7 +123,7 @@ export function ChatThreadContent({
         <ThreadPrimitive.Viewport className="messages">
           {showThreadWelcome ? (
             <AuiIf condition={(s) => s.thread.isEmpty}>
-              <ThreadWelcome />
+              <ThreadWelcome title={welcomeTitle} subtitle={welcomeSubtitle} />
             </AuiIf>
           ) : null}
           <ThreadPrimitive.Messages components={{ UserMessage, AssistantMessage }} />
@@ -134,7 +142,12 @@ export function ChatThreadContent({
             <ThreadPrimitive.ScrollToBottom className="thread-scroll-bottom">
               ↓
             </ThreadPrimitive.ScrollToBottom>
-            <Composer skills={availableSkills} compact={compact} />
+            <Composer
+              skills={availableSkills}
+              compact={compact}
+              placeholder={composerPlaceholder}
+              compactPlaceholder={compactComposerPlaceholder}
+            />
           </ThreadPrimitive.ViewportFooter>
         </ThreadPrimitive.Viewport>
       </ThreadPrimitive.Root>

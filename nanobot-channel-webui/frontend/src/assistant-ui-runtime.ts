@@ -1,6 +1,6 @@
 import type { ExternalStoreThreadListAdapter, ThreadSuggestion } from '@assistant-ui/react';
 
-import type { SessionSummary } from './types';
+import type { ConversationStarter, SessionSummary } from './types';
 
 export const DRAFT_THREAD_ID = '__nanobot_draft_thread__';
 
@@ -18,39 +18,48 @@ type ThreadListCallbacks = {
 
 export const DEFAULT_THREAD_SUGGESTIONS: SuggestionCard[] = [
   {
-    title: '梳理资金路径',
-    label: '按时间和层级追踪转入、转出、回流',
-    prompt: '帮我梳理这批交易的资金流向路径，并标出关键中转账户',
+    title: '整理思路',
+    label: '把零散信息归纳成清晰结构',
+    prompt: '请帮我把现有信息整理成要点、问题和下一步行动',
   },
   {
-    title: '识别关联实体',
-    label: '合并同人同户同公司线索并标注依据',
-    prompt: '帮我识别材料里的关联人员、公司、账户，并说明合并依据',
+    title: '提炼重点',
+    label: '从文本、附件或对话里抓关键内容',
+    prompt: '请帮我提炼这段内容的重点，并列出需要继续确认的事项',
   },
   {
-    title: '提取关键线索',
-    label: '从聊天、文档、图片里抓账户、金额、时间',
-    prompt: '帮我从现有材料中提取账户、金额、时间点和关键动作',
+    title: '生成草稿',
+    label: '起草邮件、说明、报告或清单',
+    prompt: '请帮我起草一份结构清晰、语气专业的初稿',
   },
   {
-    title: '定位异常模式',
-    label: '识别拆分转账、集中归集、快进快出',
-    prompt: '帮我检查这些交易是否存在拆分、归集、过桥或快进快出的异常模式',
+    title: '检查方案',
+    label: '发现风险、遗漏和可改进点',
+    prompt: '请帮我检查这个方案可能存在的风险、遗漏和改进建议',
   },
   {
-    title: '生成证据清单',
-    label: '按事实、推断、待核实项结构化输出',
-    prompt: '帮我把现有材料整理成证据清单，区分已证实事实、分析推断和待核实问题',
+    title: '解释概念',
+    label: '用易懂方式拆解复杂问题',
+    prompt: '请用简明的方式解释这个问题，并给出一个例子',
   },
   {
-    title: '整理附件内容',
-    label: '上传台账、回单、截图后提取重点并建立索引',
-    prompt: '我准备上传附件，请先告诉我你会如何提取线索、整理证据并建立索引',
+    title: '处理附件',
+    label: '上传文件后总结、转写或建立索引',
+    prompt: '我准备上传附件，请先告诉我你可以如何帮我阅读、总结和整理它',
   },
 ];
 
-export function buildThreadSuggestions(): readonly ThreadSuggestion[] {
-  return DEFAULT_THREAD_SUGGESTIONS as unknown as readonly ThreadSuggestion[];
+export function buildThreadSuggestions(
+  starters: readonly ConversationStarter[] | undefined = DEFAULT_THREAD_SUGGESTIONS,
+): readonly ThreadSuggestion[] {
+  const normalized = (starters ?? [])
+    .map((starter) => ({
+      title: String(starter.title ?? '').trim(),
+      label: String(starter.label ?? '').trim(),
+      prompt: String(starter.prompt ?? '').trim(),
+    }))
+    .filter((starter) => starter.title && starter.prompt);
+  return normalized as unknown as readonly ThreadSuggestion[];
 }
 
 export function buildExternalThreadListAdapter(

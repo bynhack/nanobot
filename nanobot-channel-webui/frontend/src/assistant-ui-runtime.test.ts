@@ -37,6 +37,25 @@ describe('assistant-ui runtime helpers', () => {
     expect(suggestions).toHaveLength(6);
   });
 
+  it('builds thread suggestions from configured starters', () => {
+    const suggestions = buildThreadSuggestions([
+      { title: '总结材料', label: '提炼重点', prompt: '请总结这份材料' },
+      { title: '缺少提示', label: '不会显示', prompt: '' },
+    ]) as Array<{
+      title?: string;
+      label?: string;
+      prompt: string;
+    }>;
+
+    expect(suggestions).toEqual([
+      { title: '总结材料', label: '提炼重点', prompt: '请总结这份材料' },
+    ]);
+  });
+
+  it('allows configured starters to disable welcome suggestions', () => {
+    expect(buildThreadSuggestions([])).toEqual([]);
+  });
+
   it('builds external thread list adapter from sessions', async () => {
     const onSwitchToThread = vi.fn();
     const onSwitchToNewThread = vi.fn();

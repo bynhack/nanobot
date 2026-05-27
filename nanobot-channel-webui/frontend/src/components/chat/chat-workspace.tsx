@@ -2,8 +2,8 @@ import { AssistantRuntimeProvider, Suggestions, useAui, type AppendMessage } fro
 import { memo, useCallback, useEffect, useMemo, type ReactNode } from 'react';
 
 import { buildTextAppendMessage } from '../../app-helpers';
-import { appStore, useAppSelector } from '../../app-state';
-import { DEFAULT_THREAD_SUGGESTIONS } from '../../assistant-ui-runtime';
+import { appStore, bootstrap, useAppSelector } from '../../app-state';
+import { buildThreadSuggestions } from '../../assistant-ui-runtime';
 import type { SkillCandidate } from '../../skill-quick-select';
 import type { AuthUser, MediaItem, SessionWorkspaceFile } from '../../types';
 import { useAvailableSkills } from '../../use-available-skills';
@@ -59,6 +59,10 @@ export type ChatWorkspaceProps = {
   composerTopSlot?: (context: ChatWorkspaceRenderContext) => ReactNode;
   useDefaultSuggestions?: boolean;
   showThreadWelcome?: boolean;
+  welcomeTitle?: string;
+  welcomeSubtitle?: string;
+  composerPlaceholder?: string;
+  compactComposerPlaceholder?: string;
   prepareOutgoingMessage?: (message: AppendMessage, context: { availableSkills: SkillCandidate[] }) => AppendMessage;
 };
 
@@ -95,6 +99,10 @@ export const ChatWorkspace = memo(function ChatWorkspace({
   composerTopSlot,
   useDefaultSuggestions = true,
   showThreadWelcome = true,
+  welcomeTitle,
+  welcomeSubtitle,
+  composerPlaceholder,
+  compactComposerPlaceholder,
   prepareOutgoingMessage,
 }: ChatWorkspaceProps) {
   const connectionState = useAppSelector((state) => state.connectionState);
@@ -129,7 +137,7 @@ export const ChatWorkspace = memo(function ChatWorkspace({
     prepareOutgoingMessage: prepareRuntimeMessage,
   });
   const threadSuggestions = useMemo(
-    () => (useDefaultSuggestions ? [...DEFAULT_THREAD_SUGGESTIONS] : []),
+    () => (useDefaultSuggestions ? buildThreadSuggestions(bootstrap.ui?.conversationStarters) : []),
     [useDefaultSuggestions],
   );
   const aui = useAui({
@@ -187,6 +195,10 @@ export const ChatWorkspace = memo(function ChatWorkspace({
       topControlsSlot={topControlsSlot?.(renderContext)}
       composerTopSlot={composerTopSlot?.(renderContext)}
       showThreadWelcome={showThreadWelcome}
+      welcomeTitle={welcomeTitle}
+      welcomeSubtitle={welcomeSubtitle}
+      composerPlaceholder={composerPlaceholder}
+      compactComposerPlaceholder={compactComposerPlaceholder}
     />
   );
 

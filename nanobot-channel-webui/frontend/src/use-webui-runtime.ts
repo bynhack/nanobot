@@ -90,7 +90,10 @@ export function useWebuiRuntime({
     cancelTurn();
   }, [cancelTurn]);
 
-  const threadSuggestions = useMemo(() => buildThreadSuggestions(), []);
+  const threadSuggestions = useMemo(
+    () => buildThreadSuggestions(bootstrap.ui?.conversationStarters),
+    [],
+  );
   const activeSession = useMemo(
     () => sessions.find((session) => session.chat_id === currentChatId) ?? null,
     [currentChatId, sessions],

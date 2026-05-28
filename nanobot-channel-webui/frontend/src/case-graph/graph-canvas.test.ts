@@ -65,15 +65,38 @@ describe('graph canvas parallel edge offsets', () => {
     expect(position.y).toBeLessThanOrEqual(370);
   });
 
-  it('enables left-button node dragging and disables it while brush mode is active', () => {
-    const clickSelectBehavior = buildGraphBehaviorsForTest(false).find(
+  it('uses left drag for node positioning and middle drag for canvas panning', () => {
+    const behaviors = buildGraphBehaviorsForTest();
+    const dragCanvasBehavior = behaviors.find(
+      (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'drag-canvas',
+    );
+    const brushBehavior = behaviors.find(
+      (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'brush-select',
+    );
+    const clickSelectBehavior = behaviors.find(
       (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'click-select',
     );
+    const dragElementBehavior = behaviors.find(
+      (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'drag-element',
+    );
 
-    expect(buildGraphBehaviorsForTest(false)).toContain('drag-canvas');
-    expect(buildGraphBehaviorsForTest(true)).not.toContain('drag-canvas');
-    expect(buildGraphBehaviorsForTest(true)).toContain('zoom-canvas');
-    expect(buildGraphBehaviorsForTest(false)).toEqual(expect.arrayContaining([
+    expect(dragCanvasBehavior?.enable?.({ button: 0 })).toBe(false);
+    expect(dragCanvasBehavior?.enable?.({ button: 1 })).toBe(true);
+    expect(dragCanvasBehavior?.enable?.({ button: 0, buttons: 4 })).toBe(true);
+    expect(brushBehavior).toEqual(expect.objectContaining({
+      type: 'brush-select',
+      state: 'selected',
+      enableElements: ['node'],
+      trigger: ['drag'],
+      animation: false,
+    }));
+    expect(brushBehavior?.enable?.({ targetType: 'canvas', button: 0 })).toBe(true);
+    expect(brushBehavior?.enable?.({ targetType: 'canvas', button: 0, buttons: 1 })).toBe(true);
+    expect(brushBehavior?.enable?.({ targetType: 'canvas', button: 0, buttons: 4 })).toBe(false);
+    expect(brushBehavior?.enable?.({ targetType: 'canvas', button: 1 })).toBe(false);
+    expect(brushBehavior?.enable?.({ targetType: 'node', button: 0 })).toBe(false);
+    expect(behaviors).toContain('zoom-canvas');
+    expect(behaviors).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: 'click-select',
         degree: 1,
@@ -89,23 +112,22 @@ describe('graph canvas parallel edge offsets', () => {
     expect(clickSelectBehavior?.enable?.({ targetType: 'edge' })).toBe(true);
     expect(clickSelectBehavior?.enable?.({ targetType: 'canvas' })).toBe(true);
     expect(clickSelectBehavior).not.toHaveProperty('onClick');
-    expect(buildGraphBehaviorsForTest(false)).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        type: 'drag-element',
-        dropEffect: 'none',
-      }),
-    ]));
-    expect(buildGraphBehaviorsForTest(true)).not.toContain('drag-element');
+    expect(dragElementBehavior).toEqual(expect.objectContaining({
+      type: 'drag-element',
+      dropEffect: 'none',
+    }));
+    expect(dragElementBehavior?.enable?.({ button: 0 })).toBe(true);
+    expect(dragElementBehavior?.enable?.({ button: 1 })).toBe(false);
   });
 
   it('allows drag-element to start from G6 node drag events without targetType', () => {
-    const dragBehavior = buildGraphBehaviorsForTest(false).find(
+    const dragBehavior = buildGraphBehaviorsForTest().find(
       (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'drag-element',
     );
 
     expect(dragBehavior?.enable?.({ button: 0 })).toBe(true);
     expect(dragBehavior?.enable?.({ nativeEvent: { button: 2 } })).toBe(false);
-    const replayDragBehavior = buildGraphBehaviorsForTest(false, false, false).find(
+    const replayDragBehavior = buildGraphBehaviorsForTest(false, false).find(
       (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'drag-element',
     );
     expect(replayDragBehavior?.enable?.({ button: 0 })).toBe(false);
@@ -130,19 +152,8 @@ describe('graph canvas parallel edge offsets', () => {
     expect(shouldStopNativeContextMenuPropagationForTest()).toBe(false);
   });
 
-  it('uses G6 brush-select while brush selecting', () => {
-    expect(buildGraphBehaviorsForTest(true)).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        type: 'brush-select',
-        state: 'selected',
-        enableElements: ['node'],
-      }),
-      'zoom-canvas',
-    ]));
-  });
-
   it('uses official G6 hover activation for one-hop node neighborhoods', () => {
-    const hoverBehavior = buildGraphBehaviorsForTest(false).find(
+    const hoverBehavior = buildGraphBehaviorsForTest().find(
       (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'hover-activate',
     );
 
@@ -155,13 +166,10 @@ describe('graph canvas parallel edge offsets', () => {
     }));
     expect(hoverBehavior?.enable?.({ targetType: 'node' })).toBe(true);
     expect(hoverBehavior?.enable?.({ targetType: 'edge' })).toBe(false);
-    expect(buildGraphBehaviorsForTest(true).some(
-      (behavior) => typeof behavior === 'object' && behavior?.type === 'hover-activate',
-    )).toBe(false);
   });
 
   it('suppresses official hover and click interactions while graph operations are settling', () => {
-    const behaviors = buildGraphBehaviorsForTest(false, true);
+    const behaviors = buildGraphBehaviorsForTest(true);
     const hoverBehavior = behaviors.find(
       (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'hover-activate',
     );
@@ -172,6 +180,10 @@ describe('graph canvas parallel edge offsets', () => {
     expect(hoverBehavior?.enable?.({ targetType: 'node' })).toBe(false);
     expect(clickBehavior?.enable?.({ targetType: 'node' })).toBe(false);
     expect(clickBehavior?.enable?.({ targetType: 'canvas' })).toBe(false);
+    const brushBehavior = behaviors.find(
+      (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'brush-select',
+    );
+    expect(brushBehavior?.enable?.({ targetType: 'canvas', button: 0 })).toBe(false);
   });
 
   it('animates graph changes only after an existing graph gains or moves elements', () => {

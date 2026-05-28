@@ -1,10 +1,11 @@
-import { ChevronLeft, ChevronRight, FileSearch, History, LocateFixed, MousePointer2, Network, Route, Scan, Settings2, UserPlus } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject, type PointerEvent as ReactPointerEvent } from 'react';
+import { ChevronLeft, ChevronRight, FileSearch, History, LocateFixed, MousePointer2, Network, Route, SearchCheck, Settings2, UserPlus } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import type { Graph as G6Graph } from '@antv/g6';
 
 import { buildCaseGraphViewModel, formatCompactAmount } from './graph-analysis';
 import type { CaseGraphNodeRole } from './graph-analysis';
 import { computeCaseGraphLayout, type CaseGraphLayoutMode } from './graph-layout';
+import { detectCaseGraphCluePatterns, type CaseGraphCluePatternMatch } from './clue-patterns';
 import type { CaseGraphConversationFocus, CaseGraphData, CaseGraphExcludedNode, CaseGraphNode, CaseGraphReplayTimeline, CaseGraphTradeCard } from './types';
 
 interface GraphCanvasProps {
@@ -51,11 +52,14 @@ interface CanvasContextMenuState {
   graphY?: number;
 }
 
-interface BrushSelectionState {
-  startX: number;
-  startY: number;
-  currentX: number;
-  currentY: number;
+interface SelectionToolbarPosition {
+  x: number;
+  y: number;
+}
+
+interface GraphActiveNeighborhood {
+  relatedNodeIds: Set<string>;
+  relatedEdgeIds: Set<string>;
 }
 
 interface NodeContextMenuItem {
@@ -99,7 +103,6 @@ const GRAPH_EDGE_TYPE = 'quadratic';
 const CONTEXT_MENU_WIDTH = 210;
 const CONTEXT_MENU_ROW_HEIGHT = 48;
 const CONTEXT_MENU_PADDING = 10;
-const BRUSH_MIN_DISTANCE = 6;
 const ONE_HOP_NEIGHBORHOOD_DEGREE = 1;
 const HOVER_HIGHLIGHT_STATE = 'highlight';
 const HOVER_DIM_STATE = 'dim';
@@ -114,6 +117,15 @@ const GRAPH_DATA_ANIMATION = { duration: 720, easing: 'ease-in-out' };
 const GRAPH_VIEWPORT_ANIMATION = { duration: 360, easing: 'ease-in-out' };
 const GRAPH_REVEAL_STATE_HOLD_MS = 2200;
 const GRAPH_POSITION_EPSILON = 0.5;
+const MAX_CLUE_PATTERN_HULLS = 6;
+const CLUE_PATTERN_HULL_STYLES = [
+  { fill: '#2563eb', stroke: '#2563eb' },
+  { fill: '#0f766e', stroke: '#0f766e' },
+  { fill: '#b45309', stroke: '#b45309' },
+  { fill: '#7c3aed', stroke: '#7c3aed' },
+  { fill: '#be123c', stroke: '#be123c' },
+  { fill: '#475569', stroke: '#475569' },
+] as const;
 const GRAPH_NODE_ANIMATION = {
   enter: 'fade',
   update: [{ fields: ['x', 'y'], duration: GRAPH_DATA_ANIMATION.duration, easing: GRAPH_DATA_ANIMATION.easing }],
@@ -171,11 +183,13 @@ export function GraphCanvas({
   const [activeRoleFilter, setActiveRoleFilter] = useState<Exclude<CaseGraphNodeRole, 'peripheral'> | null>(null);
   const [canvasContextMenu, setCanvasContextMenu] = useState<CanvasContextMenuState | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
-  const [brushMode, setBrushMode] = useState(false);
-  const [brushSelection, setBrushSelection] = useState<BrushSelectionState | null>(null);
+  const [selectionToolbarPosition, setSelectionToolbarPosition] = useState<SelectionToolbarPosition | null>(null);
+  const [cluePatternsVisible, setCluePatternsVisible] = useState(false);
+  const [selectedCluePatternId, setSelectedCluePatternId] = useState<string | null>(null);
   const [graphReadyNonce, setGraphReadyNonce] = useState(0);
   const [graphViewport, setGraphViewport] = useState({ width: GRAPH_WIDTH, height: GRAPH_HEIGHT });
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const graphRef = useRef<G6Graph | null>(null);
   const graphHostRef = useRef<HTMLDivElement | null>(null);
   const renderCycleRef = useRef(0);
@@ -195,7 +209,8 @@ export function GraphCanvas({
   const replayModeRef = useRef(replayMode);
   const replayTimelineRef = useRef(replayTimeline);
   const lastEmittedFocusKeyRef = useRef<string | null>(null);
-  const brushSelectionRef = useRef<BrushSelectionState | null>(null);
+  const suppressNextCanvasClickRef = useRef(false);
+  const selectionToolbarFrameRef = useRef<number | null>(null);
   const nodesLengthRef = useRef(0);
   const activeNodeIdRef = useRef<string | null>(null);
   const selectedNodeIdsRef = useRef<string[]>([]);
@@ -211,10 +226,10 @@ export function GraphCanvas({
   const onExcludeNodeRef = useRef(onExcludeNode);
   const onExcludeNodesRef = useRef(onExcludeNodes);
   const onRestoreNodeRef = useRef(onRestoreNode);
-  const activeNeighborhoodRef = useRef<{
-    relatedNodeIds: Set<string>;
-    relatedEdgeIds: Set<string>;
-  } | null>(null);
+  const activeEdgeIdRef = useRef<string | null>(null);
+  const activeNeighborhoodRef = useRef<GraphActiveNeighborhood | null>(null);
+  const graphFocusDrawCycleRef = useRef(0);
+  const cluePatternFocusCycleRef = useRef(0);
 
   const nodes = graphData?.nodes ?? [];
   const edges = graphData?.edges ?? [];
@@ -251,6 +266,23 @@ export function GraphCanvas({
       }),
     [focusAccountIds, focusLabels, graphData],
   );
+  const cluePatternMatches = useMemo(
+    () => detectCaseGraphCluePatterns(graphData, graphView),
+    [graphData, graphView],
+  );
+  const activeCluePatternHulls = useMemo<Array<CaseGraphCluePatternMatch | null>>(() => {
+    const hulls = Array<CaseGraphCluePatternMatch | null>(MAX_CLUE_PATTERN_HULLS).fill(null);
+    if (!cluePatternsVisible || !selectedCluePatternId) return hulls;
+    const index = cluePatternMatches.findIndex((match) => match.id === selectedCluePatternId);
+    if (index >= 0 && index < MAX_CLUE_PATTERN_HULLS) {
+      hulls[index] = cluePatternMatches[index];
+    }
+    return hulls;
+  }, [cluePatternMatches, cluePatternsVisible, selectedCluePatternId]);
+  const selectedCluePattern = useMemo(
+    () => cluePatternMatches.find((match) => match.id === selectedCluePatternId) ?? null,
+    [cluePatternMatches, selectedCluePatternId],
+  );
 
   const tradeCardByNodeId = useMemo(() => {
     const map = new Map<string, CaseGraphTradeCard>();
@@ -284,6 +316,12 @@ export function GraphCanvas({
   }, [focusAccountIds, focusLabels, graphContent, graphData, graphView, graphViewport.height, graphViewport.width, layoutMode, preferPersistedPositions]);
 
   const activeNeighborhood = useMemo(() => {
+    if (cluePatternsVisible && selectedCluePattern) {
+      return {
+        relatedNodeIds: new Set(selectedCluePattern.nodeIds),
+        relatedEdgeIds: new Set(selectedCluePattern.edgeIds),
+      };
+    }
     if (activeRoleFilter) {
       return buildRoleNeighborhood(activeRoleFilter, nodes, edges, graphView.nodeMetricsById);
     }
@@ -302,7 +340,7 @@ export function GraphCanvas({
       }
     }
     return null;
-  }, [activeEdgeId, activeNodeId, activeRoleFilter, edgeLookup, edges, graphView.nodeMetricsById, nodes]);
+  }, [activeEdgeId, activeNodeId, activeRoleFilter, cluePatternsVisible, edgeLookup, edges, graphView.nodeMetricsById, nodes, selectedCluePattern]);
 
   const selectedNode = activeNodeId ? nodeLookup.get(activeNodeId) ?? null : null;
   const selectedEdge = activeEdgeId ? edgeLookup.get(activeEdgeId) ?? null : null;
@@ -390,26 +428,20 @@ export function GraphCanvas({
 
   useEffect(() => {
     activeNodeIdRef.current = activeNodeId;
+    activeEdgeIdRef.current = activeEdgeId;
     activeNeighborhoodRef.current = activeNeighborhood;
     selectedNodeIdsRef.current = selectedNodeIds;
-  }, [activeNeighborhood, activeNodeId, selectedNodeIds]);
+  }, [activeEdgeId, activeNeighborhood, activeNodeId, selectedNodeIds]);
 
   useEffect(() => {
-    brushSelectionRef.current = brushSelection;
-  }, [brushSelection]);
-
-  const syncSelectedNodeIdsFromGraph = (states: GraphSelectionStates) => {
-    const selectedIds = nodes
-      .map((node) => node.id)
-      .filter((nodeId) => {
-        const state = states[nodeId];
-        return Array.isArray(state) ? state.includes('selected') : state === 'selected';
-      });
-    setSelectedNodeIds(selectedIds);
-    setActiveNodeId(selectedIds[0] ?? null);
-    setActiveEdgeId(null);
-    setActiveRoleFilter(null);
-  };
+    scheduleSelectionToolbarPositionUpdate();
+    return () => {
+      if (selectionToolbarFrameRef.current != null) {
+        window.cancelAnimationFrame(selectionToolbarFrameRef.current);
+        selectionToolbarFrameRef.current = null;
+      }
+    };
+  }, [graphReadyNonce, graphViewport.height, graphViewport.width, nodes, selectedNodeIds]);
 
   const syncOfficialStateClasses = () => {
     window.requestAnimationFrame(() => {
@@ -448,30 +480,186 @@ export function GraphCanvas({
     return Promise.resolve();
   };
 
-  const clearFocusState = (options: { clearRole?: boolean } = {}) => {
+  const closeCluePatternPanel = () => {
+    cluePatternFocusCycleRef.current += 1;
+    setCluePatternsVisible(false);
+    setSelectedCluePatternId(null);
+  };
+
+  const clearFocusState = (options: { clearRole?: boolean; clearCluePatternPanel?: boolean } = {}) => {
     const shouldClearRole = options.clearRole ?? true;
+    const shouldClearCluePatternPanel = options.clearCluePatternPanel ?? true;
     activeNodeIdRef.current = null;
+    activeEdgeIdRef.current = null;
     selectedNodeIdsRef.current = [];
     activeNeighborhoodRef.current = null;
     clearG6HtmlNodeFocusClasses(graphHostRef.current);
     setActiveNodeId(null);
     setActiveEdgeId(null);
+    if (shouldClearCluePatternPanel) {
+      closeCluePatternPanel();
+    } else {
+      setSelectedCluePatternId(null);
+    }
     if (shouldClearRole) {
       setActiveRoleFilter(null);
     }
     setSelectedNodeIds([]);
   };
 
+  const applyGraphFocusState = (
+    neighborhood: GraphActiveNeighborhood | null,
+    options: {
+      activeNodeId?: string | null;
+      activeEdgeId?: string | null;
+      selectedNodeIds?: string[];
+    } = {},
+  ): Promise<void> => {
+    const graph = graphRef.current;
+    if (!graph || !nodes.length || !graphRenderedRef.current) return Promise.resolve();
+    const nextActiveNodeId = options.activeNodeId ?? activeNodeIdRef.current;
+    const nextActiveEdgeId = options.activeEdgeId ?? activeEdgeIdRef.current;
+    const nextSelectedNodeIds = options.selectedNodeIds ?? selectedNodeIdsRef.current;
+    graphFocusDrawCycleRef.current += 1;
+
+    graph.updateNodeData(
+      nodes.map((node) => ({
+        id: node.id,
+        data: buildNodeRenderData(
+          node,
+          graphView.nodeMetricsById.get(node.id),
+          Boolean(resolveTradeCard(node, tradeCardByNodeId)),
+          nextActiveNodeId,
+          nextSelectedNodeIds,
+          neighborhood,
+        ),
+      })),
+    );
+    graph.updateEdgeData(
+      renderEdges.map((edge) => {
+        const edgeId = resolveEdgeId(edge);
+        const metrics = graphView.edgeMetricsById.get(edgeId);
+        return {
+          id: edgeId,
+          data: buildEdgeRenderData(edge, metrics, neighborhood, parallelOffsets.get(edgeId) ?? 0, nextActiveEdgeId),
+        };
+      }),
+    );
+    return graph.draw().catch(() => {});
+  };
+
+  const updateSelectionToolbarPosition = () => {
+    const selectedIds = selectedNodeIdsRef.current;
+    const stage = stageRef.current;
+    const graphHost = graphHostRef.current;
+    if (!selectedIds.length || !stage || !graphHost) {
+      setSelectionToolbarPosition(null);
+      return;
+    }
+    const selectedElements = selectedIds
+      .map((nodeId) => findGraphNodeElement(graphHost, nodeId))
+      .filter((element): element is HTMLElement => Boolean(element));
+    if (!selectedElements.length) {
+      setSelectionToolbarPosition(null);
+      return;
+    }
+
+    const stageBounds = stage.getBoundingClientRect();
+    const toolbarWidth = selectionToolbarRef.current?.offsetWidth || 420;
+    const toolbarHeight = selectionToolbarRef.current?.offsetHeight || 42;
+    const selectedBounds = selectedElements.reduce((bounds, element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        left: Math.min(bounds.left, rect.left),
+        top: Math.min(bounds.top, rect.top),
+        right: Math.max(bounds.right, rect.right),
+        bottom: Math.max(bounds.bottom, rect.bottom),
+      };
+    }, { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity });
+    if (!Number.isFinite(selectedBounds.left) || !Number.isFinite(selectedBounds.top)) {
+      setSelectionToolbarPosition(null);
+      return;
+    }
+
+    const gap = 12;
+    const margin = 12;
+    const selectedCenterX = (selectedBounds.left + selectedBounds.right) / 2 - stageBounds.left;
+    const rawTop = selectedBounds.top - stageBounds.top - toolbarHeight - gap;
+    const fallbackTop = selectedBounds.bottom - stageBounds.top + gap;
+    const top = rawTop >= margin
+      ? rawTop
+      : Math.min(
+        Math.max(fallbackTop, margin),
+        Math.max(margin, stageBounds.height - toolbarHeight - margin),
+      );
+    const left = clampNumber(
+      selectedCenterX - toolbarWidth / 2,
+      margin,
+      Math.max(margin, stageBounds.width - toolbarWidth - margin),
+    );
+    setSelectionToolbarPosition({ x: left, y: top });
+  };
+
+  const scheduleSelectionToolbarPositionUpdate = () => {
+    if (typeof window === 'undefined') return;
+    if (selectionToolbarFrameRef.current != null) {
+      window.cancelAnimationFrame(selectionToolbarFrameRef.current);
+    }
+    selectionToolbarFrameRef.current = window.requestAnimationFrame(() => {
+      selectionToolbarFrameRef.current = null;
+      updateSelectionToolbarPosition();
+    });
+  };
+
+  const syncSelectedNodeIdsFromGraph = (states: GraphSelectionStates) => {
+    const selectedIds = nodes
+      .map((node) => node.id)
+      .filter((nodeId) => {
+        const state = states[nodeId];
+        return Array.isArray(state) ? state.includes('selected') : state === 'selected';
+      });
+    suppressNextCanvasClickRef.current = true;
+    window.setTimeout(() => {
+      suppressNextCanvasClickRef.current = false;
+    }, 150);
+    void clearInteractionState();
+    if (!selectedIds.length) {
+      clearFocusState();
+      return;
+    }
+    clearG6HtmlNodeFocusClasses(graphHostRef.current);
+    activeNodeIdRef.current = selectedIds[0] ?? null;
+    selectedNodeIdsRef.current = selectedIds;
+    activeNeighborhoodRef.current = null;
+    setActiveNodeId(selectedIds[0] ?? null);
+    setActiveEdgeId(null);
+    setActiveRoleFilter(null);
+    setSelectedNodeIds(selectedIds);
+  };
+
   useEffect(() => {
     if (!replayMode) {
       return;
     }
+    setCluePatternsVisible(false);
+    setSelectedCluePatternId(null);
     setCanvasContextMenu(null);
-    setBrushSelection(null);
-    setBrushMode(false);
     clearFocusState();
     void clearInteractionState();
   }, [replayMode]);
+
+  useEffect(() => {
+    if (!nodes.length && cluePatternsVisible) {
+      setCluePatternsVisible(false);
+      setSelectedCluePatternId(null);
+    }
+  }, [cluePatternsVisible, nodes.length]);
+
+  useEffect(() => {
+    if (selectedCluePatternId && !cluePatternMatches.some((match) => match.id === selectedCluePatternId)) {
+      setSelectedCluePatternId(null);
+    }
+  }, [cluePatternMatches, selectedCluePatternId]);
 
   useEffect(() => {
     if (activeRoleFilter && graphView.roleCounts[activeRoleFilter] === 0) {
@@ -635,7 +823,7 @@ export function GraphCanvas({
             },
           },
         },
-        behaviors: buildGraphBehaviors(false),
+        behaviors: buildGraphBehaviors(),
         plugins: [
           {
             type: 'minimap',
@@ -654,6 +842,7 @@ export function GraphCanvas({
               background: 'rgba(107, 126, 166, 0.14)',
             },
           },
+          ...buildCluePatternHullPlugins(),
           {
             type: 'contextmenu',
             key: 'case-graph-node-contextmenu',
@@ -665,6 +854,7 @@ export function GraphCanvas({
               if (replayModeRef.current) {
                 return [];
               }
+              closeCluePatternPanel();
               void clearInteractionState();
               const nodeId = resolveEventId(event);
               const node = nodeId ? nodeLookupRef.current.get(nodeId) ?? null : null;
@@ -720,6 +910,7 @@ export function GraphCanvas({
                 clearFocusState();
                 void clearInteractionState();
                 onOpenNodeDetailAnalysisRef.current(node);
+                officialInteractionSuppressedRef.current = false;
                 return;
               }
 
@@ -729,6 +920,7 @@ export function GraphCanvas({
                 clearFocusState();
                 void clearInteractionState();
                 onOpenNodeSummaryAnalysisRef.current(node);
+                officialInteractionSuppressedRef.current = false;
                 return;
               }
 
@@ -738,6 +930,7 @@ export function GraphCanvas({
                 clearFocusState();
                 void clearInteractionState();
                 onOpenManualTradeRef.current(node);
+                officialInteractionSuppressedRef.current = false;
                 return;
               }
 
@@ -747,6 +940,7 @@ export function GraphCanvas({
                 clearFocusState();
                 void clearInteractionState();
                 onOpenRealityRelationRef.current(node);
+                officialInteractionSuppressedRef.current = false;
                 return;
               }
 
@@ -780,6 +974,7 @@ export function GraphCanvas({
         const currentGraphHost = graphHostRef.current;
         if (!currentGraphHost || graphRef.current !== graph) return;
         hoverStateActiveRef.current = syncG6HtmlNodeStateClasses(graph, currentGraphHost).hasHoverState;
+        scheduleSelectionToolbarPositionUpdate();
       };
 
       graph.on(GraphEvent.AFTER_DRAW, syncRenderedOfficialStateClasses);
@@ -787,6 +982,7 @@ export function GraphCanvas({
 
       graph.on(NodeEvent.CLICK, (event: any) => {
         const nodeId = resolveEventId(event);
+        closeCluePatternPanel();
         setCanvasContextMenu(null);
         setActiveRoleFilter(null);
         if (nodeId) {
@@ -799,6 +995,7 @@ export function GraphCanvas({
 
       graph.on(EdgeEvent.CLICK, (event: any) => {
         const edgeId = resolveEventId(event);
+        closeCluePatternPanel();
         setCanvasContextMenu(null);
         setActiveRoleFilter(null);
         if (edgeId) {
@@ -820,10 +1017,13 @@ export function GraphCanvas({
 
       graph.on(CanvasEvent.CLICK, () => {
         setCanvasContextMenu(null);
-        if (!brushSelectionRef.current) {
-          clearFocusState();
-          void clearInteractionState();
+        if (suppressNextCanvasClickRef.current) {
+          suppressNextCanvasClickRef.current = false;
+          return;
         }
+        closeCluePatternPanel();
+        clearFocusState();
+        void clearInteractionState();
       });
 
       graphRef.current = graph;
@@ -865,10 +1065,11 @@ export function GraphCanvas({
   useEffect(() => {
     const graph = graphRef.current;
     if (!graph) return;
-    graph.setBehaviors(buildGraphBehaviors(brushMode, {
+    graph.setBehaviors(buildGraphBehaviors({
       onSelectionChange: syncSelectedNodeIdsFromGraph,
       onOfficialStateChange: syncOfficialStateClasses,
       isInteractionSuppressed: () => officialInteractionSuppressedRef.current,
+      canBrushSelect: () => !replayModeRef.current,
       canDragElement: () => !replayModeRef.current,
       onDragFinish: () => {
         const positions = collectRenderedNodePositions(graph);
@@ -876,11 +1077,13 @@ export function GraphCanvas({
         onNodePositionsChangeRef.current?.(positions, 'drag');
       },
     }));
-    if (brushMode) {
-      void clearG6HtmlNodeHoverStates(graph, graphHostRef.current);
-      hoverStateActiveRef.current = false;
-    }
-  }, [brushMode, graphReadyNonce, nodes]);
+  }, [graphReadyNonce, nodes]);
+
+  useEffect(() => {
+    const graph = graphRef.current;
+    if (!graph || !graphRenderedRef.current) return;
+    applyCluePatternHulls(graph, activeCluePatternHulls);
+  }, [activeCluePatternHulls, graphReadyNonce, nodes.length]);
 
   useEffect(() => {
     const graph = graphRef.current;
@@ -997,6 +1200,7 @@ export function GraphCanvas({
             transition.shouldAnimate ? GRAPH_VIEWPORT_ANIMATION : false,
           );
         }
+        applyCluePatternHulls(graph, activeCluePatternHulls);
       })
       .catch(() => {
         if (renderCycleRef.current === currentRenderCycle) {
@@ -1009,32 +1213,12 @@ export function GraphCanvas({
   useEffect(() => {
     const graph = graphRef.current;
     if (!graph || !nodes.length || !graphRenderedRef.current) return;
-
-    graph.updateNodeData(
-      nodes.map((node) => ({
-        id: node.id,
-        data: buildNodeRenderData(
-          node,
-          graphView.nodeMetricsById.get(node.id),
-          Boolean(resolveTradeCard(node, tradeCardByNodeId)),
-          activeNodeId,
-          selectedNodeIds,
-          activeNeighborhood,
-        ),
-      })),
-    );
-    graph.updateEdgeData(
-      renderEdges.map((edge) => {
-        const edgeId = resolveEdgeId(edge);
-          const metrics = graphView.edgeMetricsById.get(edgeId);
-          return {
-            id: edgeId,
-          data: buildEdgeRenderData(edge, metrics, activeNeighborhood, parallelOffsets.get(edgeId) ?? 0, activeEdgeId),
-        };
-      }),
-    );
-    void graph.draw().catch(() => {});
-  }, [activeEdgeId, activeNeighborhood, activeNodeId, graphReadyNonce, graphView, nodes, parallelOffsets, renderEdges, tradeCardByNodeId]);
+    applyGraphFocusState(activeNeighborhood, {
+      activeNodeId,
+      activeEdgeId,
+      selectedNodeIds,
+    });
+  }, [activeEdgeId, activeNeighborhood, activeNodeId, graphReadyNonce, graphView, nodes, parallelOffsets, renderEdges, selectedNodeIds, tradeCardByNodeId]);
 
   useEffect(() => {
     if (activeNodeId && !nodeLookup.has(activeNodeId)) {
@@ -1083,6 +1267,130 @@ export function GraphCanvas({
     lastEmittedFocusKeyRef.current = nextKey;
     onFocusChangeRef.current(nextFocus);
   }, [nodeLookup, selectedEdge, selectedNode]);
+
+  const primarySelectedNode = selectedNodes[0] ?? null;
+  const singleSelectedNode = selectedNodes.length === 1 ? selectedNodes[0] : null;
+  const singleSelectedTradeCard = singleSelectedNode ? resolveTradeCard(singleSelectedNode, tradeCardByNodeId) : null;
+  const canRunSingleDrill = Boolean(singleSelectedNode && singleSelectedTradeCard && !singleSelectedNode.isExcluded && !drilldownLoading);
+  const canRunSingleDetailAnalysis = Boolean(singleSelectedNode && !singleSelectedNode.isExcluded && hasIncidentEdges(singleSelectedNode.id, edgeLookup));
+  const canRunSingleSummaryAnalysis = Boolean(singleSelectedNode && !singleSelectedNode.isExcluded && hasNodeAccountEvidence(singleSelectedNode, tradeCardByNodeId));
+  const selectedRestorableNode = singleSelectedNode?.isExcluded ? singleSelectedNode : null;
+  const selectedNodesToExclude = selectedNodes.filter((node) => !node.isExcluded);
+  const showSelectionToolbar = Boolean(nodes.length && selectedNodeIds.length && !replayMode);
+
+  const focusCluePattern = (match: CaseGraphCluePatternMatch) => {
+    const nextSelectedNodeIds = match.nodeIds.filter((nodeId) => nodeLookupRef.current.has(nodeId));
+    if (!nextSelectedNodeIds.length) return;
+    const nextNeighborhood = {
+      relatedNodeIds: new Set(nextSelectedNodeIds),
+      relatedEdgeIds: new Set(match.edgeIds),
+    };
+    const focusCycle = cluePatternFocusCycleRef.current + 1;
+    cluePatternFocusCycleRef.current = focusCycle;
+    void (async () => {
+      await clearInteractionState();
+      if (cluePatternFocusCycleRef.current !== focusCycle) return;
+      clearFocusState({ clearCluePatternPanel: false });
+      await applyGraphFocusState(null, {
+        activeNodeId: null,
+        activeEdgeId: null,
+        selectedNodeIds: [],
+      });
+      if (cluePatternFocusCycleRef.current !== focusCycle) return;
+      setSelectedCluePatternId(match.id);
+      activeNodeIdRef.current = null;
+      activeEdgeIdRef.current = null;
+      selectedNodeIdsRef.current = [];
+      activeNeighborhoodRef.current = nextNeighborhood;
+      setActiveRoleFilter(null);
+      setActiveEdgeId(null);
+      setActiveNodeId(null);
+      setSelectedNodeIds([]);
+      await applyGraphFocusState(nextNeighborhood, {
+        activeNodeId: null,
+        activeEdgeId: null,
+        selectedNodeIds: [],
+      });
+    })();
+  };
+
+  const runSelectionNodeAction = (value: NodeContextMenuItem['value']) => {
+    const node = singleSelectedNode ?? primarySelectedNode;
+    if (!node) return;
+    setCanvasContextMenu(null);
+
+    if (value === 'drill:both' || value === 'drill:in' || value === 'drill:out') {
+      if (!singleSelectedNode || singleSelectedNode.isExcluded || drilldownLoadingRef.current) return;
+      const tradeCard = resolveTradeCard(singleSelectedNode, tradeCardByNodeIdRef.current);
+      if (!tradeCard) return;
+      officialInteractionSuppressedRef.current = true;
+      clearFocusState();
+      void clearInteractionState();
+      onDrillDownRef.current(value.replace('drill:', '') as 'in' | 'out' | 'both', singleSelectedNode, tradeCard);
+      return;
+    }
+
+    if (value === 'detail-analysis') {
+      if (!singleSelectedNode || singleSelectedNode.isExcluded) return;
+      officialInteractionSuppressedRef.current = true;
+      clearFocusState();
+      void clearInteractionState();
+      onOpenNodeDetailAnalysisRef.current(singleSelectedNode);
+      officialInteractionSuppressedRef.current = false;
+      return;
+    }
+
+    if (value === 'summary-analysis') {
+      if (!singleSelectedNode || singleSelectedNode.isExcluded) return;
+      officialInteractionSuppressedRef.current = true;
+      clearFocusState();
+      void clearInteractionState();
+      onOpenNodeSummaryAnalysisRef.current(singleSelectedNode);
+      officialInteractionSuppressedRef.current = false;
+      return;
+    }
+
+    if (value === 'manual-trade') {
+      if (!singleSelectedNode || singleSelectedNode.isExcluded) return;
+      officialInteractionSuppressedRef.current = true;
+      clearFocusState();
+      void clearInteractionState();
+      onOpenManualTradeRef.current(singleSelectedNode);
+      officialInteractionSuppressedRef.current = false;
+      return;
+    }
+
+    if (value === 'reality-relation') {
+      if (!singleSelectedNode || singleSelectedNode.isExcluded) return;
+      officialInteractionSuppressedRef.current = true;
+      clearFocusState();
+      void clearInteractionState();
+      onOpenRealityRelationRef.current(singleSelectedNode);
+      officialInteractionSuppressedRef.current = false;
+      return;
+    }
+
+    if (value === 'exclude') {
+      if (excludingRef.current) return;
+      const nodesToExclude = selectedNodesRefCurrent(nodeLookupRef.current, selectedNodeIdsRef.current)
+        .filter((item) => !item.isExcluded)
+        .map(buildExcludedNodePayload);
+      if (nodesToExclude.length > 1) {
+        onExcludeNodesRef.current(nodesToExclude);
+      } else if (nodesToExclude[0]) {
+        onExcludeNodeRef.current(nodesToExclude[0]);
+      }
+      return;
+    }
+
+    if (value === 'restore') {
+      if (!singleSelectedNode?.isExcluded || excludingRef.current) return;
+      officialInteractionSuppressedRef.current = true;
+      clearFocusState();
+      void clearInteractionState();
+      onRestoreNodeRef.current(singleSelectedNode.id);
+    }
+  };
 
   return (
     <section className="case-graph-canvas" aria-label="主图画布">
@@ -1138,6 +1446,13 @@ export function GraphCanvas({
       <div
         className="case-graph-canvas-stage case-graph-canvas-stage--full"
         ref={stageRef}
+        onAuxClick={(event) => {
+          if (event.button === 1) {
+            event.preventDefault();
+          }
+        }}
+        onPointerUpCapture={scheduleSelectionToolbarPositionUpdate}
+        onWheelCapture={scheduleSelectionToolbarPositionUpdate}
         onContextMenuCapture={(event) => {
           if (!shouldSuppressNativeContextMenu(event.target)) return;
           event.preventDefault();
@@ -1151,6 +1466,7 @@ export function GraphCanvas({
           }
           event.preventDefault();
           event.stopPropagation();
+          closeCluePatternPanel();
           const bounds = stageRef.current?.getBoundingClientRect();
           const pointer = {
             x: bounds ? event.clientX - bounds.left : event.clientX,
@@ -1183,9 +1499,8 @@ export function GraphCanvas({
               title="重置视图"
               onClick={() => {
                 clearFocusState();
+                closeCluePatternPanel();
                 setCanvasContextMenu(null);
-                setBrushSelection(null);
-                setBrushMode(false);
                 void clearInteractionState();
                 void graphRef.current?.fitView({ when: 'always', direction: 'both' });
               }}
@@ -1194,19 +1509,22 @@ export function GraphCanvas({
               <span>重置视图</span>
             </button>
             <button
-              className={`case-graph-mini-button${brushMode ? ' is-active' : ''}`}
+              className="case-graph-mini-button"
               type="button"
-              aria-pressed={brushMode}
-              disabled={!nodes.length || replayMode}
-              title={brushMode ? '退出框选' : '框选节点'}
+              disabled={!nodes.length || replayMode || loading || drilldownLoading}
+              title="识别异常资金模式"
               onClick={() => {
                 setCanvasContextMenu(null);
-                setBrushSelection(null);
-                setBrushMode((current) => !current);
+                if (cluePatternsVisible) {
+                  clearFocusState();
+                  void clearInteractionState();
+                } else {
+                  setCluePatternsVisible(true);
+                }
               }}
             >
-              <Scan size={14} />
-              <span>{brushMode ? '退出框选' : '框选节点'}</span>
+              <SearchCheck size={14} />
+              <span>模式{cluePatternMatches.length ? ` ${cluePatternMatches.length}` : ''}</span>
             </button>
             <button
               className="case-graph-mini-button"
@@ -1214,6 +1532,7 @@ export function GraphCanvas({
               disabled={!nodes.length || replayMode || loading || drilldownLoading}
               title="流向图"
               onClick={() => {
+                closeCluePatternPanel();
                 setCanvasContextMenu(null);
                 onOpenFlowGraph?.();
               }}
@@ -1227,6 +1546,7 @@ export function GraphCanvas({
               disabled={!nodes.length || replayMode || loading || drilldownLoading}
               title="分析图上节点关系"
               onClick={() => {
+                closeCluePatternPanel();
                 setCanvasContextMenu(null);
                 onCompleteGraphRelations();
               }}
@@ -1241,12 +1561,53 @@ export function GraphCanvas({
               aria-label="钻取配置"
               title="钻取配置"
               onClick={() => {
+                closeCluePatternPanel();
                 setCanvasContextMenu(null);
                 onOpenGraphConfig();
               }}
             >
               <Settings2 size={14} />
             </button>
+          </div>
+        ) : null}
+
+        {cluePatternsVisible && !replayMode ? (
+          <div className="case-graph-clue-pattern-panel" aria-label="异常资金模式识别结果">
+            <div className="case-graph-clue-pattern-heading">
+              <SearchCheck size={14} />
+              <span>异常资金模式</span>
+              <strong>{cluePatternMatches.length}</strong>
+            </div>
+            {cluePatternMatches.length ? (
+              <div className="case-graph-clue-pattern-list">
+                {cluePatternMatches.map((match, index) => (
+                  <button
+                    type="button"
+                    key={match.id}
+                    className={`case-graph-clue-pattern-item${selectedCluePatternId === match.id ? ' is-active' : ''}`}
+                    onClick={() => focusCluePattern(match)}
+                  >
+                    <i style={{ background: CLUE_PATTERN_HULL_STYLES[index % CLUE_PATTERN_HULL_STYLES.length].stroke }} />
+                    <span>
+                      <strong>{match.label}</strong>
+                      <em>适用：{match.caseTypes.join('、')}</em>
+                      <small>{match.description}</small>
+                      <small>{match.nodeIds.length} 个主体 · {match.edgeIds.length} 条资金线</small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <p>当前图暂未识别到明显的异常资金模式。</p>
+            )}
+            {selectedCluePatternId ? (
+              <div className="case-graph-clue-pattern-advice">
+                <strong>核查建议</strong>
+                <p>{selectedCluePattern?.suggestion}</p>
+              </div>
+            ) : (
+              <p className="case-graph-clue-pattern-tip">这些结果只是资金形态提示，点击某一项后会在图上圈出对应主体。</p>
+            )}
           </div>
         ) : null}
 
@@ -1301,7 +1662,6 @@ export function GraphCanvas({
         <div
           className="case-graph-g6-host"
           ref={graphHostRef}
-          data-brush-mode={brushMode ? 'true' : 'false'}
           data-replay-mode={replayMode ? 'true' : 'false'}
           data-has-replay-timeline={replayTimelineView ? 'true' : 'false'}
         />
@@ -1326,17 +1686,100 @@ export function GraphCanvas({
           </div>
         ) : null}
 
-        {nodes.length && selectedNodeIds.length > 1 ? (
-          <div className="case-graph-selection-toolbar">
+        {showSelectionToolbar ? (
+          <div
+            className="case-graph-selection-toolbar"
+            ref={selectionToolbarRef}
+            style={selectionToolbarPosition
+              ? { left: selectionToolbarPosition.x, top: selectionToolbarPosition.y }
+              : { left: 12, top: 12, visibility: 'hidden' }}
+          >
             <MousePointer2 size={14} />
-            <span>已选择 {selectedNodeIds.length} 个节点</span>
-            <button
-              type="button"
-              disabled={replayMode || excluding || selectedNodes.every((node) => node.isExcluded)}
-              onClick={() => onExcludeNodes(selectedNodes.filter((node) => !node.isExcluded).map(buildExcludedNodePayload))}
-            >
-              取消上图
-            </button>
+            <span>{selectedNodeIds.length === 1 ? nodeDisplayName(primarySelectedNode) : `已选择 ${selectedNodeIds.length} 个主体`}</span>
+            {selectedRestorableNode ? (
+              <button
+                type="button"
+                className="case-graph-selection-toolbar-action"
+                disabled={excluding}
+                onClick={() => runSelectionNodeAction('restore')}
+              >
+                恢复上图
+              </button>
+            ) : null}
+            {singleSelectedNode && !singleSelectedNode.isExcluded ? (
+              <>
+                {canRunSingleDrill ? (
+                  <>
+                    <button
+                      type="button"
+                      className="case-graph-selection-toolbar-action"
+                      disabled={drilldownLoading}
+                      onClick={() => runSelectionNodeAction('drill:both')}
+                    >
+                      双向钻取
+                    </button>
+                    <button
+                      type="button"
+                      className="case-graph-selection-toolbar-action"
+                      disabled={drilldownLoading}
+                      onClick={() => runSelectionNodeAction('drill:in')}
+                    >
+                      上钻
+                    </button>
+                    <button
+                      type="button"
+                      className="case-graph-selection-toolbar-action"
+                      disabled={drilldownLoading}
+                      onClick={() => runSelectionNodeAction('drill:out')}
+                    >
+                      下钻
+                    </button>
+                  </>
+                ) : null}
+                {canRunSingleDetailAnalysis ? (
+                  <button
+                    type="button"
+                    className="case-graph-selection-toolbar-action"
+                    onClick={() => runSelectionNodeAction('detail-analysis')}
+                  >
+                    交易核查
+                  </button>
+                ) : null}
+                {canRunSingleSummaryAnalysis ? (
+                  <button
+                    type="button"
+                    className="case-graph-selection-toolbar-action"
+                    onClick={() => runSelectionNodeAction('summary-analysis')}
+                  >
+                    线索扩展
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="case-graph-selection-toolbar-action"
+                  onClick={() => runSelectionNodeAction('manual-trade')}
+                >
+                  补充资金往来
+                </button>
+                <button
+                  type="button"
+                  className="case-graph-selection-toolbar-action"
+                  onClick={() => runSelectionNodeAction('reality-relation')}
+                >
+                  标注现实关系
+                </button>
+              </>
+            ) : null}
+            {selectedNodesToExclude.length ? (
+              <button
+                type="button"
+                className="case-graph-selection-toolbar-action case-graph-selection-toolbar-action--danger"
+                disabled={excluding}
+                onClick={() => runSelectionNodeAction('exclude')}
+              >
+                {selectedNodesToExclude.length > 1 ? `取消上图 ${selectedNodesToExclude.length} 个` : '取消上图'}
+              </button>
+            ) : null}
           </div>
         ) : null}
 
@@ -1665,13 +2108,14 @@ export function clearGraphTransientStatesForTest(states: string[]): string[] {
 }
 
 export function buildGraphBehaviorsForTest(
-  brushMode: boolean,
   interactionSuppressed = false,
   canDragElement = true,
+  canBrushSelect = true,
 ): Array<string | Record<string, unknown>> {
-  return buildGraphBehaviors(brushMode, {
+  return buildGraphBehaviors({
     isInteractionSuppressed: () => interactionSuppressed,
     canDragElement: () => canDragElement,
+    canBrushSelect: () => canBrushSelect,
   });
 }
 
@@ -1898,6 +2342,20 @@ function buildNodeContextMenuItems(input: {
   return items;
 }
 
+function selectedNodesRefCurrent(
+  nodeLookup: Map<string, CaseGraphData['nodes'][number]>,
+  selectedNodeIds: string[],
+): CaseGraphData['nodes'] {
+  return selectedNodeIds
+    .map((nodeId) => nodeLookup.get(nodeId))
+    .filter((node): node is CaseGraphData['nodes'][number] => Boolean(node));
+}
+
+function nodeDisplayName(node: CaseGraphData['nodes'][number] | null): string {
+  if (!node) return '已选择主体';
+  return String(node.label || node.name || node.accountName || node.tradeCard || node.id || '已选择主体');
+}
+
 function hasIncidentEdges(nodeId: string, edges: Map<string, CaseGraphData['edges'][number]>): boolean {
   for (const edge of edges.values()) {
     if (edge.edgeKind === 'reality') continue;
@@ -1924,72 +2382,119 @@ function hasNodeAccountEvidence(
 }
 
 function buildGraphBehaviors(
-  brushMode: boolean,
   callbacks: {
     onSelectionChange?: (states: GraphSelectionStates) => void;
     onOfficialStateChange?: () => void;
     isInteractionSuppressed?: () => boolean;
+    canBrushSelect?: () => boolean;
     canDragElement?: () => boolean;
     onDragFinish?: () => void;
   } = {},
 ): Array<string | Record<string, unknown>> {
   return [
-    ...(brushMode
-      ? [
-          {
-            type: 'brush-select',
-            state: 'selected',
-            enableElements: ['node'],
-            trigger: [],
-            animation: false,
-            onSelect: callbacks.onSelectionChange,
-          },
-        ]
-      : [
-          'drag-canvas',
-          {
-            type: 'hover-activate',
-            enable: (event: any) => !callbacks.isInteractionSuppressed?.() && event?.targetType === 'node',
-            degree: 1,
-            state: HOVER_HIGHLIGHT_STATE,
-            inactiveState: HOVER_DIM_STATE,
-            animation: false,
-            onHover: (event: any) => {
-              event?.view?.setCursor?.('pointer');
-              callbacks.onOfficialStateChange?.();
-            },
-            onHoverEnd: (event: any) => {
-              event?.view?.setCursor?.('default');
-              callbacks.onOfficialStateChange?.();
-            },
-          },
-          {
-            type: 'click-select',
-            enable: (event: any) => !callbacks.isInteractionSuppressed?.() && (
-              event?.targetType == null || event?.targetType === 'canvas' || event?.targetType === 'node' || event?.targetType === 'edge'
-            ),
-            multiple: true,
-            trigger: ['shift'],
-            state: CLICK_HIGHLIGHT_STATE,
-            neighborState: CLICK_HIGHLIGHT_STATE,
-            unselectedState: CLICK_DIM_STATE,
-            degree: ONE_HOP_NEIGHBORHOOD_DEGREE,
-            animation: false,
-            ...(callbacks.onOfficialStateChange ? { onClick: callbacks.onOfficialStateChange } : {}),
-          },
-          {
-            type: 'drag-element',
-            key: 'case-graph-drag-node',
-            dropEffect: 'none',
-            hideEdge: 'none',
-            enable: (event: any) => callbacks.canDragElement?.() !== false
-              && (event?.targetType == null || event?.targetType === 'node')
-              && resolvePointerButton(event) === 0,
-            onFinish: callbacks.onDragFinish,
-          },
-        ]),
+    {
+      type: 'drag-canvas',
+      enable: (event: any) => isMiddlePointer(event),
+    },
+    {
+      type: 'brush-select',
+      state: 'selected',
+      enableElements: ['node'],
+      trigger: ['drag'],
+      animation: false,
+      style: {
+        lineWidth: 2,
+        fill: '#3b82f6',
+        stroke: '#2563eb',
+        fillOpacity: 0.08,
+        opacity: 1,
+        radius: 0,
+      },
+      enable: (event: any) => callbacks.canBrushSelect?.() !== false
+        && !callbacks.isInteractionSuppressed?.()
+        && event?.targetType === 'canvas'
+        && isLeftPointer(event),
+      onSelect: callbacks.onSelectionChange,
+    },
+    {
+      type: 'hover-activate',
+      enable: (event: any) => !callbacks.isInteractionSuppressed?.() && event?.targetType === 'node',
+      degree: 1,
+      state: HOVER_HIGHLIGHT_STATE,
+      inactiveState: HOVER_DIM_STATE,
+      animation: false,
+      onHover: (event: any) => {
+        event?.view?.setCursor?.('pointer');
+        callbacks.onOfficialStateChange?.();
+      },
+      onHoverEnd: (event: any) => {
+        event?.view?.setCursor?.('default');
+        callbacks.onOfficialStateChange?.();
+      },
+    },
+    {
+      type: 'click-select',
+      enable: (event: any) => !callbacks.isInteractionSuppressed?.() && (
+        event?.targetType == null || event?.targetType === 'canvas' || event?.targetType === 'node' || event?.targetType === 'edge'
+      ),
+      multiple: true,
+      trigger: ['shift'],
+      state: CLICK_HIGHLIGHT_STATE,
+      neighborState: CLICK_HIGHLIGHT_STATE,
+      unselectedState: CLICK_DIM_STATE,
+      degree: ONE_HOP_NEIGHBORHOOD_DEGREE,
+      animation: false,
+      ...(callbacks.onOfficialStateChange ? { onClick: callbacks.onOfficialStateChange } : {}),
+    },
+    {
+      type: 'drag-element',
+      key: 'case-graph-drag-node',
+      dropEffect: 'none',
+      hideEdge: 'none',
+      enable: (event: any) => callbacks.canDragElement?.() !== false
+        && (event?.targetType == null || event?.targetType === 'node')
+        && isLeftPointer(event),
+      onFinish: callbacks.onDragFinish,
+    },
     'zoom-canvas',
   ];
+}
+
+function buildCluePatternHullPlugins(): Array<Record<string, unknown>> {
+  return Array.from({ length: MAX_CLUE_PATTERN_HULLS }, (_, index) => {
+    const style = CLUE_PATTERN_HULL_STYLES[index % CLUE_PATTERN_HULL_STYLES.length];
+    return {
+      type: 'hull',
+      key: `case-graph-clue-hull-${index}`,
+      members: [],
+      padding: 18,
+      corner: 'rounded',
+      concavity: Infinity,
+      fill: style.fill,
+      fillOpacity: 0.08,
+      stroke: style.stroke,
+      strokeOpacity: 0.42,
+      lineWidth: 2,
+      lineDash: [8, 6],
+    };
+  });
+}
+
+function applyCluePatternHulls(graph: G6Graph, matches: Array<CaseGraphCluePatternMatch | null>): void {
+  for (let index = 0; index < MAX_CLUE_PATTERN_HULLS; index += 1) {
+    const key = `case-graph-clue-hull-${index}`;
+    const members = matches[index]?.nodeIds ?? [];
+    const plugin = (graph as any).getPluginInstance?.(key);
+    if (plugin?.updateMember) {
+      try {
+        plugin.updateMember(members);
+        continue;
+      } catch {
+        // G6 hull may not have mounted yet during the first render cycle.
+      }
+    }
+    graph.updatePlugin({ key, members } as any);
+  }
 }
 
 function collectRenderedNodePositions(graph: G6Graph): Record<string, { x: number; y: number }> {
@@ -2278,6 +2783,43 @@ function resolvePointerButton(event: any): number {
   return Number(event?.button ?? event?.nativeEvent?.button ?? event?.originalEvent?.button ?? 0);
 }
 
+function resolvePointerButtons(event: any): number {
+  return Number(event?.buttons ?? event?.nativeEvent?.buttons ?? event?.originalEvent?.buttons ?? 0);
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function findGraphNodeElement(graphHost: HTMLElement, nodeId: string): HTMLElement | null {
+  let bestElement: HTMLElement | null = null;
+  let bestArea = 0;
+  for (const element of graphHost.querySelectorAll<HTMLElement>('.case-graph-g6-node')) {
+    if (element.dataset.nodeId !== nodeId) {
+      continue;
+    }
+    const rect = element.getBoundingClientRect();
+    const area = rect.width * rect.height;
+    if (!bestElement || area > bestArea) {
+      bestElement = element;
+      bestArea = area;
+    }
+  }
+  return bestElement;
+}
+
+function isLeftPointer(event: any): boolean {
+  const button = resolvePointerButton(event);
+  const buttons = resolvePointerButtons(event);
+  return button === 0 && (buttons === 0 || (buttons & 1) === 1);
+}
+
+function isMiddlePointer(event: any): boolean {
+  const button = resolvePointerButton(event);
+  const buttons = resolvePointerButtons(event);
+  return button === 1 || (buttons & 4) === 4;
+}
+
 function finiteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
@@ -2318,43 +2860,6 @@ function resolveMenuPosition(
   };
 }
 
-function normalizeBrushRect(brush: BrushSelectionState): { left: number; top: number; width: number; height: number; right: number; bottom: number } {
-  const left = Math.min(brush.startX, brush.currentX);
-  const top = Math.min(brush.startY, brush.currentY);
-  const right = Math.max(brush.startX, brush.currentX);
-  const bottom = Math.max(brush.startY, brush.currentY);
-  return { left, top, right, bottom, width: right - left, height: bottom - top };
-}
-
-function brushSelectionStyle(brush: BrushSelectionState): CSSProperties {
-  const rect = normalizeBrushRect(brush);
-  return {
-    left: rect.left,
-    top: rect.top,
-    width: rect.width,
-    height: rect.height,
-  };
-}
-
-function isNodeInsideBrush(
-  node: CaseGraphData['nodes'][number],
-  rect: { left: number; top: number; right: number; bottom: number },
-  stage: HTMLDivElement | null,
-): boolean {
-  if (!stage) return false;
-  const nodeElement = stage.querySelector<HTMLElement>(
-    `.case-graph-g6-node[data-node-id="${cssEscapeValue(node.id)}"]`,
-  );
-  if (!nodeElement) return false;
-  const stageBounds = stage.getBoundingClientRect();
-  const nodeBounds = nodeElement.getBoundingClientRect();
-  const nodeCenter = {
-    x: nodeBounds.left + nodeBounds.width / 2 - stageBounds.left,
-    y: nodeBounds.top + nodeBounds.height / 2 - stageBounds.top,
-  };
-  return nodeCenter.x >= rect.left && nodeCenter.x <= rect.right && nodeCenter.y >= rect.top && nodeCenter.y <= rect.bottom;
-}
-
 function renderNodeMarkup(data: {
   nodeId: string;
   title: string;
@@ -2390,13 +2895,6 @@ function renderNodeMarkup(data: {
       </div>
     </div>
   `;
-}
-
-function cssEscapeValue(value: string): string {
-  if (typeof CSS !== 'undefined' && typeof CSS.escape === 'function') {
-    return CSS.escape(value);
-  }
-  return value.replace(/["\\]/g, '\\$&');
 }
 
 function resolveEventId(event: any): string | null {

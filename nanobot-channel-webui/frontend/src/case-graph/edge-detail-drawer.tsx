@@ -26,6 +26,7 @@ interface EdgeDetailDrawerProps {
   onToggleTrade: (tradeId: string) => void;
   onToggleTrades: (tradeIds: string[], selected: boolean) => void;
   onApplyExclude: () => void;
+  onExcludeTrades?: (tradeIds: string[]) => void;
   onRestoreExcludedTrades?: (tradeIds: string[]) => void;
   onClose: () => void;
   partyContext?: EdgeDetailPartyContext | null;
@@ -43,6 +44,7 @@ export function EdgeDetailDrawer({
   onToggleTrade,
   onToggleTrades,
   onApplyExclude,
+  onExcludeTrades,
   onRestoreExcludedTrades,
   onClose,
   partyContext,
@@ -277,6 +279,15 @@ export function EdgeDetailDrawer({
                                   onClick={() => onRestoreExcludedTrades?.([tradeId])}
                                 >
                                   恢复
+                                </button>
+                              ) : tradeId ? (
+                                <button
+                                  type="button"
+                                  className="case-graph-secondary-button case-graph-edge-row-action case-graph-edge-row-action--danger"
+                                  disabled={applying}
+                                  onClick={() => onExcludeTrades?.([tradeId])}
+                                >
+                                  排除
                                 </button>
                               ) : (
                                 <span className="case-graph-edge-row-muted">-</span>

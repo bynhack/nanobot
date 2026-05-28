@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Network } from 'lucide-react';
 
 import { AuthTokenModal } from './auth-token-modal';
 import { readAppearanceMode, readUiTheme } from './app-helpers';
 import { bootstrap, DETAIL_PANEL_WIDTH_KEY, appStore, useAppSelector } from './app-state';
 import { loadSessionWorkspace } from './api';
-import { ChatWorkspace } from './components/chat/chat-workspace';
 import { ConversationContentPane } from './components/chat/conversation-content-pane';
 import { DetailPreviewContext, type ToolDetailPayload } from './components/chat/detail-preview-context';
-import { WorkspaceModeSwitch } from './components/workspace-mode-switch';
 import { DEFAULT_UI_THEME } from './components/settings/types';
 import { CaseGraphWorkbench } from './case-graph/workbench';
 import type { DetailView } from './detail-preview-pane';
@@ -51,7 +50,7 @@ export function App() {
   const [flashMessage, setFlashMessage] = useState<string | null>(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [previewSidebarOpen, setPreviewSidebarOpen] = useState(false);
-  const [appView, setAppView] = useState<AppView>('chat');
+  const [appView, setAppView] = useState<AppView>('case_graph');
   const [detailView, setDetailView] = useState<DetailView | null>(null);
   const [contentPanelPinnedOpen, setContentPanelPinnedOpen] = useState(false);
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
@@ -126,14 +125,14 @@ export function App() {
   }, []);
 
   const openMedia = useCallback((item: MediaItem) => {
-    setAppView('chat');
+    setAppView('case_graph');
     ensurePreferredDetailWidth();
     setContentPanelPinnedOpen(true);
     setDetailView({ type: 'media', item });
   }, [ensurePreferredDetailWidth]);
 
   const openTool = useCallback((title: string, payload: ToolDetailPayload) => {
-    setAppView('chat');
+    setAppView('case_graph');
     ensurePreferredDetailWidth();
     setContentPanelPinnedOpen(true);
     setDetailView({ type: 'tool', title, payload });
@@ -143,7 +142,7 @@ export function App() {
     if (!currentChatId) {
       return;
     }
-    setAppView('chat');
+    setAppView('case_graph');
     ensurePreferredDetailWidth();
     setContentPanelPinnedOpen(true);
     const chatId = currentChatId;
@@ -188,7 +187,7 @@ export function App() {
       closeContentPanel();
       return;
     }
-    setAppView('chat');
+    setAppView('case_graph');
     ensurePreferredDetailWidth();
     setContentPanelPinnedOpen(true);
   }, [closeContentPanel, contentPanelOpen, ensurePreferredDetailWidth]);
@@ -322,73 +321,32 @@ export function App() {
         }
       >
         {resizingDetailPanel ? <div className="detail-resize-overlay" aria-hidden="true" /> : null}
-        {appView === 'case_graph' ? (
+        {appView === 'case_graph' || appView === 'settings' ? (
           <CaseGraphWorkbench
             token={authToken}
-            onBack={() => setAppView('chat')}
+            onBack={() => setAppView('case_graph')}
+            onOpenSettings={handleOpenSettings}
             title={bootstrap.title}
             authResolved={authResolved}
             currentUser={currentUser}
             showFlash={showFlash}
             headerSlot={(
-              <WorkspaceModeSwitch
-                activeMode="case_graph"
-                onSelectChat={() => setAppView('chat')}
-              />
+              <div className="case-graph-product-brand" aria-label={bootstrap.title}>
+                <span className="case-graph-product-mark">
+                  <Network size={18} />
+                </span>
+                <span>{bootstrap.title}</span>
+              </div>
             )}
           />
-        ) : (
-          <>
-            <ChatWorkspace
-              authResolved={authResolved}
-              authToken={authToken}
-              currentUser={currentUser}
-              title={bootstrap.title}
-              flashMessage={flashMessage}
-              onOpenSettings={handleOpenSettings}
-              onOpenCaseGraph={() => setAppView('case_graph')}
-              sidebarCollapsed={effectiveSidebarCollapsed}
-              onToggleSidebar={handleToggleSidebar}
-              previewOpen={previewOpen}
-              immersivePreview={immersivePreview}
-              showFlash={showFlash}
-              previewActions={previewActions}
-              onOpenMedia={openMedia}
-              showWorkspacePanel={false}
-              workspaceFileCount={workspaceFileCount}
-              workspaceLoading={workspaceLoading}
-              onOpenWorkspace={openWorkspace}
-              contentPanelOpen={contentPanelOpen}
-              onToggleContentPanel={toggleContentPanel}
-            />
-
-            <ConversationContentPane
-              detailView={detailView}
-              immersive={immersivePreview}
-              open={contentPanelOpen}
-              width={detailPanelWidth}
-              token={authToken}
-              workspaceAvailable={Boolean(currentChatId)}
-              workspaceOpen={workspacePanelOpen}
-              workspaceLoading={workspaceLoading}
-              workspaceError={workspacePanel.error}
-              workspace={panelWorkspace}
-              workspaceFileCount={workspaceFileCount}
-              onOpenWorkspace={openWorkspace}
-              onCloseWorkspace={closeWorkspacePanel}
-              onOpenWorkspaceFile={openWorkspaceFile}
-              onCloseDetail={closeContentDetail}
-              onResizeStart={() => setResizingDetailPanel(true)}
-            />
-          </>
-        )}
+        ) : null}
 
         {appView === 'settings' ? (
           <SettingsScreen
             authRequired={bootstrap.authRequired}
             connectionState={connectionState}
             currentChatId={currentChatId}
-            onBack={() => setAppView('chat')}
+            onBack={() => setAppView('case_graph')}
             onOpenAuth={() => setAuthModalOpen(true)}
             appearanceMode={appearanceMode}
             onAppearanceModeChange={setAppearanceMode}

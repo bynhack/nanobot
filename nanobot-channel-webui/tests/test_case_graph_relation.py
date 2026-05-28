@@ -2574,3 +2574,136 @@ def test_relation_service_filters_detail_trades_from_persisted_facts(tmp_path: P
     assert edge["tradeIds"] == ["1", "2"]
     assert result["graph"]["tradeFacts"]["1"]["serialNumber"] == "S-1"
     assert result["graphState"]["graph"]["layout"]["nodePositions"]["account:1"] == {"x": 111.0, "y": 222.0}
+
+
+def test_relation_service_restores_fully_removed_trade_edge_from_facts(tmp_path: Path) -> None:
+    class StubClient:
+        pass
+
+    storage = RelationGraphStorage(tmp_path)
+    storage.save_step(
+        case_id="37",
+        graph_id="graph-1",
+        step_type="seed_one_hop",
+        request={"caseId": "37"},
+        graph={
+            "nodes": [
+                {
+                    "id": "subject:suspect:1",
+                    "type": "subject",
+                    "label": "伍华中",
+                    "accountIds": ["1"],
+                    "accounts": [{"accountId": "1", "tradeCard": "W-1", "accountName": "伍华中"}],
+                },
+                {
+                    "id": "account:35",
+                    "type": "account",
+                    "label": "冯燕青",
+                    "accountId": "35",
+                    "tradeCard": "F-35",
+                    "accountName": "冯燕青",
+                },
+                {
+                    "id": "account:9",
+                    "type": "account",
+                    "label": "其他主体",
+                    "accountId": "9",
+                    "tradeCard": "O-9",
+                    "accountName": "其他主体",
+                },
+            ],
+            "edges": [
+                {
+                    "id": "money:account:35->subject:suspect:1",
+                    "from": "account:35",
+                    "to": "subject:suspect:1",
+                    "source": "account:35",
+                    "target": "subject:suspect:1",
+                    "tradeIds": ["45", "220"],
+                    "tradeAmount": 40000,
+                    "tradeCount": 2,
+                },
+                {
+                    "id": "money:subject:suspect:1->account:9",
+                    "from": "subject:suspect:1",
+                    "to": "account:9",
+                    "source": "subject:suspect:1",
+                    "target": "account:9",
+                    "tradeIds": ["9"],
+                    "tradeAmount": 1000,
+                    "tradeCount": 1,
+                }
+            ],
+            "tradeFacts": {
+                "45": {
+                    "tradeId": "45",
+                    "serialNumber": "S-45",
+                    "tradeAmount": 20000,
+                    "tradeTime": "2026-01-14 03:46:34",
+                    "payerAccountId": "35",
+                    "payerAccountName": "冯燕青",
+                    "payerTradeCard": "F-35",
+                    "payeeAccountId": "1",
+                    "payeeAccountName": "伍华中",
+                    "payeeTradeCard": "W-1",
+                },
+                "220": {
+                    "tradeId": "220",
+                    "serialNumber": "S-220",
+                    "tradeAmount": 20000,
+                    "tradeTime": "2026-01-14 03:46:33",
+                    "payerAccountId": "35",
+                    "payerAccountName": "冯燕青",
+                    "payerTradeCard": "F-35",
+                    "payeeAccountId": "1",
+                    "payeeAccountName": "伍华中",
+                    "payeeTradeCard": "W-1",
+                },
+                "9": {
+                    "tradeId": "9",
+                    "serialNumber": "S-9",
+                    "tradeAmount": 1000,
+                    "tradeTime": "2026-01-14 04:00:00",
+                    "payerAccountId": "1",
+                    "payerAccountName": "伍华中",
+                    "payerTradeCard": "W-1",
+                    "payeeAccountId": "9",
+                    "payeeAccountName": "其他主体",
+                    "payeeTradeCard": "O-9",
+                },
+            },
+        },
+        delta={"addedNodes": [], "addedEdges": [], "updatedNodes": [], "updatedEdges": []},
+        summary={},
+    )
+    service = RelationGraphService(storage=storage, query_client=StubClient())
+    excluded = service.exclude_trades(
+        {
+            "caseId": "37",
+            "graphId": "graph-1",
+            "excludedTrades": ["45", "220"],
+            "edgeTradeIds": {"money:account:35->subject:suspect:1": ["45", "220"]},
+            "tradeFacts": {},
+        }
+    )
+    assert [edge["id"] for edge in excluded["graph"]["edges"]] == ["money:subject:suspect:1->account:9"]
+    assert {node["id"] for node in excluded["graph"]["nodes"]} == {"subject:suspect:1", "account:9"}
+
+    restored = service.exclude_trades(
+        {
+            "caseId": "37",
+            "graphId": "graph-1",
+            "excludedTrades": [],
+            "edgeTradeIds": {},
+            "tradeFacts": {},
+        }
+    )
+
+    assert restored["graph"]["excludedTrades"] == []
+    assert {node["id"] for node in restored["graph"]["nodes"]} == {"account:35", "subject:suspect:1", "account:9"}
+    edge = next(edge for edge in restored["graph"]["edges"] if edge["id"] == "money:account:35->subject:suspect:1")
+    assert edge["id"] == "money:account:35->subject:suspect:1"
+    assert edge["tradeIds"] == ["220", "45"]
+    assert edge["tradeAmount"] == 40000
+    assert edge["tradeCount"] == 2
+    assert restored["delta"]["addedEdges"][0]["id"] == "money:account:35->subject:suspect:1"

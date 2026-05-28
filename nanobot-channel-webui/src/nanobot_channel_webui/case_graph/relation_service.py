@@ -2406,8 +2406,15 @@ class RelationGraphService:
             for node in graph.get("nodes") or []
             if isinstance(node, dict) and str(node.get("id") or "").strip()
         }
+        edge_trade_ids = cls._edge_trade_ids_with_restored_facts(
+            graph,
+            trade_facts=trade_facts,
+            edge_trade_ids=edge_trade_ids,
+            excluded_set=excluded_set,
+        )
         retained_node_ids: set[str] = set()
         next_edges: list[dict[str, Any]] = []
+        existing_edge_ids: set[str] = set()
         for raw_edge in graph.get("edges") or []:
             if not isinstance(raw_edge, dict):
                 continue
@@ -2416,6 +2423,7 @@ class RelationGraphService:
             if not source or not target or source == target:
                 continue
             edge_id = cls._canonical_edge_id(edge, source, target)
+            existing_edge_ids.add(edge_id)
             edge["id"] = edge_id
             edge["from"] = source
             edge["to"] = target
@@ -2442,6 +2450,39 @@ class RelationGraphService:
             retained_node_ids.update((source, target))
             next_edges.append(edge)
 
+        for edge_id, trade_ids in edge_trade_ids.items():
+            if edge_id in existing_edge_ids:
+                continue
+            source, target = cls._edge_endpoints({"id": edge_id})
+            if not source or not target or source == target:
+                continue
+            visible_trade_ids = [trade_id for trade_id in trade_ids if trade_id not in excluded_set]
+            if not visible_trade_ids:
+                continue
+            known_facts = [
+                trade_facts[trade_id]
+                for trade_id in visible_trade_ids
+                if trade_id in trade_facts
+            ]
+            if len(known_facts) != len(visible_trade_ids):
+                continue
+            cls._ensure_node_for_trade_endpoint(nodes_by_id, source, known_facts[0], "payer")
+            cls._ensure_node_for_trade_endpoint(nodes_by_id, target, known_facts[0], "payee")
+            edge = cls._recompute_edge_from_trade_facts(
+                {
+                    "id": edge_id,
+                    "from": source,
+                    "to": target,
+                    "source": source,
+                    "target": target,
+                    "tradeIds": visible_trade_ids,
+                },
+                known_facts,
+            )
+            edge["tradeIds"] = visible_trade_ids
+            retained_node_ids.update((source, target))
+            next_edges.append(edge)
+
         next_nodes = [node for node_id, node in nodes_by_id.items() if node_id in retained_node_ids]
         return {
             **graph,
@@ -2449,6 +2490,92 @@ class RelationGraphService:
             "edges": next_edges,
             "excludedTrades": excluded_trade_ids,
             "tradeFacts": trade_facts,
+        }
+
+    @classmethod
+    def _edge_trade_ids_with_restored_facts(
+        cls,
+        graph: dict[str, Any],
+        *,
+        trade_facts: dict[str, dict[str, Any]],
+        edge_trade_ids: dict[str, list[str]],
+        excluded_set: set[str],
+    ) -> dict[str, list[str]]:
+        previous_excluded = set(cls._text_list(graph.get("excludedTrades")))
+        restored_trade_ids = previous_excluded - excluded_set
+        if not restored_trade_ids:
+            return edge_trade_ids
+
+        next_edge_trade_ids = {key: list(value) for key, value in edge_trade_ids.items()}
+        node_index = cls._existing_subject_account_index(graph)
+        for trade_id in sorted(restored_trade_ids):
+            fact = trade_facts.get(trade_id)
+            if not fact:
+                continue
+            source = cls._node_id_for_trade_fact_party(fact, "payer", node_index)
+            target = cls._node_id_for_trade_fact_party(fact, "payee", node_index)
+            if not source or not target or source == target:
+                continue
+            edge_id = f"money:{source}->{target}"
+            trade_ids = next_edge_trade_ids.setdefault(edge_id, [])
+            if trade_id not in trade_ids:
+                trade_ids.append(trade_id)
+        return next_edge_trade_ids
+
+    @classmethod
+    def _node_id_for_trade_fact_party(
+        cls,
+        fact: dict[str, Any],
+        party: str,
+        node_index: dict[str, str],
+    ) -> str | None:
+        account_id = str(fact.get(f"{party}AccountId") or "").strip()
+        trade_card = str(fact.get(f"{party}TradeCard") or "").strip()
+        if account_id:
+            node_id = node_index.get(f"accountId:{account_id}") or node_index.get(f"account:{account_id}")
+            if node_id:
+                return node_id
+        if trade_card:
+            node_id = node_index.get(f"tradeCard:{trade_card}")
+            if node_id:
+                return node_id
+        if account_id:
+            return f"account:{account_id}"
+        if trade_card:
+            return f"account:{trade_card}"
+        return None
+
+    @classmethod
+    def _ensure_node_for_trade_endpoint(
+        cls,
+        nodes_by_id: dict[str, dict[str, Any]],
+        node_id: str,
+        fact: dict[str, Any],
+        party: str,
+    ) -> None:
+        if node_id in nodes_by_id:
+            return
+        account_id = str(fact.get(f"{party}AccountId") or "").strip()
+        trade_card = str(fact.get(f"{party}TradeCard") or "").strip()
+        account_name = str(fact.get(f"{party}AccountName") or "").strip()
+        label = account_name or trade_card or node_id
+        account = {
+            "accountId": account_id,
+            "tradeCard": trade_card,
+            "accountName": label,
+        }
+        nodes_by_id[node_id] = {
+            "id": node_id,
+            "type": "account",
+            "role": "counterparty",
+            "label": label,
+            "accountId": account_id or None,
+            "accountIds": [account_id] if account_id else [],
+            "tradeCard": trade_card,
+            "accountName": label,
+            "accounts": [account],
+            "depth": 1,
+            "isExcluded": False,
         }
 
     @classmethod

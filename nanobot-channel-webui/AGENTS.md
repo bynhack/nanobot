@@ -285,6 +285,19 @@ These are still real unless code and docs are updated together:
 - Keep official transient interaction states separate from business focus state. Clearing hover/click should affect G6 states like `highlight`, `dim`, `click-highlight`, and `click-dim`; clearing user focus/selection should be handled through the canvas focus state (`activeNodeId`, `activeEdgeId`, `selectedNodeIds`, role filters) and the corresponding node render data.
 - Browser verification for graph interaction changes should cover the real flow that can strand state: hover a node, open the G6 context menu, run drill/extension, and assert both inner classes and wrapper opacity/z-index return to the expected state after render. Checking only `.case-graph-g6-node` classes is not sufficient for HTML-node visual bugs.
 
+### Case-graph interaction design principles
+
+Case-graph interactions should be designed for police investigators who can use the system without training. The graph should make the next available action visible in the current context instead of requiring users to memorize hidden entry points.
+
+- Prefer visible contextual actions over hidden-only interactions. Right-click menus may remain as expert shortcuts, but important graph actions should also have a visible entry point near the selected node, edge, canvas selection, or current work area.
+- Selection should explain what can be done next. Clicking a node, clicking an edge, or selecting multiple nodes should reveal a compact contextual action bar or equivalent UI that names the selected object count and the most relevant actions.
+- Contextual actions must match object state. Normal nodes, excluded nodes, edges, excluded trades, empty canvas, and multi-selection should expose different action sets. For example, an excluded node should only offer recovery-oriented actions, not relation creation or drill actions.
+- Destructive or graph-changing operations should preview their impact before execution when the effect is not obvious. Copy should describe how many subjects, money lines, or transaction facts will be affected and whether the action can be restored.
+- Recovery should be available where the excluded item is encountered. If the graph can show excluded nodes, those nodes should provide a restore action there; if transaction details show excluded trades, those rows should support restoring them there. A global exclusion manager can exist as an overview, not the only recovery path.
+- Keep right-click menus and visible action bars behaviorally aligned. A core action should not exist only in one place unless there is a clear product reason.
+- Empty, loading, selected, filtered, excluded, and replay states should include concise Chinese guidance that tells investigators what the current state means and what they can do next.
+- Avoid turning the graph into a dense toolbar surface. Show only the actions that are relevant to the current selection and investigation state; put secondary actions behind a "more" entry only when needed.
+
 ### User-facing language
 
 - This product is ultimately for police investigators handling cases. User-facing page copy should be Chinese and should use investigation-oriented wording that helps officers understand the task, evidence, subject, account, transaction, and clue being handled.

@@ -1,4 +1,4 @@
-import { ArrowLeft, AlertCircle, Bot, Eye, EyeOff, Filter, Maximize2, MessageSquarePlus, Minimize2, Plus, RotateCcw, Sparkles, Undo2, X } from 'lucide-react';
+import { ArrowLeft, AlertCircle, Bot, Eye, EyeOff, Filter, Maximize2, MessageSquarePlus, Minimize2, Plus, RotateCcw, Settings, Sparkles, Undo2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type ReactNode } from 'react';
 
 import { appStore, useAppSelector } from '../app-state';
@@ -184,6 +184,7 @@ function clampDetailWidth(width: number, viewportWidth: number, immersive: boole
 export function CaseGraphWorkbench({
   token,
   onBack,
+  onOpenSettings,
   headerSlot,
   title,
   authResolved,
@@ -192,6 +193,7 @@ export function CaseGraphWorkbench({
 }: {
   token: string;
   onBack: () => void;
+  onOpenSettings?: () => void;
   headerSlot?: ReactNode;
   title: string;
   authResolved: boolean;
@@ -1758,8 +1760,9 @@ export function CaseGraphWorkbench({
     setEdgeDetailSelectedTradeIds((current) => setTradeSelection(current, tradeIds, selected));
   }, []);
 
-  const handleApplyEdgeDetailExclusion = useCallback(() => {
-    if (!activeTab || !edgeDetailContext || !edgeDetailSelectedTradeIds.length) return;
+  const applyEdgeDetailExclusion = useCallback((tradeIds: string[]) => {
+    const selectedTradeIds = [...new Set(tradeIds.map((tradeId) => tradeId.trim()).filter(Boolean))];
+    if (!activeTab || !edgeDetailContext || !selectedTradeIds.length) return;
     const currentDetail = edgeDetail ?? [];
     const detailByEdgeId = { [edgeDetailContext.edgeId]: currentDetail };
     const edgeTradeIds = buildEdgeTradeIdsFromDetails(detailByEdgeId);
@@ -1773,7 +1776,7 @@ export function CaseGraphWorkbench({
       {
         caseId: activeTab.caseId,
         graphId: activeTab.graphId,
-        excludedTrades: buildAppliedExcludedTradeIds(activeTab.excludedTrades, edgeDetailSelectedTradeIds),
+        excludedTrades: buildAppliedExcludedTradeIds(activeTab.excludedTrades, selectedTradeIds),
         tradeFacts: buildTradeFactsFromDetails(detailByEdgeId),
         edgeTradeIds,
         options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
@@ -1798,12 +1801,19 @@ export function CaseGraphWorkbench({
     applyRelationResultToActiveTab,
     edgeDetail,
     edgeDetailContext,
-    edgeDetailSelectedTradeIds,
     handleCloseEdgeDetail,
     refreshGraphSteps,
     requestGraphStepInsight,
     token,
   ]);
+
+  const handleApplyEdgeDetailExclusion = useCallback(() => {
+    applyEdgeDetailExclusion(edgeDetailSelectedTradeIds);
+  }, [applyEdgeDetailExclusion, edgeDetailSelectedTradeIds]);
+
+  const handleExcludeEdgeDetailTrades = useCallback((tradeIds: string[]) => {
+    applyEdgeDetailExclusion(tradeIds);
+  }, [applyEdgeDetailExclusion]);
 
   const handleOpenNodeDetailAnalysis = useCallback((node: CaseGraphNode) => {
     if (!activeTab) return;
@@ -2659,6 +2669,12 @@ export function CaseGraphWorkbench({
         </div>
 
         <div className="case-graph-main-actions case-graph-main-actions--topbar">
+          {onOpenSettings ? (
+            <button className="case-graph-secondary-button case-graph-filter-button" type="button" onClick={onOpenSettings}>
+              <Settings size={15} />
+              <span>设置</span>
+            </button>
+          ) : null}
           <button className="case-graph-primary-button case-graph-cta" type="button" onClick={openNewGraphDialog}>
             <Plus size={16} />
             <span>新增</span>
@@ -2981,6 +2997,7 @@ export function CaseGraphWorkbench({
         onToggleTrade={handleToggleEdgeDetailTrade}
         onToggleTrades={handleSetEdgeDetailTrades}
         onApplyExclude={handleApplyEdgeDetailExclusion}
+        onExcludeTrades={handleExcludeEdgeDetailTrades}
         onRestoreExcludedTrades={handleRestoreExcludedTrades}
         onClose={handleCloseEdgeDetail}
         partyContext={edgeDetailPartyContext}

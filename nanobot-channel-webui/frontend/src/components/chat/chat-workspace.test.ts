@@ -10,14 +10,15 @@ function readSource(path: string): string {
 }
 
 describe('ChatWorkspace component boundary', () => {
-  it('keeps primary chat and case-graph chat on the shared workspace component', () => {
+  it('keeps case-graph chat on the shared workspace component without restoring the standalone chat entry', () => {
     const appSource = readSource('src/app.tsx');
     const caseGraphSource = readSource('src/case-graph/workbench.tsx');
 
-    expect(appSource).toContain("from './components/chat/chat-workspace'");
+    expect(appSource).not.toContain("from './components/chat/chat-workspace'");
+    expect(appSource).toContain("useState<AppView>('case_graph')");
     expect(caseGraphSource).toContain("from '../components/chat/chat-workspace'");
 
-    for (const source of [appSource, caseGraphSource]) {
+    for (const source of [caseGraphSource]) {
       expect(source).not.toMatch(/import .*AssistantRuntimeProvider.* from '@assistant-ui\/react'/);
       expect(source).not.toMatch(/from ['"].*thread-content['"]/);
       expect(source).not.toMatch(/from ['"].*workspace-panel['"]/);

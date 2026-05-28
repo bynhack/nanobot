@@ -8,6 +8,7 @@
 .orion
 
 # Claude / AI assistant artifacts
+.codegraph/
 docs/superpowers/
 docs/plans/
 

@@ -29,6 +29,7 @@ export type ChatWorkspaceProps = {
   currentUser: AuthUser | null;
   title: string;
   showFlash: (message: string) => void;
+  showToolMessages: boolean;
   previewActions: DetailActions;
   flashMessage?: string | null;
   className?: string;
@@ -72,6 +73,7 @@ export const ChatWorkspace = memo(function ChatWorkspace({
   currentUser,
   title,
   showFlash,
+  showToolMessages,
   previewActions,
   flashMessage = null,
   className = 'chat-workspace',
@@ -135,6 +137,7 @@ export const ChatWorkspace = memo(function ChatWorkspace({
     showFlash,
     actions: websocketSession,
     prepareOutgoingMessage: prepareRuntimeMessage,
+    showToolMessages,
   });
   const threadSuggestions = useMemo(
     () => (useDefaultSuggestions ? buildThreadSuggestions(bootstrap.ui?.conversationStarters) : []),

@@ -2,6 +2,8 @@ import type {
   AuthResponse,
   SessionSummary,
   SettingsConfigSnapshot,
+  SettingsAuditSnapshot,
+  SettingsTenantContractsSnapshot,
   SettingsRuntimeSnapshot,
   SettingsSkillDetail,
   SettingsSkillFile,
@@ -296,4 +298,24 @@ export async function loadSettingsRuntime(token: string): Promise<SettingsRuntim
     throw new Error(`加载运行状态失败（${response.status}）`);
   }
   return response.json() as Promise<SettingsRuntimeSnapshot>;
+}
+
+export async function loadSettingsAudit(token: string, limit = 100): Promise<SettingsAuditSnapshot> {
+  const response = await fetch(`/api/settings/audit?limit=${encodeURIComponent(String(limit))}`, {
+    headers: authHeaders(token),
+  });
+  if (!response.ok) {
+    throw new Error(`加载审计日志失败（${response.status}）`);
+  }
+  return response.json() as Promise<SettingsAuditSnapshot>;
+}
+
+export async function loadSettingsTenantContracts(token: string): Promise<SettingsTenantContractsSnapshot> {
+  const response = await fetch('/api/settings/tenant-contracts', {
+    headers: authHeaders(token),
+  });
+  if (!response.ok) {
+    throw new Error(`加载技能契约失败（${response.status}）`);
+  }
+  return response.json() as Promise<SettingsTenantContractsSnapshot>;
 }

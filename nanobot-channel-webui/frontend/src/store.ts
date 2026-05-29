@@ -18,6 +18,7 @@ export const STORAGE_KEYS = {
   chatId: 'nanobot_channel_webui_chat_id',
   appearanceMode: 'nanobot_channel_webui_appearance_mode',
   uiTheme: 'nanobot_channel_webui_ui_theme',
+  showToolMessages: 'nanobot_channel_webui_show_tool_messages',
 } as const;
 
 let localMessageCounter = 0;

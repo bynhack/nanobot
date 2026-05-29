@@ -41,6 +41,7 @@ from .protocol import (
 from .session_index import SessionIndexService
 from .sessions import SessionQueryService, is_valid_chat_id, parse_session_ref
 from .session_workspace import SessionWorkspaceService
+from .tenant_runtime import TenantPolicyResolver, attach_tenant_runtime, bind_tenant_context
 from .turns import TurnAccumulator
 from .user_context import CurrentUser, bind_current_user
 from .uploads import attachment_prompt_suffix, next_upload_path
@@ -264,6 +265,7 @@ class WebUIChannel(BaseChannel):
         self._session_index = SessionIndexService(self._pocketbase)
         self._management = WebUIManagementService(self._sessions.workspace)
         self._management.bind_runtime_observer(self._runtime_observability_snapshot)
+        self._policy_resolver = TenantPolicyResolver()
         self._hook = WebUIHook(self._registry, self._turns)
         self._runtime_attached = self._ensure_runtime_attached()
 
@@ -277,6 +279,7 @@ class WebUIChannel(BaseChannel):
     def _ensure_runtime_attached(self) -> bool:
         attached = attach_webui_runtime(self.bus, self._hook)
         if attached:
+            attach_tenant_runtime(self.bus, workspace=self._sessions.workspace)
             self._runtime_attach_warned = False
             return True
         if not self._runtime_attach_warned:
@@ -319,6 +322,8 @@ class WebUIChannel(BaseChannel):
         app.router.add_get("/api/settings/config", self._handle_config)
         app.router.add_post("/api/settings/config", self._handle_save_config)
         app.router.add_get("/api/settings/runtime", self._handle_runtime)
+        app.router.add_get("/api/settings/audit", self._handle_audit)
+        app.router.add_get("/api/settings/tenant-contracts", self._handle_tenant_contracts)
         app.router.add_get("/api/workspaces/{chat_id}", self._handle_workspace)
         app.router.add_post("/uploads/{chat_id}", self._handle_uploads)
         app.router.add_get("/media/{token}", self._handle_media)
@@ -700,6 +705,40 @@ class WebUIChannel(BaseChannel):
         )
         return web.json_response(snapshot)
 
+    async def _handle_audit(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        limit_raw = request.rel_url.query.get("limit", "100")
+        try:
+            limit = max(1, min(500, int(limit_raw)))
+        except ValueError:
+            limit = 100
+
+        audit = await asyncio.to_thread(
+            self._management.audit_snapshot_for_user,
+            email=user.email if user is not None else "",
+            is_admin=user.is_admin if user is not None else True,
+            limit=limit,
+        )
+        return web.json_response(audit)
+
+    async def _handle_tenant_contracts(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+        admin_allowed, status, message = self._require_admin(user)
+        if not admin_allowed:
+            return web.json_response({"error": message}, status=status)
+
+        snapshot = await asyncio.to_thread(self._management.tenant_contracts_snapshot)
+        return web.json_response(snapshot)
+
     def _record_workspace_media(self, chat_id: str, media: list[dict[str, Any]]) -> dict[str, Any]:
         delivered = []
         for item in media:
@@ -900,12 +939,14 @@ class WebUIChannel(BaseChannel):
                         extra = "\n\n".join(part for part in suffixes if part)
                         if extra:
                             content = f"{content}\n\n{extra}".strip() if content else extra
-                    with bind_current_user(current_user):
+                    policy = self._policy_resolver.resolve(current_user).with_chat(chat_id).write_policy_file(self._sessions.workspace)
+                    with bind_current_user(current_user), bind_tenant_context(policy):
                         await self._handle_message(
                             sender_id=f"webui_browser:{current_user.id}" if current_user is not None else "webui_browser",
                             chat_id=chat_id,
                             content=content,
                             media=[item.path for item in attachments] or None,
+                            metadata={"_webui_policy": policy.to_policy_payload()},
                         )
                     continue
 
@@ -914,11 +955,13 @@ class WebUIChannel(BaseChannel):
                     if chat_id is None or not is_valid_chat_id(chat_id):
                         await self._registry.emit_to_ws(ws, error_event("当前会话为只读视图，不能发送停止命令", code="read_only_session"))
                         continue
-                    with bind_current_user(current_user):
+                    policy = self._policy_resolver.resolve(current_user).with_chat(chat_id).write_policy_file(self._sessions.workspace)
+                    with bind_current_user(current_user), bind_tenant_context(policy):
                         await self._handle_message(
                             sender_id=f"webui_browser:{current_user.id}" if current_user is not None else "webui_browser",
                             chat_id=chat_id,
                             content="/stop",
+                            metadata={"_webui_policy": policy.to_policy_payload()},
                         )
                     continue
 

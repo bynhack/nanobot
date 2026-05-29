@@ -28,6 +28,7 @@ export function useWebuiRuntime({
   showFlash,
   actions,
   prepareOutgoingMessage,
+  showToolMessages,
 }: {
   showFlash: (message: string) => void;
   actions: {
@@ -43,18 +44,23 @@ export function useWebuiRuntime({
     cancelTurn: () => void;
   };
   prepareOutgoingMessage?: (message: AppendMessage) => AppendMessage;
+  showToolMessages: boolean;
 }) {
   const { sendMessage, switchThread, createThread, deleteThread, ensureThread, cancelTurn } = actions;
   const authToken = useAppSelector((state) => state.authToken);
   const connectionState = useAppSelector((state) => state.connectionState);
   const currentChatId = useAppSelector((state) => state.currentChatId);
   const sessions = useAppSelector((state) => state.sessions);
-  const currentMessages = useAppSelector((state) => {
+  const rawCurrentMessages = useAppSelector((state) => {
     if (!state.currentChatId) {
       return EMPTY_MESSAGES;
     }
     return state.messagesByChat[state.currentChatId] ?? EMPTY_MESSAGES;
   });
+  const currentMessages = useMemo(
+    () => (showToolMessages ? rawCurrentMessages : rawCurrentMessages.filter((message) => message.type !== 'tools')),
+    [rawCurrentMessages, showToolMessages],
+  );
   const activeTurn = useAppSelector((state) => {
     if (!state.currentChatId) {
       return null;
@@ -68,10 +74,12 @@ export function useWebuiRuntime({
   // 打断中文输入(英文偶尔能挤进去是因为合成期极短)。
   const currentChatIdRef = useRef(currentChatId);
   const activeTurnRef = useRef(activeTurn);
+  const showToolMessagesRef = useRef(showToolMessages);
   useEffect(() => {
     currentChatIdRef.current = currentChatId;
     activeTurnRef.current = activeTurn;
-  }, [activeTurn, currentChatId]);
+    showToolMessagesRef.current = showToolMessages;
+  }, [activeTurn, currentChatId, showToolMessages]);
 
   const convertMessage = useCallback(
     (message: RuntimeMessageSource, index: number) => {
@@ -81,6 +89,7 @@ export function useWebuiRuntime({
         chatId,
         index,
         activeTurnRef.current,
+        { showToolMessages: showToolMessagesRef.current },
       );
     },
     [],

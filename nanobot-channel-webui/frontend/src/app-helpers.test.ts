@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { mediaToParts } from './app-helpers';
+import {
+  buildRuntimeMessages,
+  historyMessageToThreadMessage,
+  mediaToParts,
+} from './app-helpers';
 
 describe('mediaToParts', () => {
   it('keeps assistant image parts only for data URLs', () => {
@@ -39,4 +43,65 @@ describe('mediaToParts', () => {
       },
     ]);
   });
+});
+
+describe('tool message visibility helpers', () => {
+  it('hides persisted tool messages by default', () => {
+    const state = {
+      currentChatId: 'chat-1',
+      messagesByChat: {
+        'chat-1': [
+          { id: 'user-1', type: 'user', content: '查一下' },
+          {
+            id: 'tools-1',
+            type: 'tools',
+            tools: [{ name: 'search', args: {}, result: 'ok', status: 'ok' }],
+          },
+        ],
+      },
+    };
+
+    expect(buildRuntimeMessages(state as any)).toEqual([
+      { id: 'user-1', type: 'user', content: '查一下' },
+    ]);
+  });
+
+  it('keeps persisted tool messages when enabled', () => {
+    const state = {
+      currentChatId: 'chat-1',
+      messagesByChat: {
+        'chat-1': [
+          { id: 'user-1', type: 'user', content: '查一下' },
+          {
+            id: 'tools-1',
+            type: 'tools',
+            tools: [{ name: 'search', args: {}, result: 'ok', status: 'ok' }],
+          },
+        ],
+      },
+    };
+
+    expect(buildRuntimeMessages(state as any, { showToolMessages: true })).toHaveLength(2);
+  });
+
+  it('hides pending tool parts from running assistant messages by default', () => {
+    const message = {
+      id: 'assistant-1',
+      type: 'assistant',
+      content: '处理中',
+    };
+    const activeTurn = {
+      waiting: true,
+      messageId: 'assistant-1',
+      pendingTools: {
+        tools: [{ name: 'search', args: { keyword: '线索' } }],
+        results: [],
+      },
+    };
+
+    expect(
+      historyMessageToThreadMessage(message as any, 'chat-1', 0, activeTurn as any).content,
+    ).toEqual([{ type: 'text', text: '处理中' }]);
+  });
+
 });

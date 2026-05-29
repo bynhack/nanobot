@@ -122,6 +122,10 @@ export function readUiTheme(defaultTheme: UiTheme): UiTheme {
   return defaultTheme;
 }
 
+export function readShowToolMessages(): boolean {
+  return window.localStorage.getItem(STORAGE_KEYS.showToolMessages) === 'true';
+}
+
 export function mediaToParts(media: MediaItem[]): Array<ThreadMessageLike['content'][number]> {
   return media.map((item) => {
     const mime = detectMime(item);
@@ -196,6 +200,7 @@ export function historyMessageToThreadMessage(
   chatId: string,
   index: number,
   activeTurn: AppState['activeTurns'][string] | null,
+  options: { showToolMessages?: boolean } = {},
 ): ThreadMessageLike {
   const id = message.id ?? `${chatId}-history-${index}`;
   const isRunningAssistant =
@@ -214,7 +219,7 @@ export function historyMessageToThreadMessage(
   }
 
   if (message.type === 'assistant') {
-    const toolParts = isRunningAssistant && activeTurn?.pendingTools
+    const toolParts = options.showToolMessages && isRunningAssistant && activeTurn?.pendingTools
       ? pendingToolsToItems(activeTurn.pendingTools).map((tool, toolIndex) =>
           toolToPart(tool, id, toolIndex, activeTurn.pendingTools?.durationMs),
         )
@@ -247,16 +252,22 @@ export function historyMessageToThreadMessage(
     id,
     role: 'assistant',
     status: { type: 'complete', reason: 'stop' },
-    content: message.tools.map((tool, toolIndex) => toolToPart(tool, id, toolIndex)) as ThreadMessageLike['content'],
+    content: options.showToolMessages
+      ? message.tools.map((tool, toolIndex) => toolToPart(tool, id, toolIndex)) as ThreadMessageLike['content']
+      : [],
   };
 }
 
-export function buildRuntimeMessages(state: AppState): readonly RuntimeMessageSource[] {
+export function buildRuntimeMessages(
+  state: AppState,
+  options: { showToolMessages?: boolean } = {},
+): readonly RuntimeMessageSource[] {
   const chatId = state.currentChatId;
   if (!chatId) {
     return [];
   }
-  return state.messagesByChat[chatId] ?? [];
+  const messages = state.messagesByChat[chatId] ?? [];
+  return options.showToolMessages ? messages : messages.filter((message) => message.type !== 'tools');
 }
 
 export function extractTextInput(message: AppendMessage): string {

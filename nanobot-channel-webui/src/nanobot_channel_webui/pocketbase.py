@@ -20,6 +20,12 @@ class PocketBaseUser:
     email: str
     role: UserRole
     token: str = ""
+    business_role: str = ""
+    tenant_id: str = ""
+    scopes: dict[str, Any] | None = None
+    resources: list[dict[str, Any]] | None = None
+    skills: list[str] | str | None = None
+    tenant_policy: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -63,6 +69,12 @@ def user_from_auth_payload(payload: dict[str, Any]) -> PocketBaseUser:
         email=str(record.get("email", "")).strip(),
         role=role_from_record(record),
         token=str(payload.get("token", "")).strip(),
+        business_role=str(record.get("business_role") or record.get("businessRole") or "").strip(),
+        tenant_id=str(record.get("tenant_id") or record.get("tenantId") or "").strip(),
+        scopes=record.get("scopes") if isinstance(record.get("scopes"), dict) else None,
+        resources=record.get("resources") if isinstance(record.get("resources"), list) else None,
+        skills=record.get("skills") or record.get("skill_allowlist") or record.get("skillAllowlist") or record.get("allowed_skills") or record.get("allowedSkills"),
+        tenant_policy=record.get("tenant_policy") if isinstance(record.get("tenant_policy"), dict) else record.get("tenantPolicy") if isinstance(record.get("tenantPolicy"), dict) else None,
     )
 
 

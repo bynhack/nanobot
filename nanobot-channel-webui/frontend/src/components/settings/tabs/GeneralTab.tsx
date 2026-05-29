@@ -12,6 +12,8 @@ interface GeneralTabProps {
   onAppearanceModeChange: (value: AppearanceMode) => void;
   uiTheme: UiTheme;
   onUiThemeChange: (value: UiTheme) => void;
+  showToolMessages: boolean;
+  onShowToolMessagesChange: (value: boolean) => void;
   currentUser: AuthUser | null;
   authMode: BootstrapConfig['authMode'];
   onLogout: () => void;
@@ -26,6 +28,8 @@ export function GeneralTab({
   onAppearanceModeChange,
   uiTheme,
   onUiThemeChange,
+  showToolMessages,
+  onShowToolMessagesChange,
   currentUser,
   authMode,
   onLogout,
@@ -75,6 +79,20 @@ export function GeneralTab({
         </SettingsRow>
         <SettingsRow label="当前会话 ID" hint="当前正在对话的会话唯一标识符。">
           <code className="text-xs text-muted-foreground">{currentChatId ?? '无'}</code>
+        </SettingsRow>
+        <SettingsRow
+          label="显示工具调用"
+          hint="默认隐藏工具调用过程，让业务对话更聚焦；专业人员可开启查看执行细节。"
+        >
+          <button
+            type="button"
+            className={`settings-modern-toggle${showToolMessages ? ' active' : ''}`}
+            role="switch"
+            aria-checked={showToolMessages}
+            onClick={() => onShowToolMessagesChange(!showToolMessages)}
+          >
+            <div className="toggle-thumb" />
+          </button>
         </SettingsRow>
         {currentUser ? (
           <>

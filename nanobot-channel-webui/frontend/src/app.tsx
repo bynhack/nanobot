@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 import { AuthTokenModal } from './auth-token-modal';
-import { readAppearanceMode, readUiTheme } from './app-helpers';
+import { readAppearanceMode, readShowToolMessages, readUiTheme } from './app-helpers';
 import { bootstrap, DETAIL_PANEL_WIDTH_KEY, appStore, useAppSelector } from './app-state';
 import { loadSessionWorkspace } from './api';
 import { ChatWorkspace } from './components/chat/chat-workspace';
@@ -63,6 +63,7 @@ export function App() {
   const [resizingDetailPanel, setResizingDetailPanel] = useState(false);
   const [appearanceMode, setAppearanceMode] = useState<AppearanceMode>(() => readAppearanceMode());
   const [uiTheme, setUiTheme] = useState<UiTheme>(() => readUiTheme(DEFAULT_UI_THEME));
+  const [showToolMessages, setShowToolMessages] = useState(() => readShowToolMessages());
 
   const flashTimerRef = useRef<number | null>(null);
   const workspaceRequestCounterRef = useRef(0);
@@ -223,6 +224,10 @@ export function App() {
   }, [uiTheme]);
 
   useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.showToolMessages, String(showToolMessages));
+  }, [showToolMessages]);
+
+  useEffect(() => {
     window.localStorage.setItem(DETAIL_PANEL_WIDTH_KEY, String(detailPanelWidth));
   }, [detailPanelWidth]);
 
@@ -332,6 +337,7 @@ export function App() {
           previewOpen={previewOpen}
           immersivePreview={immersivePreview}
           showFlash={showFlash}
+          showToolMessages={showToolMessages}
           previewActions={previewActions}
           onOpenMedia={openMedia}
           welcomeTitle={bootstrap.ui?.welcomeTitle}
@@ -376,6 +382,8 @@ export function App() {
             onAppearanceModeChange={setAppearanceMode}
             uiTheme={uiTheme}
             onUiThemeChange={setUiTheme}
+            showToolMessages={showToolMessages}
+            onShowToolMessagesChange={setShowToolMessages}
             token={authToken}
             currentUser={currentUser}
             authMode={bootstrap.authMode}

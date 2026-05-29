@@ -10,6 +10,9 @@ from typing import Any
 
 from nanobot.agent.skills import BUILTIN_SKILLS_DIR
 
+from .tenant_runtime.audit import TenantAuditLogger
+from .tenant_runtime.contract_validator import validate_workspace_skill_contracts
+
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n?", re.DOTALL)
 
 
@@ -65,6 +68,7 @@ class WebUIManagementService:
         self.workspace_sessions_dir = workspace / "sessions"
         self.workspace_memory_dir = workspace / "memory"
         self.builtin_skills_dir = BUILTIN_SKILLS_DIR
+        self._audit = TenantAuditLogger(workspace)
         self._runtime_observer: Any = None
 
     def bind_runtime_observer(self, observer: Any) -> None:
@@ -268,3 +272,23 @@ class WebUIManagementService:
             "recent_plans": [],
             "latest_log_preview": "",
         }
+
+    def audit_snapshot_for_user(self, *, email: str, is_admin: bool, limit: int = 100) -> dict[str, Any]:
+        events = self._audit.recent(email=email, include_all=is_admin, limit=limit)
+        allow_count = sum(1 for item in events if item.get("decision") == "allow")
+        deny_count = sum(1 for item in events if item.get("decision") == "deny")
+        return {
+            "workspace": str(self.workspace) if is_admin else "",
+            "audit_path": str(self._audit.path) if is_admin else "",
+            "scope": "all" if is_admin else "self",
+            "limit": limit,
+            "events": events,
+            "summary": {
+                "total": len(events),
+                "allow": allow_count,
+                "deny": deny_count,
+            },
+        }
+
+    def tenant_contracts_snapshot(self) -> dict[str, Any]:
+        return validate_workspace_skill_contracts(self.workspace)

@@ -4,6 +4,8 @@ import { GeneralTab } from './components/settings/tabs/GeneralTab';
 import { SkillsTab } from './components/settings/tabs/SkillsTab';
 import { ConfigTab } from './components/settings/tabs/ConfigTab';
 import { RuntimeTab } from './components/settings/tabs/RuntimeTab';
+import { AuditTab } from './components/settings/tabs/AuditTab';
+import { ContractsTab } from './components/settings/tabs/ContractsTab';
 import { SETTINGS_TABS, SettingsTab, AppearanceMode, UiTheme } from './components/settings/types';
 import type { AppState, AuthUser, BootstrapConfig } from './types';
 import { connectionStatusText } from './ui-utils';
@@ -20,6 +22,8 @@ export function SettingsScreen({
   onAppearanceModeChange,
   uiTheme,
   onUiThemeChange,
+  showToolMessages,
+  onShowToolMessagesChange,
   token,
   currentUser,
   authMode,
@@ -34,6 +38,8 @@ export function SettingsScreen({
   onAppearanceModeChange: (value: AppearanceMode) => void;
   uiTheme: UiTheme;
   onUiThemeChange: (value: UiTheme) => void;
+  showToolMessages: boolean;
+  onShowToolMessagesChange: (value: boolean) => void;
   token: string;
   currentUser: AuthUser | null;
   authMode: BootstrapConfig['authMode'];
@@ -46,7 +52,7 @@ export function SettingsScreen({
     if (currentUser?.role === 'admin') {
       return true;
     }
-    return tab.value === 'runtime';
+    return tab.value === 'runtime' || tab.value === 'audit';
   });
   const [activeTab, setActiveTab] = useState<SettingsTab>(allowedTabs[0]?.value ?? 'general');
 
@@ -100,6 +106,8 @@ export function SettingsScreen({
                     onAppearanceModeChange={onAppearanceModeChange}
                     uiTheme={uiTheme}
                     onUiThemeChange={onUiThemeChange}
+                    showToolMessages={showToolMessages}
+                    onShowToolMessagesChange={onShowToolMessagesChange}
                     currentUser={currentUser}
                     authMode={authMode}
                     onLogout={onLogout}
@@ -108,6 +116,8 @@ export function SettingsScreen({
                 {activeTab === 'skills' && currentUser?.role === 'admin' && <SkillsTab token={token} />}
                 {activeTab === 'config' && currentUser?.role === 'admin' && <ConfigTab token={token} />}
                 {activeTab === 'runtime' && <RuntimeTab token={token} />}
+                {activeTab === 'audit' && <AuditTab token={token} />}
+                {activeTab === 'contracts' && currentUser?.role === 'admin' && <ContractsTab token={token} />}
               </div>
             </div>
           </div>

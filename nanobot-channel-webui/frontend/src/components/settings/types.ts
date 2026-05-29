@@ -1,6 +1,6 @@
 export type AppearanceMode = 'system' | 'light' | 'dark';
 export type UiTheme = 'hr' | 'business' | 'gov';
-export type SettingsTab = 'general' | 'skills' | 'config' | 'runtime';
+export type SettingsTab = 'general' | 'skills' | 'config' | 'runtime' | 'audit' | 'contracts';
 export const DEFAULT_UI_THEME: UiTheme = 'hr';
 
 export const APPEARANCE_OPTIONS: Array<{ value: AppearanceMode; label: string }> = [
@@ -24,4 +24,6 @@ export const SETTINGS_TABS: Array<{ value: SettingsTab; label: string; icon: str
   { value: 'skills', label: '技能', icon: 'M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.257c.938-.332 1.948-.512 3-.512a8.967 8.967 0 016 2.292m0-14.25v14.25m0-14.25a8.967 8.967 0 016-2.292c1.052 0 2.062.18 3 .512v14.257c-.938-.332-1.948-.512-3-.512a8.967 8.967 0 00-6 2.292' },
   { value: 'config', label: '配置', icon: 'M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4' },
   { value: 'runtime', label: '数据', icon: 'M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z' },
+  { value: 'audit', label: '审计', icon: 'M9 12.75L11.25 15 15 9.75m-7.5 9h9A2.25 2.25 0 0018.75 16.5v-9A2.25 2.25 0 0016.5 5.25h-9A2.25 2.25 0 005.25 7.5v9A2.25 2.25 0 007.5 18.75z' },
+  { value: 'contracts', label: '契约', icon: 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
 ];

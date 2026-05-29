@@ -157,6 +157,7 @@ export interface SettingsSkillDetail extends SettingsSkillSummary {
 
 export interface SettingsSkillFile {
   name: string;
+  kind?: string;
   path: string;
   content: string;
   is_markdown: boolean;
@@ -237,6 +238,69 @@ export interface SettingsRuntimeSnapshot {
     size: number;
   }>;
   latest_log_preview: string;
+}
+
+export interface SettingsTenantContractIssue {
+  code: string;
+  severity: 'error' | 'warning';
+  message: string;
+}
+
+export interface SettingsTenantContract {
+  name: string;
+  path: string;
+  contract_path: string;
+  enabled: boolean;
+  commands: string[];
+  denied_commands: string[];
+  resources: Array<{
+    resource: string;
+    actions: string[];
+    scope_key?: string;
+  }>;
+  issues: SettingsTenantContractIssue[];
+  status: 'ok' | 'warning' | 'error';
+}
+
+export interface SettingsTenantContractsSnapshot {
+  workspace: string;
+  skills_root: string;
+  summary: {
+    total: number;
+    ok: number;
+    warning: number;
+    error: number;
+  };
+  contracts: SettingsTenantContract[];
+}
+
+export interface SettingsAuditEvent {
+  version: string;
+  ts: string;
+  user_id: string;
+  email: string;
+  role: string;
+  business_role: string;
+  chat_id: string;
+  tool: string;
+  command: string;
+  decision: string;
+  reason: string;
+  scopes: Record<string, string[]>;
+  tenant_policy?: Record<string, unknown>;
+}
+
+export interface SettingsAuditSnapshot {
+  workspace: string;
+  audit_path: string;
+  scope: 'all' | 'self';
+  limit: number;
+  summary: {
+    total: number;
+    allow: number;
+    deny: number;
+  };
+  events: SettingsAuditEvent[];
 }
 
 export type ServerEvent =

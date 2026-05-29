@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from ..config import CHANNEL_NAME
+from ..tenant_runtime import TenantContext, bind_tenant_context
 from .runtime_state import RuntimeAttachState
 
 if TYPE_CHECKING:
@@ -74,11 +75,18 @@ def attach_webui_runtime(bus: MessageBus, hook: Any) -> bool:
 
     async def _wrapped_process_message(self: AgentLoop, msg: InboundMessage, *args: Any, **kwargs: Any):
         token: Token[WebUIRouteContext | None] | None = None
+        policy_cm: Any | None = None
         if msg.channel == CHANNEL_NAME:
             token = push_route_context(msg, wants_streaming=kwargs.get("on_stream") is not None)
+            payload = msg.metadata.get("_webui_policy") if isinstance(msg.metadata, dict) else None
+            if isinstance(payload, dict):
+                policy_cm = bind_tenant_context(TenantContext.from_payload(payload))
+                policy_cm.__enter__()
         try:
             return await original_func(self, msg, *args, **kwargs)
         finally:
+            if policy_cm is not None:
+                policy_cm.__exit__(None, None, None)
             if token is not None:
                 pop_route_context(token)
 

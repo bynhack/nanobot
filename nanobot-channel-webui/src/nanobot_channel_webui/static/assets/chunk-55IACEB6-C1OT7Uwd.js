@@ -1,0 +1,1 @@
+import{c as a,e}from"./index-Ct7WB26W.js";var g=a((o,t)=>{let n;return t==="sandbox"&&(n=e("#i"+o)),(t==="sandbox"?e(n.nodes()[0].contentDocument.body):e("body")).select(`[id="${o}"]`)},"getDiagramElement");export{g};

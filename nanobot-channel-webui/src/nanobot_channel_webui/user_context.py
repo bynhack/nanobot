@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
+from typing import Any
 
 from .pocketbase import PocketBaseUser, UserRole
 
@@ -15,6 +16,12 @@ class CurrentUser:
     email: str
     role: UserRole
     token: str
+    business_role: str = ""
+    tenant_id: str = ""
+    scopes: dict[str, Any] | None = None
+    resources: list[dict[str, Any]] | None = None
+    skills: list[str] | str | None = None
+    tenant_policy: dict[str, Any] | None = None
 
     @property
     def is_admin(self) -> bool:
@@ -22,7 +29,18 @@ class CurrentUser:
 
     @classmethod
     def from_pocketbase_user(cls, user: PocketBaseUser) -> "CurrentUser":
-        return cls(id=user.id, email=user.email, role=user.role, token=user.token)
+        return cls(
+            id=user.id,
+            email=user.email,
+            role=user.role,
+            token=user.token,
+            business_role=user.business_role,
+            tenant_id=user.tenant_id,
+            scopes=user.scopes,
+            resources=user.resources,
+            skills=user.skills,
+            tenant_policy=user.tenant_policy,
+        )
 
 
 _CURRENT_USER: ContextVar[CurrentUser | None] = ContextVar("nanobot_channel_webui_current_user", default=None)

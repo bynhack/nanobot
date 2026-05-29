@@ -1,0 +1,28 @@
+# 文档索引
+
+本目录只保留当前仍有指导价值的设计文档。历史阶段计划、迁移过程文档和已完成发布说明已归档到 `docs/archive/`。
+
+## 当前架构文档
+
+- `2026-05-29-tenant-runtime-permission-hardening.md`
+  - 当前权限硬化基线：记录标准资源拆分、动态技能视图、标准 business CLI、业务数据层 scope 过滤和回归测试边界。
+
+- `2026-05-28-tenant-runtime-plugin-design.md`
+  - 当前主方向：将 WebUI 插件抽象为支持多租户、业务权限控制、工具治理、技能治理、记忆隔离和审计的 Tenant Runtime Plugin。
+
+- `2026-05-28-tenant-runtime-skill-integration.md`
+  - 业务技能接入规范：说明技能如何声明 `tenant-runtime.json`、读取策略文件，并通过 Guard SDK 落实数据范围权限。
+
+- `2026-05-27-runtime-permission-injection-design.md`
+  - HR 权限 MVP 的运行时注入设计，记录插件如何在不修改 Nanobot 上游核心的前提下注入工具权限、技能权限、命令权限和审计能力。
+
+## 历史归档
+
+- `archive/2026-05/`
+  - 插件迁移、PocketBase 登录、运行稳定性、预览工作区、会话工作空间、上图工作台等历史设计和计划。
+
+## 文档维护原则
+
+- 新的长期架构设计放在 `docs/` 顶层。
+- 阶段性计划和已经完成的发布说明完成后移入 `docs/archive/`。
+- 如果文档已经不符合当前产品定位，应更新或归档，不要让过期文档停留在顶层。

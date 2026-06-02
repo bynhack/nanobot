@@ -1,5 +1,6 @@
 import type {
   AuthResponse,
+  HistoryMessage,
   SessionSummary,
   SettingsConfigSnapshot,
   SettingsAuditSnapshot,
@@ -81,6 +82,9 @@ export function withAuthQuery(url: string, token: string): string {
 }
 
 export async function loadSessions(token: string): Promise<SessionSummary[]> {
+  if (isUpstreamGatewayEnabled()) {
+    return loadUpstreamSessions(token);
+  }
   const response = await fetch('/sessions', {
     headers: authHeaders(token),
   });
@@ -91,6 +95,16 @@ export async function loadSessions(token: string): Promise<SessionSummary[]> {
 }
 
 export async function deleteSession(chatId: string, token: string): Promise<void> {
+  if (isUpstreamGatewayEnabled()) {
+    const response = await fetch(`/api/upstream/sessions/${encodeURIComponent(chatId)}`, {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    });
+    if (!response.ok) {
+      throw new Error(`删除会话失败（${response.status}）`);
+    }
+    return;
+  }
   const response = await fetch(`/sessions/${encodeURIComponent(chatId)}`, {
     method: 'DELETE',
     headers: authHeaders(token),
@@ -98,6 +112,82 @@ export async function deleteSession(chatId: string, token: string): Promise<void
   if (!response.ok) {
     throw new Error(`删除会话失败（${response.status}）`);
   }
+}
+
+function isUpstreamGatewayEnabled(): boolean {
+  return Boolean(window.__NANOBOT_WEBUI_BOOTSTRAP__ && (
+    typeof window.__NANOBOT_WEBUI_BOOTSTRAP__ === 'object'
+    && window.__NANOBOT_WEBUI_BOOTSTRAP__.upstreamGateway?.enabled
+  ));
+}
+
+function upstreamSessionToSummary(row: {
+  key?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  title?: string;
+  preview?: string;
+  run_started_at?: number | null;
+}): SessionSummary | null {
+  const key = String(row.key ?? '');
+  if (!key.startsWith('websocket:')) {
+    return null;
+  }
+  const chatId = key.slice('websocket:'.length);
+  return {
+    chat_id: chatId,
+    session_key: key,
+    channel: 'websocket',
+    created_at: row.created_at ?? null,
+    last_ts: row.updated_at ?? row.created_at ?? null,
+    preview: row.preview || row.title || '新对话',
+    message_count: 0,
+  };
+}
+
+export async function loadUpstreamSessions(token: string): Promise<SessionSummary[]> {
+  const response = await fetch('/api/upstream/sessions', {
+    headers: authHeaders(token),
+  });
+  if (!response.ok) {
+    throw new Error(`加载会话失败（${response.status}）`);
+  }
+  const payload = (await response.json()) as { sessions?: unknown[] };
+  return (payload.sessions ?? [])
+    .map((row) => upstreamSessionToSummary(row as Parameters<typeof upstreamSessionToSummary>[0]))
+    .filter((row): row is SessionSummary => row !== null);
+}
+
+function upstreamThreadMessageToHistory(message: unknown): HistoryMessage | null {
+  if (!message || typeof message !== 'object') {
+    return null;
+  }
+  const row = message as Record<string, unknown>;
+  const role = String(row.role ?? '');
+  const content = String(row.content ?? row.text ?? '');
+  if (role === 'user') {
+    return { type: 'user', content };
+  }
+  if (role === 'assistant') {
+    return { type: 'assistant', content };
+  }
+  return null;
+}
+
+export async function loadUpstreamThread(chatId: string, token: string): Promise<HistoryMessage[]> {
+  const response = await fetch(`/api/upstream/sessions/${encodeURIComponent(chatId)}/webui-thread`, {
+    headers: authHeaders(token),
+  });
+  if (response.status === 404) {
+    return [];
+  }
+  if (!response.ok) {
+    throw new Error(`加载会话历史失败（${response.status}）`);
+  }
+  const payload = (await response.json()) as { messages?: unknown[] };
+  return (payload.messages ?? [])
+    .map(upstreamThreadMessageToHistory)
+    .filter((message): message is HistoryMessage => message !== null);
 }
 
 export async function uploadFiles(chatId: string, files: File[], token: string): Promise<UploadedAttachment[]> {

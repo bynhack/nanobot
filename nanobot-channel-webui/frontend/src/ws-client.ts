@@ -5,6 +5,7 @@ interface WebSocketClientOptions {
   getChatId: () => string | null;
   onEvent: (event: ServerEvent) => void;
   onConnectionState: (state: 'connecting' | 'connected' | 'disconnected') => void;
+  upstreamBootstrapUrl?: string;
 }
 
 export class WebSocketClient {
@@ -25,17 +26,14 @@ export class WebSocketClient {
     }
     this.options.onConnectionState('connecting');
 
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    const url = new URL(`${proto}://${window.location.host}/ws`);
-    const chatId = this.options.getChatId();
-    const token = this.options.getAuthToken();
-    if (chatId) {
-      url.searchParams.set('chat_id', chatId);
-    }
-    if (token) {
-      url.searchParams.set('auth_token', token);
-    }
+    void this.openSocket();
+  }
 
+  private async openSocket(): Promise<void> {
+    const url = await this.resolveSocketUrl();
+    if (!this.shouldReconnect) {
+      return;
+    }
     this.socket = new WebSocket(url);
     this.socket.addEventListener('open', () => {
       this.options.onConnectionState('connected');
@@ -58,6 +56,39 @@ export class WebSocketClient {
         // Ignore malformed payloads.
       }
     });
+  }
+
+  private async resolveSocketUrl(): Promise<string> {
+    if (this.options.upstreamBootstrapUrl) {
+      const response = await fetch(this.options.upstreamBootstrapUrl, {
+        headers: this.options.getAuthToken()
+          ? { Authorization: `Bearer ${this.options.getAuthToken()}` }
+          : {},
+      });
+      if (!response.ok) {
+        throw new Error(`上游 WebSocket 初始化失败（${response.status}）`);
+      }
+      const boot = (await response.json()) as { token?: string; ws_url?: string; ws_path?: string };
+      const rawUrl = boot.ws_url || `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}${boot.ws_path || '/'}`;
+      const url = new URL(rawUrl);
+      if (boot.token) {
+        url.searchParams.set('token', boot.token);
+      }
+      url.searchParams.set('client_id', 'nanobot-channel-webui');
+      return url.toString();
+    }
+
+    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+    const url = new URL(`${proto}://${window.location.host}/ws`);
+    const chatId = this.options.getChatId();
+    const token = this.options.getAuthToken();
+    if (chatId) {
+      url.searchParams.set('chat_id', chatId);
+    }
+    if (token) {
+      url.searchParams.set('auth_token', token);
+    }
+    return url.toString();
   }
 
   send(command: Record<string, unknown>): boolean {

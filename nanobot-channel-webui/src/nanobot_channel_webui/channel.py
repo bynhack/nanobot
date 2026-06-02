@@ -328,6 +328,10 @@ class WebUIChannel(BaseChannel):
         app.router.add_get("/api/settings/runtime", self._handle_runtime)
         app.router.add_get("/api/settings/audit", self._handle_audit)
         app.router.add_get("/api/settings/tenant-contracts", self._handle_tenant_contracts)
+        app.router.add_get("/api/upstream/bootstrap", self._handle_upstream_bootstrap)
+        app.router.add_get("/api/upstream/sessions", self._handle_upstream_sessions)
+        app.router.add_get("/api/upstream/sessions/{chat_id}/webui-thread", self._handle_upstream_thread)
+        app.router.add_delete("/api/upstream/sessions/{chat_id}", self._handle_upstream_delete_session)
         app.router.add_get("/api/workspaces/{chat_id}", self._handle_workspace)
         app.router.add_post("/uploads/{chat_id}", self._handle_uploads)
         app.router.add_get("/media/{token}", self._handle_media)
@@ -496,6 +500,11 @@ class WebUIChannel(BaseChannel):
                 "title": self._resolved_title,
                 "authRequired": self._access.auth_required,
                 "authMode": self._access.auth_mode,
+                "upstreamGateway": {
+                    "enabled": bool(self.config.upstream_gateway_url),
+                    "baseUrl": self.config.upstream_gateway_url,
+                    "bootstrapUrl": "/api/upstream/bootstrap",
+                },
                 "ui": self.config.ui.model_dump(by_alias=True),
             },
             ensure_ascii=False,
@@ -549,6 +558,98 @@ class WebUIChannel(BaseChannel):
             "token": user.token if user is not None else "",
             "user": None if user is None else {"id": user.id, "email": user.email, "role": user.role},
         })
+
+    async def _upstream_json(
+        self,
+        path: str,
+        *,
+        token: str = "",
+        method: str = "GET",
+    ) -> tuple[int, dict[str, Any]]:
+        import aiohttp
+
+        if not self.config.upstream_gateway_url:
+            return 404, {"error": "未配置上游 WebUI Gateway"}
+        url = f"{self.config.upstream_gateway_url}{path}"
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.request(method, url, headers=headers) as response:
+                    text = await response.text()
+                    try:
+                        payload = json.loads(text) if text else {}
+                    except json.JSONDecodeError:
+                        payload = {"error": text or f"HTTP {response.status}"}
+                    if isinstance(payload, dict):
+                        return response.status, payload
+                    return response.status, {"data": payload}
+        except Exception as exc:
+            return 502, {"error": f"访问上游 WebUI Gateway 失败: {exc}"}
+
+    async def _issue_upstream_token(self) -> tuple[int, dict[str, Any]]:
+        return await self._upstream_json("/webui/bootstrap")
+
+    async def _handle_upstream_bootstrap(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+        status, payload = await self._issue_upstream_token()
+        return web.json_response(payload, status=status)
+
+    async def _handle_upstream_sessions(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+        status, boot = await self._issue_upstream_token()
+        token = str(boot.get("token", "")) if status == 200 else ""
+        if not token:
+            return web.json_response(boot, status=status)
+        status, payload = await self._upstream_json("/api/sessions", token=token)
+        return web.json_response(payload, status=status)
+
+    async def _handle_upstream_thread(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+        chat_id = request.match_info.get("chat_id", "").strip()
+        if not chat_id or not is_valid_chat_id(chat_id):
+            return web.json_response({"error": "无效的会话 ID"}, status=400)
+        status, boot = await self._issue_upstream_token()
+        token = str(boot.get("token", "")) if status == 200 else ""
+        if not token:
+            return web.json_response(boot, status=status)
+        key = f"websocket:{chat_id}"
+        status, payload = await self._upstream_json(
+            f"/api/sessions/{key}/webui-thread",
+            token=token,
+        )
+        return web.json_response(payload, status=status)
+
+    async def _handle_upstream_delete_session(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+        chat_id = request.match_info.get("chat_id", "").strip()
+        if not chat_id or not is_valid_chat_id(chat_id):
+            return web.json_response({"error": "无效的会话 ID"}, status=400)
+        status, boot = await self._issue_upstream_token()
+        token = str(boot.get("token", "")) if status == 200 else ""
+        if not token:
+            return web.json_response(boot, status=status)
+        key = f"websocket:{chat_id}"
+        status, payload = await self._upstream_json(
+            f"/api/sessions/{key}/delete",
+            token=token,
+        )
+        return web.json_response(payload, status=status)
 
     async def _handle_sessions(self, request: Any) -> Any:
         from aiohttp import web

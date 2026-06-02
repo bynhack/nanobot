@@ -73,6 +73,7 @@ class WebUIConfig(Base):
     pocketbase_url: str = ""
     pocketbase_users_collection: str = "users"
     pocketbase_sessions_collection: str = "chat_sessions"
+    upstream_gateway_url: str = ""
 
     @field_validator("pocketbase_url")
     @classmethod
@@ -81,3 +82,11 @@ class WebUIConfig(Base):
         if not raw:
             return ""
         return raw if raw.endswith("/") else raw + "/"
+
+    @field_validator("upstream_gateway_url")
+    @classmethod
+    def _normalize_upstream_gateway_url(cls, value: str) -> str:
+        raw = value.strip()
+        if not raw:
+            return ""
+        return raw.rstrip("/")

@@ -116,7 +116,15 @@ export function applyTurnEvent(
             durationMs: event.durationMs,
             results: event.results,
           }
-        : null,
+        : {
+            tools: event.results.map((result) => ({
+              name: result.name,
+              args: {},
+              hint: result.name,
+            })),
+            durationMs: event.durationMs,
+            results: event.results,
+          },
     };
   }
 

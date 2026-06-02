@@ -22,6 +22,11 @@ export interface BootstrapConfig {
   title: string;
   authRequired: boolean;
   authMode?: 'none' | 'token' | 'pocketbase';
+  upstreamGateway?: {
+    enabled?: boolean;
+    baseUrl?: string;
+    bootstrapUrl?: string;
+  };
   ui?: WebUIBootstrapUI;
 }
 
@@ -306,6 +311,17 @@ export interface SettingsAuditSnapshot {
 }
 
 export type ServerEvent =
+  | { event: 'ready'; chat_id: string; client_id?: string }
+  | { event: 'attached'; chat_id: string }
+  | { event: 'delta'; chat_id: string; text: string; stream_id?: string }
+  | { event: 'reasoning_delta'; chat_id: string; text: string; stream_id?: string }
+  | { event: 'reasoning_end'; chat_id: string; stream_id?: string }
+  | { event: 'stream_end'; chat_id: string; stream_id?: string; text?: string }
+  | { event: 'message'; chat_id: string; text?: string; kind?: string; tool_events?: UpstreamToolEvent[]; media_urls?: MediaItem[]; latency_ms?: number }
+  | { event: 'turn_end'; chat_id: string; latency_ms?: number; goal_state?: Record<string, unknown> }
+  | { event: 'goal_status'; chat_id: string; status: 'running' | 'idle' | string; started_at?: number }
+  | { event: 'session_updated'; chat_id: string; scope?: string }
+  | { event: 'error'; detail?: string; message?: string; reason?: string; chat_id?: string }
   | { type: 'session.init'; chatId: string; sessionId: string }
   | { type: 'session.history'; chatId: string; messages: HistoryMessage[] }
   | { type: 'session.deleted'; chatId: string }
@@ -315,3 +331,13 @@ export type ServerEvent =
   | { type: 'tools.finished'; chatId: string; durationMs: number; results: ToolCallResult[] }
   | { type: 'turn.completed'; chatId: string; content?: string; media?: MediaItem[]; buttons?: string[][]; streamId?: string }
   | { type: 'error'; code: string; message: string; chatId?: string };
+
+export interface UpstreamToolEvent {
+  version?: number;
+  phase?: 'start' | 'end' | string;
+  call_id?: string;
+  name?: string;
+  arguments?: Record<string, unknown>;
+  result?: unknown;
+  error?: unknown;
+}

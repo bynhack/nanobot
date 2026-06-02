@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 
-import { deleteSession, loadSessions } from './api';
+import { deleteSession, loadSessions, loadUpstreamThread } from './api';
 import { appStore, bootstrap } from './app-state';
 import { STORAGE_KEYS } from './store';
 import { WebSocketClient } from './ws-client';
@@ -41,6 +41,8 @@ export function useWebsocketSession({
     }
   }, [showFlash]);
 
+  const upstreamEnabled = Boolean(bootstrap.upstreamGateway?.enabled);
+
   const resolvePendingThreads = useCallback((chatId: string | null) => {
     const resolvers = pendingThreadResolversRef.current.splice(0);
     for (const resolve of resolvers) {
@@ -75,7 +77,7 @@ export function useWebsocketSession({
       pendingThreadResolversRef.current.push(settleThread);
     });
     pendingThreadPromiseRef.current = promise;
-    const sent = wsClientRef.current?.send({ type: 'session.new' }) ?? false;
+    const sent = wsClientRef.current?.send(upstreamEnabled ? { type: 'new_chat', webui: true } : { type: 'session.new' }) ?? false;
     if (!sent) {
       settleThread(null);
     }
@@ -86,6 +88,7 @@ export function useWebsocketSession({
     const client = new WebSocketClient({
       getAuthToken: () => appStore.getState().authToken,
       getChatId: () => appStore.getState().currentChatId,
+      upstreamBootstrapUrl: upstreamEnabled ? bootstrap.upstreamGateway?.bootstrapUrl || '/api/upstream/bootstrap' : undefined,
       onConnectionState: (connectionState) => {
         appStore.dispatch({ type: 'connection.set', connectionState });
         if (connectionState === 'disconnected') {
@@ -96,18 +99,23 @@ export function useWebsocketSession({
         }
       },
       onEvent: (event) => {
-        if (event.type === 'session.init') {
+        const normalized = normalizeServerEvent(event);
+        if ('type' in event && event.type === 'session.init') {
           window.localStorage.setItem(STORAGE_KEYS.chatId, event.chatId);
           resolvePendingThreads(event.chatId);
         }
-        if (event.type === 'session.deleted' && appStore.getState().currentChatId === event.chatId) {
+        if (normalized.type === 'session.init') {
+          window.localStorage.setItem(STORAGE_KEYS.chatId, normalized.chatId);
+          resolvePendingThreads(normalized.chatId);
+        }
+        if ('type' in event && event.type === 'session.deleted' && appStore.getState().currentChatId === event.chatId) {
           window.localStorage.removeItem(STORAGE_KEYS.chatId);
           resolvePendingThreads(null);
         }
-        if (event.type === 'error') {
-          showFlash(event.message);
+        if (normalized.type === 'error') {
+          showFlash(normalized.message);
         }
-        appStore.dispatch({ type: 'server.event', event });
+        appStore.dispatch({ type: 'server.event', event: normalized });
       },
     });
 
@@ -117,7 +125,7 @@ export function useWebsocketSession({
       resolvePendingThreads(null);
       wsClientRef.current = null;
     };
-  }, [refreshSessions, resolvePendingThreads, showFlash]);
+  }, [refreshSessions, resolvePendingThreads, showFlash, upstreamEnabled]);
 
   useEffect(() => {
     const client = wsClientRef.current;
@@ -143,23 +151,36 @@ export function useWebsocketSession({
     content: string;
     attachments: MessageAttachmentPayload[];
   }) => {
-    wsClientRef.current?.send({
-      type: 'message.send',
-      content: payload.content,
-      attachments: payload.attachments,
-    });
-  }, []);
+    const chatId = appStore.getState().currentChatId;
+    wsClientRef.current?.send(upstreamEnabled
+      ? {
+          type: 'message',
+          chat_id: chatId,
+          content: payload.content,
+          webui: true,
+        }
+      : {
+          type: 'message.send',
+          content: payload.content,
+          attachments: payload.attachments,
+        });
+  }, [upstreamEnabled]);
 
   const switchThread = useCallback((threadId: string) => {
     if (threadId && threadId !== appStore.getState().currentChatId) {
-      wsClientRef.current?.send({ type: 'session.switch', chatId: threadId });
+      wsClientRef.current?.send(upstreamEnabled ? { type: 'attach', chat_id: threadId } : { type: 'session.switch', chatId: threadId });
+      if (upstreamEnabled) {
+        void loadUpstreamThread(threadId, appStore.getState().authToken).then((messages) => {
+          appStore.dispatch({ type: 'server.event', event: { type: 'session.history', chatId: threadId, messages } });
+        }).catch((error) => showFlash(error instanceof Error ? error.message : '加载会话历史失败'));
+      }
     }
-  }, []);
+  }, [showFlash, upstreamEnabled]);
 
   const createThread = useCallback(() => {
     window.localStorage.removeItem(STORAGE_KEYS.chatId);
     appStore.dispatch({ type: 'local.new_draft' });
-  }, []);
+  }, [upstreamEnabled]);
 
   const deleteThreadById = useCallback(async (threadId: string) => {
     try {
@@ -176,8 +197,11 @@ export function useWebsocketSession({
   }, [createThread, refreshSessions, showFlash]);
 
   const cancelTurn = useCallback(() => {
-    wsClientRef.current?.send({ type: 'message.cancel' });
-  }, []);
+    const chatId = appStore.getState().currentChatId;
+    wsClientRef.current?.send(upstreamEnabled
+      ? { type: 'message', chat_id: chatId, content: '/stop', webui: true }
+      : { type: 'message.cancel' });
+  }, [upstreamEnabled]);
 
   return useMemo(
     () => ({
@@ -191,4 +215,43 @@ export function useWebsocketSession({
     }),
     [cancelTurn, createThread, deleteThreadById, refreshSessions, requestServerThread, sendMessage, switchThread],
   );
+}
+
+function normalizeServerEvent(event: import('./types').ServerEvent): import('./types').ServerEvent {
+  if ('type' in event) {
+    return event;
+  }
+
+  const chatId = event.chat_id;
+  if (event.event === 'ready' || event.event === 'attached') {
+    return { type: 'session.init', chatId, sessionId: chatId };
+  }
+  if (event.event === 'delta') {
+    return { type: 'turn.delta', chatId, delta: event.text, streamId: event.stream_id };
+  }
+  if (event.event === 'message') {
+    if (event.kind === 'progress' && event.tool_events?.length) {
+      const results = event.tool_events
+        .filter((item) => item.phase === 'end')
+        .map((item) => ({
+          name: String(item.name ?? ''),
+          status: item.error ? 'error' as const : 'ok' as const,
+          detail: item.error ? String(item.error) : String(item.result ?? ''),
+        }));
+      if (results.length) {
+        return { type: 'tools.finished', chatId, durationMs: 0, results };
+      }
+    }
+    return { type: 'turn.completed', chatId, content: event.text ?? '', media: event.media_urls };
+  }
+  if (event.event === 'turn_end') {
+    return { type: 'turn.phase', chatId, phase: 'completed', resuming: false };
+  }
+  if (event.event === 'goal_status' && event.status === 'running') {
+    return { type: 'turn.phase', chatId, phase: 'streaming' };
+  }
+  if (event.event === 'error') {
+    return { type: 'error', code: String(event.detail ?? 'error'), message: String(event.message ?? event.detail ?? event.reason ?? '请求失败'), chatId };
+  }
+  return { type: 'turn.phase', chatId, phase: 'streaming' };
 }

@@ -1,0 +1,23 @@
+{
+  "name": "hr-policy",
+  "resources": [
+    {
+      "resource": "hr.company",
+      "actions": [
+        "read"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.employee",
+      "actions": [
+        "read"
+      ],
+      "scope_key": "company"
+    }
+  ],
+  "commands": [],
+  "requires_confirmation": false,
+  "kind": "reference",
+  "denied_commands": []
+}

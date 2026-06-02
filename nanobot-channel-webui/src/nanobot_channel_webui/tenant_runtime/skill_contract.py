@@ -15,6 +15,20 @@ _CONTRACT_BLOCK_RE = re.compile(
 )
 
 
+def _tuple_of_strings(value: Any) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        items = value.replace("，", ",").splitlines()
+        if len(items) == 1:
+            items = value.replace("，", ",").split(",")
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        items = value
+    else:
+        items = (value,)
+    return tuple(str(item).strip() for item in items if str(item).strip())
+
+
 @dataclass(frozen=True, slots=True)
 class SkillResourceRequirement:
     resource: str
@@ -51,6 +65,10 @@ class SkillCapability:
     commands: tuple[str, ...] = ()
     resources: tuple[SkillResourceRequirement, ...] = ()
     requires_confirmation: bool = False
+    triggers: tuple[str, ...] = ()
+    focus_terms: tuple[str, ...] = ()
+    related_capabilities: tuple[str, ...] = ()
+    recipe: tuple[str, ...] = ()
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -60,6 +78,10 @@ class SkillCapability:
             "commands": list(self.commands),
             "resources": [item.to_payload() for item in self.resources],
             "requires_confirmation": self.requires_confirmation,
+            "triggers": list(self.triggers),
+            "focus_terms": list(self.focus_terms),
+            "related_capabilities": list(self.related_capabilities),
+            "recipe": list(self.recipe),
         }
 
     @classmethod
@@ -72,6 +94,15 @@ class SkillCapability:
             command_values.extend(str(item).strip() for item in commands if str(item).strip())
         elif isinstance(command, str) and command.strip():
             command_values.append(command.strip())
+        triggers = payload.get("triggers")
+        focus_terms = payload.get("focus_terms") or payload.get("focusTerms")
+        related = (
+            payload.get("related_capabilities")
+            or payload.get("relatedCapabilities")
+            or payload.get("include_capabilities")
+            or payload.get("includeCapabilities")
+        )
+        recipe = payload.get("recipe") or payload.get("workflow") or payload.get("instructions")
         return cls(
             id=str(payload.get("id") or payload.get("name") or "").strip(),
             title=str(payload.get("title") or payload.get("description") or "").strip(),
@@ -83,6 +114,10 @@ class SkillCapability:
             if isinstance(resources, list)
             else (),
             requires_confirmation=bool(payload.get("requires_confirmation") or payload.get("requiresConfirmation")),
+            triggers=_tuple_of_strings(triggers),
+            focus_terms=_tuple_of_strings(focus_terms),
+            related_capabilities=_tuple_of_strings(related),
+            recipe=_tuple_of_strings(recipe),
         )
 
 
@@ -90,6 +125,7 @@ class SkillCapability:
 class SkillContract:
     name: str
     kind: str = "business"
+    managed: bool = True
     resources: tuple[SkillResourceRequirement, ...] = ()
     commands: tuple[str, ...] = ()
     denied_commands: tuple[str, ...] = ()
@@ -100,6 +136,7 @@ class SkillContract:
         return {
             "name": self.name,
             "kind": self.kind,
+            "managed": self.managed,
             "resources": [item.to_payload() for item in self.resources],
             "commands": list(self.commands),
             "denied_commands": list(self.denied_commands),
@@ -116,6 +153,7 @@ class SkillContract:
         return cls(
             name=str(payload.get("name") or ""),
             kind=str(payload.get("kind") or payload.get("type") or "business"),
+            managed=bool(payload.get("managed", True)),
             resources=tuple(
                 SkillResourceRequirement.from_payload(item) for item in resources if isinstance(item, dict)
             )

@@ -74,6 +74,7 @@ describe('ask_user store reducer', () => {
     let state = baseState();
     state.activeTurns['chat-1'] = {
       phase: 'streaming',
+      requestStatus: 'processing',
       waiting: true,
       messageId: 'temp-stream-id',
       streamBuffer: '| a | b |\n|---|---|\n| 1 | 2 |',

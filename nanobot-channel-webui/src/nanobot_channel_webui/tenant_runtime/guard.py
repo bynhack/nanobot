@@ -45,8 +45,8 @@ class TenantGuard:
         payload = {
             "user_id": source.get("NANOBOT_WEBUI_USER_ID", ""),
             "email": source.get("NANOBOT_WEBUI_USER_EMAIL", ""),
-            "role": source.get("NANOBOT_WEBUI_ROLE", "admin"),
-            "business_role": source.get("NANOBOT_WEBUI_BUSINESS_ROLE", "admin"),
+            "role": source.get("NANOBOT_WEBUI_ROLE", "user"),
+            "business_role": source.get("NANOBOT_WEBUI_BUSINESS_ROLE", "scoped"),
             "resources": [],
             "scopes": {},
         }

@@ -41,7 +41,9 @@ HR 不再把所有业务能力挂在 `hr.employee` 上，当前标准资源为�
 - `hr.disciplinary`
 - `hr.seal_usage`
 
-历史用户配置中的粗粒度 `hr.employee` 可以由 `PolicyResolver` 在运行时规范化展开，避免已有账号突然失效。但新增业务能力不能继续依赖 `hr.employee` 表示整个 HR 域。
+数据库权限必须显式配置这些标准资源。当前产品尚未正式上线，不保留 `hr.employee` 自动展开为整个 HR 域的历史兼容逻辑。
+
+如果一个账号只配置了 `hr.employee`，它只拥有员工资源权限，不会自动获得合同、绩效、社医保、奖惩、人事异动或用章权限。
 
 ## 运行时边界
 
@@ -50,8 +52,9 @@ HR 不再把所有业务能力挂在 `hr.employee` 上，当前标准资源为�
 - scoped 用户只能看到授权工具。
 - scoped 用户只能读取授权技能。
 - scoped 用户读取业务技能时，返回动态技能视图，而不是完整 `SKILL.md`。
+- 动态技能视图的任务裁剪词、触发词和关联能力必须来自业务技能的 `tenant-runtime.json`，通用运行时不能硬编码 HR 或其他业务域词表。
 - scoped 用户只能执行当前授权技能声明的命令入口。
-- 命令必须匹配标准工作区形态，例如 `cd /Users/brian/.nanobot/workspace && bash skills/hr-db-ops/scripts/run-hr-cli.sh ...`。
+- 命令必须匹配业务契约声明的标准入口，例如 `nanobot-webui-business hr ...`。
 - 高风险命令、底层数据库脚本、任意 shell 探测和未授权技能入口必须被拒绝。
 - 允许和拒绝都必须写入审计日志。
 
@@ -93,9 +96,11 @@ business verify <resource>
 
 后续权限相关修改至少要覆盖：
 
-- `PolicyResolver` 会把历史 `hr.employee` 粗粒度资源规范化展开为标准 HR 资源。
+- `PolicyResolver` 不会把 `hr.employee` 粗粒度资源自动展开为标准 HR 资源。
+- 数据库必须显式配置账号可访问的标准资源、动作和 scope。
 - 动态技能视图只显示当前账号授权能力，并显示标准资源，而不是隐藏实现命令。
-- `TenantGuard` 对标准资源做资源、动作、scope 校验。
+- HR 主执行链路当前由 `CommandPolicyGuard`、动态技能视图、HR CLI `access_policy.mjs` 和 repository scope 兜底共同完成；`TenantGuard` 是给新业务技能复用的旁路 Guard SDK，不是当前 HR CLI 的唯一 enforcement 点。
+- `TenantGuard` 作为 SDK 要能对标准资源做资源、动作、scope 校验。
 - scoped 用户不能调用未授权技能命令、底层数据库脚本或敏感 shell。
 - 指定未授权公司必须拒绝。
 - 不带公司参数时，业务技能必须自动按当前账号授权范围过滤。

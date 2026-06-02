@@ -8,6 +8,7 @@ export function normalizeIncomingDelta(current: string, incoming: string): strin
 export function createEmptyTurnState(): ActiveTurnState {
   return {
     phase: 'idle',
+    requestStatus: 'idle',
     waiting: false,
     messageId: null,
     streamBuffer: '',
@@ -37,6 +38,7 @@ export function startLocalTurn(
   return {
     ...state,
     phase: 'idle',
+    requestStatus: 'processing',
     waiting: true,
     messageId: options.messageId,
     streamBuffer: '',
@@ -61,21 +63,33 @@ export function applyTurnEvent(
       ...state,
       waiting: true,
       phase: 'streaming',
-      messageId: state.messageId ?? event.streamId ?? options.allocateMessageId(),
+      requestStatus: 'processing',
+        messageId: state.messageId ?? event.streamId ?? options.allocateMessageId(),
       streamId: event.streamId ?? state.streamId,
       streamBuffer: `${state.streamBuffer}${normalizedDelta}`,
     };
   }
 
   if (event.type === 'turn.phase') {
-    if (state.phase === 'completed' && state.waiting === false) {
+    if (state.requestStatus === 'completed' && state.waiting === false) {
       return state;
     }
+    const streamFinished = event.resuming === false;
+    const nextRequestStatus = streamFinished
+      ? 'completed'
+      : event.phase === 'running_tools' || event.resuming === true
+        ? 'running_tools'
+        : 'processing';
     return {
       ...state,
-      waiting: event.phase !== 'completed',
+      waiting: !streamFinished,
       phase: event.phase,
+      requestStatus: nextRequestStatus,
+      pendingTools: streamFinished ? null : state.pendingTools,
       streamId: event.streamId ?? state.streamId,
+      lastDurationMs: streamFinished && state.startedAtMs !== null
+        ? Math.max(0, options.nowMs() - state.startedAtMs)
+        : state.lastDurationMs,
     };
   }
 
@@ -85,6 +99,7 @@ export function applyTurnEvent(
       ...state,
       waiting: true,
       phase: 'running_tools',
+      requestStatus: 'running_tools',
       pendingTools,
     };
   }
@@ -94,6 +109,7 @@ export function applyTurnEvent(
       ...state,
       waiting: true,
       phase: 'running_tools',
+      requestStatus: 'running_tools',
       pendingTools: state.pendingTools
         ? {
             ...state.pendingTools,
@@ -104,14 +120,18 @@ export function applyTurnEvent(
     };
   }
 
+  const streamAlreadyFinished = state.requestStatus === 'completed' && state.waiting === false;
   return {
-    phase: 'completed',
-    waiting: false,
+    ...state,
+    phase: streamAlreadyFinished ? 'completed' : state.phase,
+    requestStatus: streamAlreadyFinished ? 'completed' : state.requestStatus,
+    waiting: streamAlreadyFinished ? false : state.waiting,
     messageId: null,
     streamBuffer: '',
     streamId: event.streamId ?? state.streamId,
-    pendingTools: null,
-    startedAtMs: state.startedAtMs,
-    lastDurationMs: state.startedAtMs ? Math.max(0, options.nowMs() - state.startedAtMs) : null,
+    pendingTools: streamAlreadyFinished ? null : state.pendingTools,
+    lastDurationMs: streamAlreadyFinished
+      ? state.lastDurationMs ?? (state.startedAtMs !== null ? Math.max(0, options.nowMs() - state.startedAtMs) : null)
+      : state.lastDurationMs,
   };
 }

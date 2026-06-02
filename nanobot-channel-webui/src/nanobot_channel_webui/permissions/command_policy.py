@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .context import PolicyContext
+from ..business_modules.registry import iter_packaged_skills, packaged_skill_names
 from ..tenant_runtime.skill_contract import SkillCapability, SkillContract, load_skill_contract
 
 _DENY_PATTERNS = (
@@ -16,10 +17,11 @@ _DENY_PATTERNS = (
     r"SUPABASE_SERVICE_ROLE_KEY",
     r"supabase_connector",
     r"(^|/)\.env(\s|$)",
+    r"(^|/)\.nanobot/config\.json(\s|$)",
+    r"(^|/)\.nanobot/workspace/sessions/",
+    r"(^|/)\.nanobot_channel_webui/(?:private|policies|audit)(?:/|\s|$)",
+    r"(^|/)\.nanobot/tool-results/(?!webui_plugin_[^/\s]+/)",
     r"[\n\r]",
-    r"(^|[^\\])(&&|\|\||;|\||>|<)",
-    r"`",
-    r"\$\(",
 )
 
 
@@ -52,11 +54,22 @@ class CommandPolicyGuard:
         except ValueError:
             return CommandDecision(False, "invalid_shell_command", command)
 
+        original_argv = argv
+        argv = self._rewrite_legacy_packaged_skill_command(argv)
         contract_match = self._contract_for_argv(argv)
         if contract_match is None:
-            return CommandDecision(False, "exec_default_deny", command)
+            managed_skill = self._managed_skill_referenced_by_argv(argv)
+            if managed_skill:
+                return CommandDecision(False, "managed_skill_command_not_declared", command)
+            if self._references_sensitive_workspace_path(policy_check_command):
+                return CommandDecision(False, "blocked_sensitive_runtime_access", command)
+            return CommandDecision(True, "unmanaged_exec_passthrough", command)
 
         contract, declared_command, command_index = contract_match
+        if not policy.policy_file:
+            return CommandDecision(False, "policy_file_required", command)
+        if re.search(r"(^|[^\\])(&&|\|\||;|\||>|<)|`|\$\(", policy_check_command):
+            return CommandDecision(False, "managed_command_shell_operator_denied", command)
         if not policy.can_use_skill(contract.name):
             return CommandDecision(False, "skill_not_allowed", command)
 
@@ -71,7 +84,14 @@ class CommandPolicyGuard:
         if not self._contract_allowed(contract, policy, capability):
             return CommandDecision(False, "tenant_contract_resource_denied", command)
 
-        command = self._inject_policy_env(stripped, policy)
+        command_for_exec = stripped
+        if argv != original_argv:
+            rewritten = " ".join(shlex.quote(part) for part in argv)
+            safe_prefix_match = re.match(self._safe_workspace_prefix_pattern(), stripped)
+            command_for_exec = (
+                f"{safe_prefix_match.group(0)}{rewritten}" if safe_prefix_match else rewritten
+            )
+        command = self._inject_policy_env(command_for_exec, policy)
         return CommandDecision(True, f"tenant_contract_allowed:{contract.name}:{declared_command}", command)
 
     def _strip_safe_workspace_prefix(self, command: str) -> str:
@@ -84,6 +104,12 @@ class CommandPolicyGuard:
         return re.sub(r"(?:\s+2>\s*&\s*1)?\s*\|\s*head\s+-?\d+\s*$", "", command)
 
     def _contract_for_argv(self, argv: list[str]) -> tuple[SkillContract, str, int] | None:
+        for packaged in iter_packaged_skills():
+            for declared_command in packaged.contract.commands:
+                command_index = self._find_declared_command(argv, declared_command)
+                if command_index >= 0:
+                    return packaged.contract, declared_command, command_index
+
         skills_root = self._workspace / "skills"
         if not skills_root.exists():
             return None
@@ -100,14 +126,66 @@ class CommandPolicyGuard:
                     return contract, declared_command, command_index
         return None
 
+    def _rewrite_legacy_packaged_skill_command(self, argv: list[str]) -> list[str]:
+        for index, token in enumerate(argv):
+            normalized = token.replace("\\", "/").removeprefix("./")
+            for packaged in iter_packaged_skills():
+                if (self._workspace / "skills" / packaged.name).exists():
+                    continue
+                if normalized in {
+                    f"skills/{packaged.name}/scripts/run-hr-cli.sh",
+                    f"{self._workspace}/skills/{packaged.name}/scripts/run-hr-cli.sh",
+                }:
+                    replacement = shlex.split(packaged.contract.commands[0])
+                    return [*argv[:index], *replacement, *argv[index + 1 :]]
+        return argv
+
+    def _managed_skill_referenced_by_argv(self, argv: list[str]) -> str:
+        skills_root = self._workspace / "skills"
+        managed = set(packaged_skill_names())
+        if skills_root.exists():
+            managed.update({
+                skill_dir.name
+                for skill_dir in skills_root.iterdir()
+                if skill_dir.is_dir()
+                and (contract := load_skill_contract(skill_dir)) is not None
+                and contract.managed
+            })
+        if not managed:
+            return ""
+
+        for token in argv:
+            normalized = token.replace("\\", "/").removeprefix("./")
+            for skill_name in managed:
+                if normalized.startswith(f"skills/{skill_name}/") or f"/skills/{skill_name}/" in normalized:
+                    return skill_name
+        return ""
+
     @staticmethod
     def _find_declared_command(argv: list[str], declared_command: str) -> int:
         normalized = declared_command.removeprefix("./")
+        declared_parts = shlex.split(normalized)
+        if len(declared_parts) > 1:
+            for index in range(0, len(argv) - len(declared_parts) + 1):
+                candidate_parts = [token.removeprefix("./") for token in argv[index : index + len(declared_parts)]]
+                if CommandPolicyGuard._declared_parts_match(candidate_parts, declared_parts):
+                    return index + len(declared_parts) - 1
+            return -1
         for index, token in enumerate(argv):
             candidate = token.removeprefix("./")
             if candidate == normalized or candidate.endswith(f"/{normalized}"):
                 return index
         return -1
+
+    @staticmethod
+    def _declared_parts_match(candidate_parts: list[str], declared_parts: list[str]) -> bool:
+        if candidate_parts == declared_parts:
+            return True
+        if not candidate_parts or not declared_parts:
+            return False
+        if candidate_parts[1:] != declared_parts[1:]:
+            return False
+        return candidate_parts[0].endswith(f"/{declared_parts[0]}")
 
     @staticmethod
     def _capability_for_command(contract: SkillContract, command_name: str) -> SkillCapability | None:
@@ -183,3 +261,22 @@ class CommandPolicyGuard:
 
     def _safe_workspace_prefix_pattern(self) -> str:
         return self._safe_workspace_prefix_pattern_for(self._workspace)
+
+    def _references_sensitive_workspace_path(self, command: str) -> bool:
+        normalized = command.replace("\\", "/")
+        workspace = str(self._workspace).replace("\\", "/")
+        home = str(Path.home()).replace("\\", "/")
+        sensitive_fragments = (
+            f"{home}/.nanobot/config.json",
+            f"{workspace}/sessions/",
+            f"{workspace}/.nanobot_channel_webui/private/",
+            f"{workspace}/.nanobot_channel_webui/policies/",
+            f"{workspace}/.nanobot_channel_webui/audit/",
+            f"{workspace}/.nanobot/tool-results/",
+            ".nanobot/config.json",
+            "sessions/",
+            ".nanobot_channel_webui/private/",
+            ".nanobot_channel_webui/policies/",
+            ".nanobot_channel_webui/audit/",
+        )
+        return any(fragment in normalized for fragment in sensitive_fragments)

@@ -193,6 +193,7 @@ function ensureSessionSummary(
   state: AppState,
   chatId: string,
   overrides: Partial<SessionSummary> = {},
+  options: { preserveExistingOrder?: boolean } = {},
 ): SessionSummary[] {
   const existing = state.sessions.find((session) => session.chat_id === chatId);
   const base: SessionSummary = existing ?? {
@@ -208,6 +209,12 @@ function ensureSessionSummary(
     ...overrides,
     chat_id: chatId,
   };
+
+  if (existing && options.preserveExistingOrder) {
+    return state.sessions.map((session) => (
+      session.chat_id === chatId ? nextSession : session
+    ));
+  }
 
   return [
     nextSession,
@@ -376,7 +383,7 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
           ? ensureSessionSummary(state, event.chatId, {
               ...(preview ? { preview } : {}),
               message_count: event.messages.length,
-            })
+            }, { preserveExistingOrder: Boolean(existingSession) })
           : state.sessions,
       messagesByChat: {
         ...state.messagesByChat,

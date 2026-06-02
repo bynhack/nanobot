@@ -4,6 +4,7 @@ import {
   buildRuntimeMessages,
   historyMessageToThreadMessage,
   mediaToParts,
+  requestStatusText,
 } from './app-helpers';
 
 describe('mediaToParts', () => {
@@ -104,4 +105,14 @@ describe('tool message visibility helpers', () => {
     ).toEqual([{ type: 'text', text: '处理中' }]);
   });
 
+});
+
+
+describe('request status text', () => {
+  it('shows only the simple overall request states', () => {
+    expect(requestStatusText('processing')).toBe('处理中');
+    expect(requestStatusText('running_tools')).toBe('调用工具中');
+    expect(requestStatusText('completed')).toBe('整体已完成');
+    expect(requestStatusText('idle')).toBe('处理中');
+  });
 });

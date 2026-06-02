@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { AuiIf, ThreadPrimitive } from '@assistant-ui/react';
 
 import { AskUserPromptCard } from '../../ask-user-prompt';
-import { formatElapsedMs, turnPhaseText } from '../../app-helpers';
+import { formatElapsedMs, requestStatusText } from '../../app-helpers';
 import { AssistantMessage, UserMessage } from './messages';
 import { Composer } from './composer';
 import { ThreadWelcome } from './thread-shell';
@@ -183,7 +183,7 @@ function TurnStatusLine({ activeTurn }: { activeTurn: ActiveTurnState | null }) 
 
   return (
     <div className="turn-status-line">
-      {turnPhaseText(activeTurn.phase)} · {formatElapsedMs(elapsedMs)}
+      {requestStatusText(activeTurn.requestStatus)} · {formatElapsedMs(elapsedMs)}
     </div>
   );
 }

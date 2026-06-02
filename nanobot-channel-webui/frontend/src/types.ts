@@ -1,5 +1,6 @@
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected' | 'auth_required';
 export type TurnPhase = 'idle' | 'streaming' | 'running_tools' | 'finalizing' | 'completed';
+export type RequestStatus = 'idle' | 'processing' | 'running_tools' | 'completed';
 export type AuthStatus = 'anonymous' | 'authenticating' | 'authenticated';
 export type UserRole = 'admin' | 'user';
 
@@ -115,6 +116,7 @@ export interface PendingToolBlock {
 
 export interface ActiveTurnState {
   phase: TurnPhase;
+  requestStatus: RequestStatus;
   waiting: boolean;
   messageId: string | null;
   streamBuffer: string;

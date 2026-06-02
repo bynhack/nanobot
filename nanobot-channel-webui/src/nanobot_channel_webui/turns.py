@@ -19,6 +19,7 @@ class TurnSnapshot:
 class _TurnState:
     stream_id: str | None = None
     had_stream_output: bool = False
+    stream_buffer: str = ""
     finished: bool = False
 
 
@@ -36,11 +37,13 @@ class TurnAccumulator:
         state.stream_id = stream_id
         return previous != stream_id
 
-    def note_stream_output(self, chat_id: str) -> None:
+    def note_stream_output(self, chat_id: str, delta: str = "") -> None:
         state = self._turns.setdefault(chat_id, _TurnState())
         if state.finished:
             return
         state.had_stream_output = True
+        if delta:
+            state.stream_buffer += delta
 
     def had_stream_output(self, chat_id: str) -> bool:
         state = self._turns.get(chat_id)
@@ -49,6 +52,12 @@ class TurnAccumulator:
     def active_stream_id(self, chat_id: str) -> str | None:
         state = self._turns.get(chat_id)
         return state.stream_id if state is not None else None
+
+    def active_stream_buffer(self, chat_id: str) -> str:
+        state = self._turns.get(chat_id)
+        if state is None or state.finished:
+            return ""
+        return state.stream_buffer
 
     def finish(self, chat_id: str) -> TurnSnapshot:
         state = self._turns.setdefault(chat_id, _TurnState())
@@ -77,6 +86,7 @@ class TurnAccumulator:
                 chat_id: {
                     "stream_id": state.stream_id,
                     "had_stream_output": state.had_stream_output,
+                    "stream_buffer_length": len(state.stream_buffer),
                     "finished": state.finished,
                 }
                 for chat_id, state in self._turns.items()

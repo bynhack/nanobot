@@ -32,8 +32,8 @@ class TenantSubject:
 
     user_id: str = ""
     email: str = ""
-    role: str = "admin"
-    business_role: str = "admin"
+    role: str = "user"
+    business_role: str = "scoped"
     tenant_id: str = ""
 
     @property
@@ -54,8 +54,8 @@ class TenantSubject:
         return cls(
             user_id=str(payload.get("user_id") or ""),
             email=str(payload.get("email") or ""),
-            role=str(payload.get("role") or "admin"),
-            business_role=str(payload.get("business_role") or payload.get("businessRole") or "admin"),
+            role=str(payload.get("role") or "user"),
+            business_role=str(payload.get("business_role") or payload.get("businessRole") or "scoped"),
             tenant_id=str(payload.get("tenant_id") or payload.get("tenantId") or ""),
         )
 

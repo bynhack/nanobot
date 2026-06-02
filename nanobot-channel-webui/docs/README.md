@@ -2,10 +2,18 @@
 
 本目录只保留当前仍有指导价值的设计文档。历史阶段计划、迁移过程文档和已完成发布说明已归档到 `docs/archive/`。
 
+## 长期跟踪
+
+- `FIXME.md`
+  - 问题、风险、安全缺口和技术债修复清单。
+
+- `REQUIREMENTS.md`
+  - 产品能力、架构目标和明确需求清单。
+
 ## 当前架构文档
 
 - `2026-05-29-tenant-runtime-permission-hardening.md`
-  - 当前权限硬化基线：记录标准资源拆分、动态技能视图、标准 business CLI、业务数据层 scope 过滤和回归测试边界。
+  - 当前权限硬化基线：记录标准资源拆分、动态技能视图、标准 business CLI、业务数据层 scope 过滤、Guard SDK 定位和回归测试边界。
 
 - `2026-05-28-tenant-runtime-plugin-design.md`
   - 当前主方向：将 WebUI 插件抽象为支持多租户、业务权限控制、工具治理、技能治理、记忆隔离和审计的 Tenant Runtime Plugin。
@@ -25,4 +33,5 @@
 
 - 新的长期架构设计放在 `docs/` 顶层。
 - 阶段性计划和已经完成的发布说明完成后移入 `docs/archive/`。
+- 新需求、产品原则或架构目标更新 `REQUIREMENTS.md`；bug、安全风险、评审意见或技术债更新 `FIXME.md`。
 - 如果文档已经不符合当前产品定位，应更新或归档，不要让过期文档停留在顶层。

@@ -18,5 +18,6 @@ bun run build
 echo "[4/4] Compiling Python sources"
 cd "$ROOT_DIR"
 python3 -m compileall "$ROOT_DIR/src"
+find "$ROOT_DIR/src" -type d -name "__pycache__" -prune -exec rm -rf {} +
 
 echo "Verification complete"

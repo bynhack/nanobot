@@ -1,15 +1,16 @@
 import { describe, expect, test } from 'vitest';
 
-import { applyTurnEvent, createEmptyTurnState, normalizeIncomingDelta } from './turn-state';
+import { applyTurnEvent, createEmptyTurnState, normalizeIncomingDelta, startLocalTurn } from './turn-state';
 
 describe('turn-state', () => {
-  test('ignores late phase after completion', () => {
+  test('ignores late phase after stream completion', () => {
     const finished = applyTurnEvent(
-      createEmptyTurnState(),
+      startLocalTurn(createEmptyTurnState(), { messageId: 'msg-0', startedAtMs: 0 }),
       {
-        type: 'turn.completed',
+        type: 'turn.phase',
         chatId: 'c1',
-        content: 'done',
+        phase: 'finalizing',
+        resuming: false,
       },
       {
         allocateMessageId: () => 'msg-1',
@@ -30,11 +31,12 @@ describe('turn-state', () => {
       },
     );
 
-    expect(next.phase).toBe('completed');
+    expect(next.phase).toBe('finalizing');
+    expect(next.requestStatus).toBe('completed');
     expect(next.waiting).toBe(false);
   });
 
-  test('clears active stream buffer on completion', () => {
+  test('commits completed content without ending the overall request', () => {
     let state = createEmptyTurnState();
     state = applyTurnEvent(
       state,
@@ -62,8 +64,92 @@ describe('turn-state', () => {
     );
 
     expect(state.streamBuffer).toBe('');
-    expect(state.phase).toBe('completed');
+    expect(state.phase).toBe('streaming');
+    expect(state.requestStatus).toBe('processing');
+    expect(state.waiting).toBe(true);
+  });
+
+  test('tools finished and resuming true never end the overall request', () => {
+    let state = startLocalTurn(createEmptyTurnState(), { messageId: 'msg-0', startedAtMs: 0 });
+    state = applyTurnEvent(
+      state,
+      { type: 'tools.started', chatId: 'c1', tools: [{ name: 'read_file', args: {}, hint: '' }] },
+      {
+        allocateMessageId: () => 'msg-1',
+        nowMs: () => 100,
+      },
+    );
+    state = applyTurnEvent(
+      state,
+      { type: 'tools.finished', chatId: 'c1', durationMs: 4, results: [{ name: 'read_file', status: 'ok', detail: 'ok' }] },
+      {
+        allocateMessageId: () => 'msg-2',
+        nowMs: () => 120,
+      },
+    );
+    expect(state.requestStatus).toBe('running_tools');
+    expect(state.waiting).toBe(true);
+
+    state = applyTurnEvent(
+      state,
+      { type: 'turn.phase', chatId: 'c1', phase: 'running_tools', streamId: 's1', resuming: true },
+      {
+        allocateMessageId: () => 'msg-3',
+        nowMs: () => 140,
+      },
+    );
+    expect(state.requestStatus).toBe('running_tools');
+    expect(state.waiting).toBe(true);
+  });
+
+
+  test('uses resuming false as the final stream completion signal', () => {
+    let state = startLocalTurn(createEmptyTurnState(), { messageId: 'msg-0', startedAtMs: 0 });
+    state = applyTurnEvent(
+      state,
+      { type: 'turn.phase', chatId: 'c1', phase: 'streaming' },
+      {
+        allocateMessageId: () => 'msg-1',
+        nowMs: () => 100,
+      },
+    );
+    expect(state.requestStatus).toBe('processing');
+    expect(state.waiting).toBe(true);
+
+    state = applyTurnEvent(
+      state,
+      { type: 'tools.started', chatId: 'c1', tools: [{ name: 'exec', args: {}, hint: '' }] },
+      {
+        allocateMessageId: () => 'msg-2',
+        nowMs: () => 110,
+      },
+    );
+    expect(state.requestStatus).toBe('running_tools');
+    expect(state.waiting).toBe(true);
+
+    state = applyTurnEvent(
+      state,
+      { type: 'turn.phase', chatId: 'c1', phase: 'running_tools', resuming: true },
+      {
+        allocateMessageId: () => 'msg-3',
+        nowMs: () => 120,
+      },
+    );
+    expect(state.requestStatus).toBe('running_tools');
+    expect(state.waiting).toBe(true);
+
+    state = applyTurnEvent(
+      state,
+      { type: 'turn.phase', chatId: 'c1', phase: 'finalizing', streamId: 's1', resuming: false },
+      {
+        allocateMessageId: () => 'msg-4',
+        nowMs: () => 5000,
+      },
+    );
+    expect(state.phase).toBe('finalizing');
+    expect(state.requestStatus).toBe('completed');
     expect(state.waiting).toBe(false);
+    expect(state.lastDurationMs).toBe(5000);
   });
 
   test('appends turn.delta chunks exactly as received', () => {

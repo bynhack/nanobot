@@ -116,7 +116,7 @@ export function useWebuiRuntime({
     () => findPendingAskUserPrompt(currentMessages),
     [currentMessages],
   );
-  const isRunning = Boolean(activeTurn?.waiting);
+  const isRunning = activeTurn?.requestStatus === 'processing' || activeTurn?.requestStatus === 'running_tools';
 
   const webuiAttachmentAdapter = useMemo<AttachmentAdapter>(
     () => ({

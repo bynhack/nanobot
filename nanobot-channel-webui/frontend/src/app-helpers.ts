@@ -12,6 +12,7 @@ import type {
   HistoryMessage,
   MediaItem,
   PendingToolBlock,
+  RequestStatus,
   ToolHistoryItem,
   TurnPhase,
   UploadedAttachment,
@@ -105,6 +106,13 @@ export function turnPhaseText(phase: TurnPhase): string {
   if (phase === 'completed') return '本轮完成';
   return '处理中';
 }
+
+export function requestStatusText(status: RequestStatus): string {
+  if (status === 'running_tools') return '调用工具中';
+  if (status === 'completed') return '整体已完成';
+  return '处理中';
+}
+
 
 export function readAppearanceMode(): AppearanceMode {
   const stored = window.localStorage.getItem(STORAGE_KEYS.appearanceMode);

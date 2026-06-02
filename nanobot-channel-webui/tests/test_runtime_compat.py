@@ -161,11 +161,33 @@ def test_connection_registry_snapshot_counts_active_and_blocked() -> None:
 def test_turn_accumulator_snapshot_exposes_turn_state() -> None:
     acc = TurnAccumulator()
     acc.begin_stream("chat-a", "stream-1")
-    acc.note_stream_output("chat-a")
+    acc.note_stream_output("chat-a", "hello")
 
     snapshot = acc.snapshot()
 
     assert snapshot["active_turn_count"] == 1
     assert snapshot["turns"]["chat-a"]["stream_id"] == "stream-1"
     assert snapshot["turns"]["chat-a"]["had_stream_output"] is True
+    assert snapshot["turns"]["chat-a"]["stream_buffer_length"] == 5
     assert snapshot["turns"]["chat-a"]["finished"] is False
+
+
+def test_turn_accumulator_buffers_active_stream_for_replay() -> None:
+    acc = TurnAccumulator()
+    acc.begin_stream("chat-a", "stream-1")
+
+    acc.note_stream_output("chat-a", "hel")
+    acc.note_stream_output("chat-a", "lo")
+
+    assert acc.active_stream_buffer("chat-a") == "hello"
+    assert acc.active_stream_id("chat-a") == "stream-1"
+
+
+def test_turn_accumulator_hides_replay_buffer_after_finish() -> None:
+    acc = TurnAccumulator()
+    acc.begin_stream("chat-a", "stream-1")
+    acc.note_stream_output("chat-a", "hello")
+
+    acc.finish("chat-a")
+
+    assert acc.active_stream_buffer("chat-a") == ""

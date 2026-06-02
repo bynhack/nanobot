@@ -1,0 +1,804 @@
+{
+  "name": "hr-db-ops",
+  "resources": [
+    {
+      "resource": "hr.company",
+      "actions": [
+        "read",
+        "query"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.organization",
+      "actions": [
+        "read",
+        "query",
+        "write"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.department",
+      "actions": [
+        "read",
+        "query",
+        "write"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.employee",
+      "actions": [
+        "read",
+        "query",
+        "analyze",
+        "write",
+        "delete"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.contract",
+      "actions": [
+        "read",
+        "query",
+        "analyze",
+        "write"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.performance",
+      "actions": [
+        "read",
+        "query",
+        "analyze",
+        "write"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.insurance",
+      "actions": [
+        "read",
+        "query",
+        "analyze",
+        "write"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.personnel_change",
+      "actions": [
+        "read",
+        "query",
+        "analyze",
+        "write"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.disciplinary",
+      "actions": [
+        "read",
+        "query",
+        "analyze",
+        "write"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.seal_usage",
+      "actions": [
+        "read",
+        "query",
+        "analyze",
+        "write"
+      ],
+      "scope_key": "company"
+    }
+  ],
+  "commands": [
+    "nanobot-webui-business hr"
+  ],
+  "denied_commands": [
+    "clear-business-data",
+    "delete-employee-records",
+    "count-all"
+  ],
+  "requires_confirmation": false,
+  "kind": "business",
+  "capabilities": [
+    {
+      "id": "hr.company.list",
+      "title": "列出当前用户可见公司",
+      "kind": "query",
+      "commands": [
+        "list-companies",
+        "business query companies"
+      ],
+      "resources": [
+        {
+          "resource": "hr.company",
+          "actions": [
+            "read"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "公司",
+        "负责公司",
+        "可见公司",
+        "授权公司",
+        "company",
+        "companies"
+      ]
+    },
+    {
+      "id": "hr.department.query",
+      "title": "部门查询",
+      "kind": "query",
+      "commands": [
+        "list-departments",
+        "find-department",
+        "business query departments",
+        "business get department"
+      ],
+      "resources": [
+        {
+          "resource": "hr.department",
+          "actions": [
+            "query",
+            "read"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "部门",
+        "department",
+        "departments"
+      ]
+    },
+    {
+      "id": "hr.employee.overview",
+      "title": "员工概况和人数分析",
+      "kind": "analysis",
+      "commands": [
+        "employee-summary",
+        "analyze-headcount",
+        "business analyze headcount",
+        "business analyze employee-summary"
+      ],
+      "resources": [
+        {
+          "resource": "hr.employee",
+          "actions": [
+            "analyze"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "人数",
+        "员工概况",
+        "员工统计",
+        "headcount",
+        "summary"
+      ]
+    },
+    {
+      "id": "hr.employee.roster",
+      "title": "员工花名册查询",
+      "kind": "query",
+      "commands": [
+        "list-employees",
+        "employee-detail",
+        "find-employee",
+        "find-employee-like",
+        "business query employee",
+        "business query employees",
+        "business get employee"
+      ],
+      "resources": [
+        {
+          "resource": "hr.employee",
+          "actions": [
+            "query",
+            "read"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "员工",
+        "花名册",
+        "在职",
+        "离职",
+        "employee",
+        "employees",
+        "roster"
+      ]
+    },
+    {
+      "id": "hr.employee.timeline",
+      "title": "员工履历查询",
+      "kind": "query",
+      "commands": [
+        "employee-timeline",
+        "business query employee-timeline"
+      ],
+      "resources": [
+        {
+          "resource": "hr.employee",
+          "actions": [
+            "read"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "履历",
+        "时间线",
+        "经历",
+        "timeline"
+      ]
+    },
+    {
+      "id": "hr.contract.employee_lookup",
+      "title": "单员工合同查询",
+      "kind": "query",
+      "commands": [
+        "contracts-by-employee",
+        "business query employee-contracts"
+      ],
+      "resources": [
+        {
+          "resource": "hr.contract",
+          "actions": [
+            "read"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "合同",
+        "employee-contracts",
+        "contracts-by-employee"
+      ]
+    },
+    {
+      "id": "hr.contract.analysis",
+      "title": "合同覆盖率和到期分析",
+      "kind": "analysis",
+      "commands": [
+        "analyze-contract-coverage",
+        "analyze-contract-expiry",
+        "business analyze contract-coverage",
+        "business analyze contract-expiry"
+      ],
+      "resources": [
+        {
+          "resource": "hr.contract",
+          "actions": [
+            "analyze"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "合同",
+        "到期",
+        "覆盖率",
+        "contract",
+        "expiry",
+        "coverage"
+      ]
+    },
+    {
+      "id": "hr.performance.analysis",
+      "title": "绩效记录查询和分析",
+      "kind": "analysis",
+      "commands": [
+        "performance-by-employee",
+        "performance-by-month",
+        "analyze-performance-month",
+        "analyze-low-performance",
+        "business query performance",
+        "business query performance-by-employee",
+        "business analyze performance",
+        "business analyze low-performance"
+      ],
+      "resources": [
+        {
+          "resource": "hr.performance",
+          "actions": [
+            "query",
+            "read",
+            "analyze"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "绩效",
+        "考核",
+        "performance",
+        "low-performance"
+      ]
+    },
+    {
+      "id": "hr.insurance.analysis",
+      "title": "社医保异动查询和分析",
+      "kind": "analysis",
+      "commands": [
+        "insurance-by-employee",
+        "insurance-by-month",
+        "analyze-insurance-month",
+        "business query insurance",
+        "business query insurance-by-employee",
+        "business analyze insurance"
+      ],
+      "resources": [
+        {
+          "resource": "hr.insurance",
+          "actions": [
+            "query",
+            "read",
+            "analyze"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "社保",
+        "医保",
+        "社医保",
+        "保险",
+        "insurance"
+      ]
+    },
+    {
+      "id": "hr.personnel_change.query",
+      "title": "人事异动查询",
+      "kind": "query",
+      "commands": [
+        "personnel-changes-list",
+        "personnel-changes-by-employee",
+        "business query personnel-change",
+        "business query personnel-changes",
+        "business query personnel-change-by-employee"
+      ],
+      "resources": [
+        {
+          "resource": "hr.personnel_change",
+          "actions": [
+            "query",
+            "read"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "人事异动",
+        "异动",
+        "转正",
+        "调岗",
+        "离职",
+        "personnel-change"
+      ]
+    },
+    {
+      "id": "hr.disciplinary.analysis",
+      "title": "奖惩记录查询和分析",
+      "kind": "analysis",
+      "commands": [
+        "disciplinary-by-employee",
+        "analyze-disciplinary",
+        "business query disciplinary",
+        "business analyze disciplinary"
+      ],
+      "resources": [
+        {
+          "resource": "hr.disciplinary",
+          "actions": [
+            "query",
+            "read",
+            "analyze"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "纪律处分",
+        "奖惩",
+        "处分",
+        "告诫",
+        "警告",
+        "disciplinary"
+      ]
+    },
+    {
+      "id": "hr.seal_usage.query",
+      "title": "用章记录查询",
+      "kind": "query",
+      "commands": [
+        "seal-usage-list",
+        "business query seal-usage"
+      ],
+      "resources": [
+        {
+          "resource": "hr.seal_usage",
+          "actions": [
+            "query"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "用章",
+        "印章",
+        "seal-usage",
+        "seal usage"
+      ]
+    },
+    {
+      "id": "hr.employee.create",
+      "title": "员工主档导入",
+      "kind": "create",
+      "commands": [
+        "business preview employee",
+        "business preview employees",
+        "business create employee",
+        "business create employees"
+      ],
+      "resources": [
+        {
+          "resource": "hr.employee",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "requires_confirmation": true,
+      "triggers": [
+        "入职",
+        "新员工",
+        "录入员工",
+        "员工信息",
+        "员工主档",
+        "新增员工",
+        "添加员工",
+        "创建员工",
+        "onboarding",
+        "create employee"
+      ],
+      "related_capabilities": [
+        "hr.company.list",
+        "hr.department.query",
+        "hr.employee.roster"
+      ],
+      "recipe": [
+        "Use this recipe for conversational employee onboarding. Do not discover alternative schemas or trial-run writes.",
+        "Write exactly one JSON plan under .nanobot_channel_webui/runtime-inputs/<chat_id>/ from the user natural-language request. The plan may be a single JSON object or {\"records\":[...]}.",
+        "Show the JSON fields back to the user in natural language and wait for explicit confirmation before any write command.",
+        "After confirmation, run business create employee --input <same-plan.json>.",
+        "The create command performs the database write and verification against the same JSON plan; do not run a separate business verify command unless troubleshooting a failed create result.",
+        "A successful create result must include verification.ok true."
+      ],
+      "focus_terms": [
+        "入职",
+        "新员工",
+        "录入员工",
+        "员工信息",
+        "员工主档",
+        "新增员工",
+        "添加员工",
+        "创建员工",
+        "onboarding",
+        "create employee"
+      ]
+    },
+    {
+      "id": "hr.contract.create",
+      "title": "员工合同导入",
+      "kind": "create",
+      "commands": [
+        "business preview contract",
+        "business preview contracts",
+        "business create contract",
+        "business create contracts"
+      ],
+      "resources": [
+        {
+          "resource": "hr.contract",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "requires_confirmation": true,
+      "triggers": [
+        "录入合同",
+        "新增合同",
+        "劳动合同",
+        "合同开始",
+        "合同结束",
+        "create contract"
+      ],
+      "related_capabilities": [
+        "hr.employee.roster",
+        "hr.contract.employee_lookup"
+      ],
+      "recipe": [
+        "Write one JSON plan from the user request. Use fields such as employee_name/name, company, type/contract_type, start_date/contract_start, expiry_date/contract_end, sign_date, notes/remark.",
+        "Run business preview contract --input <plan.json> only to match employee and show the planned fields.",
+        "Show the JSON fields in natural language and wait for confirmation.",
+        "After confirmation, run business create contract --input <same-plan.json>; create includes verification."
+      ],
+      "focus_terms": [
+        "录入合同",
+        "新增合同",
+        "劳动合同",
+        "合同开始",
+        "合同结束",
+        "create contract"
+      ]
+    },
+    {
+      "id": "hr.employee.update",
+      "title": "员工主档维护",
+      "kind": "update",
+      "commands": [
+        "business update employee-nickname"
+      ],
+      "resources": [
+        {
+          "resource": "hr.employee",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "requires_confirmation": true,
+      "focus_terms": [
+        "员工维护",
+        "员工花名",
+        "姓名花名",
+        "employee update"
+      ]
+    },
+    {
+      "id": "hr.performance.create",
+      "title": "绩效记录导入",
+      "kind": "create",
+      "commands": [
+        "business preview performance",
+        "business create performance"
+      ],
+      "resources": [
+        {
+          "resource": "hr.performance",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "requires_confirmation": true,
+      "recipe": [
+        "Write one JSON plan from the user request. Use employee_name/name, company, review_date/month, final_score/score, notes/comment/remark.",
+        "Run business preview performance --input <plan.json>; if matched is 0 or records is 0, stop and explain the issue instead of creating.",
+        "Show the JSON fields in natural language and wait for confirmation.",
+        "After confirmation, run business create performance --input <same-plan.json>; create includes verification."
+      ],
+      "focus_terms": [
+        "录入绩效",
+        "新增绩效",
+        "创建绩效",
+        "绩效记录",
+        "performance create"
+      ]
+    },
+    {
+      "id": "hr.insurance.create",
+      "title": "社医保异动导入",
+      "kind": "create",
+      "commands": [
+        "business preview insurance",
+        "business create insurance"
+      ],
+      "resources": [
+        {
+          "resource": "hr.insurance",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "requires_confirmation": true,
+      "recipe": [
+        "Write one JSON plan from the user request, show the natural-language preview, wait for confirmation, then run business create insurance --input <same-plan.json>. Create includes verification."
+      ],
+      "focus_terms": [
+        "录入社保",
+        "录入医保",
+        "社医保异动",
+        "新增社保",
+        "insurance create"
+      ]
+    },
+    {
+      "id": "hr.personnel_change.create",
+      "title": "人事异动导入",
+      "kind": "create",
+      "commands": [
+        "business preview personnel-change",
+        "business create personnel-change"
+      ],
+      "resources": [
+        {
+          "resource": "hr.personnel_change",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "requires_confirmation": true,
+      "recipe": [
+        "Write one JSON plan from the user request, show the natural-language preview, wait for confirmation, then run business create personnel-change --input <same-plan.json>. Create includes verification."
+      ],
+      "focus_terms": [
+        "录入异动",
+        "新增异动",
+        "人事异动",
+        "调岗",
+        "转正",
+        "personnel change create"
+      ]
+    },
+    {
+      "id": "hr.disciplinary.create",
+      "title": "奖惩记录导入和附件回填",
+      "kind": "create",
+      "commands": [
+        "business preview disciplinary",
+        "business create disciplinary",
+        "business create disciplinary-attachment"
+      ],
+      "resources": [
+        {
+          "resource": "hr.disciplinary",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "requires_confirmation": true,
+      "recipe": [
+        "Write one JSON plan from the user request, show the natural-language preview, wait for confirmation, then run business create disciplinary --input <same-plan.json>. Create includes verification."
+      ],
+      "focus_terms": [
+        "录入奖惩",
+        "新增奖惩",
+        "处分记录",
+        "奖励记录",
+        "disciplinary create"
+      ]
+    },
+    {
+      "id": "hr.seal_usage.create",
+      "title": "用章记录导入",
+      "kind": "create",
+      "commands": [
+        "business preview seal-usage",
+        "business create seal-usage"
+      ],
+      "resources": [
+        {
+          "resource": "hr.seal_usage",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "requires_confirmation": true,
+      "recipe": [
+        "Write one JSON plan from the user request, show the natural-language preview, wait for confirmation, then run business create seal-usage --input <same-plan.json>. Create includes verification."
+      ],
+      "focus_terms": [
+        "录入用章",
+        "新增用章",
+        "印章使用",
+        "seal usage create"
+      ]
+    },
+    {
+      "id": "hr.organization.create",
+      "title": "组织和部门导入",
+      "kind": "create",
+      "commands": [
+        "business preview organization",
+        "business preview departments",
+        "business create organization",
+        "business create departments"
+      ],
+      "resources": [
+        {
+          "resource": "hr.organization",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "requires_confirmation": true,
+      "triggers": [
+        "新增部门",
+        "添加部门",
+        "创建部门",
+        "录入部门",
+        "新增组织",
+        "组织导入",
+        "create department",
+        "create organization"
+      ],
+      "related_capabilities": [
+        "hr.company.list",
+        "hr.department.query"
+      ],
+      "recipe": [
+        "Use this recipe for conversational organization or department creation. Do not discover hidden schemas or trial-run confirmed writes.",
+        "Write exactly one JSON plan under .nanobot_channel_webui/runtime-inputs/<chat_id>/ before calling any command.",
+        "For adding a department to an existing company, use {\"company\":\"公司全称\",\"departments\":[{\"name\":\"部门名称\"}]}. Put unsupported business notes in summary/source; the department table stores company and name.",
+        "Run business preview organization --input <plan.json> to validate what would be created or already exists.",
+        "Show the JSON fields and preview result to the user in natural language and wait for explicit confirmation before any write command.",
+        "After confirmation, run business create organization --input <same-plan.json>.",
+        "The create command performs verification against the same JSON plan and must return verification.ok true; do not run a separate verify command unless troubleshooting."
+      ],
+      "focus_terms": [
+        "新增部门",
+        "添加部门",
+        "创建部门",
+        "录入部门",
+        "新增组织",
+        "组织导入",
+        "department create",
+        "organization create"
+      ]
+    },
+    {
+      "id": "hr.employee.delete",
+      "title": "员工记录删除",
+      "kind": "delete",
+      "commands": [
+        "business delete employee",
+        "business delete employees"
+      ],
+      "resources": [
+        {
+          "resource": "hr.employee",
+          "actions": [
+            "delete"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "requires_confirmation": true,
+      "focus_terms": [
+        "删除员工",
+        "移除员工",
+        "employee delete"
+      ]
+    }
+  ]
+}

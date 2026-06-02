@@ -33,8 +33,8 @@ export function loadPolicyFromEnv(env = process.env) {
     subject: {
       user_id: String(env.NANOBOT_WEBUI_USER_ID || ""),
       email: String(env.NANOBOT_WEBUI_USER_EMAIL || ""),
-      role: String(env.NANOBOT_WEBUI_ROLE || "admin"),
-      business_role: String(env.NANOBOT_WEBUI_BUSINESS_ROLE || "admin"),
+      role: String(env.NANOBOT_WEBUI_ROLE || "user"),
+      business_role: String(env.NANOBOT_WEBUI_BUSINESS_ROLE || "scoped"),
     },
     resources: [],
     scopes: {},

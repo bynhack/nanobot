@@ -279,9 +279,13 @@ class WebUIChannel(BaseChannel):
     def _ensure_runtime_attached(self) -> bool:
         attached = attach_webui_runtime(self.bus, self._hook)
         if attached:
-            attach_tenant_runtime(self.bus, workspace=self._sessions.workspace)
-            self._runtime_attach_warned = False
-            return True
+            tenant_attached = attach_tenant_runtime(self.bus, workspace=self._sessions.workspace)
+            if tenant_attached:
+                self._runtime_attach_warned = False
+                return True
+            logger.error("WebUI tenant runtime injection failed; scoped requests will be rejected")
+            self._runtime_attach_warned = True
+            return False
         if not self._runtime_attach_warned:
             logger.warning(
                 "WebUI runtime hook unavailable; running in outbound-only compatibility mode"
@@ -406,10 +410,25 @@ class WebUIChannel(BaseChannel):
             return
 
         is_new_stream = self._turns.begin_stream(chat_id, stream_id)
-        self._turns.note_stream_output(chat_id)
+        self._turns.note_stream_output(chat_id, delta)
         if is_new_stream:
             await self._registry.emit_to_chat(chat_id, turn_phase_event(chat_id, "streaming", streamId=stream_id))
         await self._registry.emit_to_chat(chat_id, turn_delta_event(chat_id, delta, stream_id=stream_id))
+
+    async def _replay_active_turn(self, ws: Any, chat_id: str) -> None:
+        """Replay in-flight stream content after a browser switches back to a chat."""
+        stream_buffer = self._turns.active_stream_buffer(chat_id)
+        if not stream_buffer:
+            return
+        stream_id = self._turns.active_stream_id(chat_id)
+        await self._registry.emit_to_ws(
+            ws,
+            turn_phase_event(chat_id, "streaming", streamId=stream_id),
+        )
+        await self._registry.emit_to_ws(
+            ws,
+            turn_delta_event(chat_id, stream_buffer, stream_id=stream_id),
+        )
 
     @staticmethod
     def _session_title_from_preview(preview: str) -> str:
@@ -886,6 +905,7 @@ class WebUIChannel(BaseChannel):
             and chat_ref[0] == requested_chat_id
         ):
             await self._registry.emit_to_ws(ws, session_history_event(chat_ref[0], history))
+            await self._replay_active_turn(ws, chat_ref[0])
 
         async def create_active_chat() -> str:
             old_chat = chat_ref[0]
@@ -894,7 +914,6 @@ class WebUIChannel(BaseChannel):
             self._registry.mark_active(chat_id)
             self._registry.subscribe(ws, chat_id)
             if old_chat:
-                self._turns.clear(old_chat)
                 logger.info("WebUI: new chat {} → {}", old_chat[:8], chat_id[:8])
             else:
                 logger.info("WebUI: new chat {}", chat_id[:8])
@@ -940,6 +959,9 @@ class WebUIChannel(BaseChannel):
                         if extra:
                             content = f"{content}\n\n{extra}".strip() if content else extra
                     policy = self._policy_resolver.resolve(current_user).with_chat(chat_id).write_policy_file(self._sessions.workspace)
+                    if not policy.is_unrestricted and not self._runtime_attached:
+                        await self._registry.emit_to_ws(ws, error_event("权限运行时未就绪，已拒绝本次业务请求", code="tenant_runtime_unavailable"))
+                        continue
                     with bind_current_user(current_user), bind_tenant_context(policy):
                         await self._handle_message(
                             sender_id=f"webui_browser:{current_user.id}" if current_user is not None else "webui_browser",
@@ -956,6 +978,9 @@ class WebUIChannel(BaseChannel):
                         await self._registry.emit_to_ws(ws, error_event("当前会话为只读视图，不能发送停止命令", code="read_only_session"))
                         continue
                     policy = self._policy_resolver.resolve(current_user).with_chat(chat_id).write_policy_file(self._sessions.workspace)
+                    if not policy.is_unrestricted and not self._runtime_attached:
+                        await self._registry.emit_to_ws(ws, error_event("权限运行时未就绪，已拒绝本次业务请求", code="tenant_runtime_unavailable"))
+                        continue
                     with bind_current_user(current_user), bind_tenant_context(policy):
                         await self._handle_message(
                             sender_id=f"webui_browser:{current_user.id}" if current_user is not None else "webui_browser",
@@ -993,6 +1018,7 @@ class WebUIChannel(BaseChannel):
                     )
                     await self._registry.emit_to_ws(ws, session_init_event(chat_ref[0]))
                     await self._registry.emit_to_ws(ws, session_history_event(chat_ref[0], history))
+                    await self._replay_active_turn(ws, chat_ref[0])
                     continue
         finally:
             self._registry.unsubscribe(ws)

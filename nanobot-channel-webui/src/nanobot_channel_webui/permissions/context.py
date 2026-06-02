@@ -16,8 +16,8 @@ class PolicyContext:
 
     user_id: str = ""
     email: str = ""
-    role: str = "admin"
-    business_role: str = "admin"
+    role: str = "user"
+    business_role: str = "scoped"
     tenant_id: str = ""
     skill_allowlist: frozenset[str] = field(default_factory=frozenset)
     scopes: dict[str, tuple[str, ...]] = field(default_factory=dict)
@@ -78,7 +78,7 @@ class PolicyContext:
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "PolicyContext":
-        role = str(payload.get("role") or "admin").strip()
+        role = str(payload.get("role") or "user").strip()
         business_role = str(payload.get("business_role") or ("admin" if role == "admin" else "hr_specialist")).strip()
         return cls(
             user_id=str(payload.get("user_id") or ""),
@@ -86,7 +86,9 @@ class PolicyContext:
             tenant_id=str(payload.get("tenant_id") or payload.get("tenantId") or ""),
             role=role,
             business_role=business_role,
-            skill_allowlist=frozenset(_tuple_of_strings(payload.get("skills") or payload.get("skill_allowlist") or payload.get("allowed_skills"))),
+            skill_allowlist=frozenset(
+                _tuple_of_strings(payload.get("skills") or payload.get("skill_allowlist") or payload.get("allowed_skills"))
+            ),
             scopes=_normalize_scopes(payload.get("scopes")),
             resources=tuple(dict(item) for item in payload.get("resources", []) if isinstance(item, dict))
             if isinstance(payload.get("resources"), list)

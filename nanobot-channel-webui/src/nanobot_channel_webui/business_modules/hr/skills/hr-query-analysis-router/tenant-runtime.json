@@ -1,0 +1,424 @@
+{
+  "name": "hr-query-analysis-router",
+  "kind": "business",
+  "resources": [
+    {
+      "resource": "hr.company",
+      "actions": [
+        "read",
+        "query"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.organization",
+      "actions": [
+        "read",
+        "query"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.department",
+      "actions": [
+        "read",
+        "query"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.contract",
+      "actions": [
+        "read",
+        "query",
+        "analyze"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.performance",
+      "actions": [
+        "read",
+        "query",
+        "analyze"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.insurance",
+      "actions": [
+        "read",
+        "query",
+        "analyze"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.personnel_change",
+      "actions": [
+        "read",
+        "query",
+        "analyze"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.disciplinary",
+      "actions": [
+        "read",
+        "query",
+        "analyze"
+      ],
+      "scope_key": "company"
+    },
+    {
+      "resource": "hr.seal_usage",
+      "actions": [
+        "read",
+        "query",
+        "analyze"
+      ],
+      "scope_key": "company"
+    }
+  ],
+  "commands": [
+    "nanobot-webui-business hr"
+  ],
+  "requires_confirmation": false,
+  "capabilities": [
+    {
+      "id": "hr.company.list",
+      "title": "列出当前用户可见公司",
+      "kind": "query",
+      "commands": [
+        "list-companies",
+        "business query companies"
+      ],
+      "resources": [
+        {
+          "resource": "hr.company",
+          "actions": [
+            "read"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "公司",
+        "负责公司",
+        "可见公司",
+        "授权公司",
+        "company",
+        "companies"
+      ]
+    },
+    {
+      "id": "hr.department.query",
+      "title": "部门查询",
+      "kind": "query",
+      "commands": [
+        "list-departments",
+        "find-department",
+        "business query departments",
+        "business get department"
+      ],
+      "resources": [
+        {
+          "resource": "hr.department",
+          "actions": [
+            "query",
+            "read"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "部门",
+        "department",
+        "departments"
+      ]
+    },
+    {
+      "id": "hr.employee.overview",
+      "title": "员工概况和人数分析",
+      "kind": "analysis",
+      "commands": [
+        "employee-summary",
+        "analyze-headcount",
+        "business analyze headcount",
+        "business analyze employee-summary"
+      ],
+      "resources": [
+        {
+          "resource": "hr.employee",
+          "actions": [
+            "analyze"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "人数",
+        "员工概况",
+        "员工统计",
+        "headcount",
+        "summary"
+      ]
+    },
+    {
+      "id": "hr.employee.roster",
+      "title": "员工花名册查询",
+      "kind": "query",
+      "commands": [
+        "list-employees",
+        "employee-detail",
+        "find-employee",
+        "find-employee-like",
+        "business query employee",
+        "business query employees",
+        "business get employee"
+      ],
+      "resources": [
+        {
+          "resource": "hr.employee",
+          "actions": [
+            "query",
+            "read"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "员工",
+        "花名册",
+        "在职",
+        "离职",
+        "employee",
+        "employees",
+        "roster"
+      ]
+    },
+    {
+      "id": "hr.employee.timeline",
+      "title": "员工履历查询",
+      "kind": "query",
+      "commands": [
+        "employee-timeline",
+        "business query employee-timeline"
+      ],
+      "resources": [
+        {
+          "resource": "hr.employee",
+          "actions": [
+            "read"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "履历",
+        "时间线",
+        "经历",
+        "timeline"
+      ]
+    },
+    {
+      "id": "hr.contract.employee_lookup",
+      "title": "单员工合同查询",
+      "kind": "query",
+      "commands": [
+        "contracts-by-employee",
+        "business query employee-contracts"
+      ],
+      "resources": [
+        {
+          "resource": "hr.contract",
+          "actions": [
+            "read"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "合同",
+        "employee-contracts",
+        "contracts-by-employee"
+      ]
+    },
+    {
+      "id": "hr.contract.analysis",
+      "title": "合同覆盖率和到期分析",
+      "kind": "analysis",
+      "commands": [
+        "analyze-contract-coverage",
+        "analyze-contract-expiry",
+        "business analyze contract-coverage",
+        "business analyze contract-expiry"
+      ],
+      "resources": [
+        {
+          "resource": "hr.contract",
+          "actions": [
+            "analyze"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "合同",
+        "到期",
+        "覆盖率",
+        "contract",
+        "expiry",
+        "coverage"
+      ]
+    },
+    {
+      "id": "hr.performance.analysis",
+      "title": "绩效记录查询和分析",
+      "kind": "analysis",
+      "commands": [
+        "performance-by-employee",
+        "performance-by-month",
+        "analyze-performance-month",
+        "analyze-low-performance",
+        "business query performance",
+        "business query performance-by-employee",
+        "business analyze performance",
+        "business analyze low-performance"
+      ],
+      "resources": [
+        {
+          "resource": "hr.performance",
+          "actions": [
+            "query",
+            "read",
+            "analyze"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "绩效",
+        "考核",
+        "performance",
+        "low-performance"
+      ]
+    },
+    {
+      "id": "hr.insurance.analysis",
+      "title": "社医保异动查询和分析",
+      "kind": "analysis",
+      "commands": [
+        "insurance-by-employee",
+        "insurance-by-month",
+        "analyze-insurance-month",
+        "business query insurance",
+        "business query insurance-by-employee",
+        "business analyze insurance"
+      ],
+      "resources": [
+        {
+          "resource": "hr.insurance",
+          "actions": [
+            "query",
+            "read",
+            "analyze"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "社保",
+        "医保",
+        "社医保",
+        "保险",
+        "insurance"
+      ]
+    },
+    {
+      "id": "hr.personnel_change.query",
+      "title": "人事异动查询",
+      "kind": "query",
+      "commands": [
+        "personnel-changes-list",
+        "personnel-changes-by-employee",
+        "business query personnel-change",
+        "business query personnel-changes",
+        "business query personnel-change-by-employee"
+      ],
+      "resources": [
+        {
+          "resource": "hr.personnel_change",
+          "actions": [
+            "query",
+            "read"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "人事异动",
+        "异动",
+        "转正",
+        "调岗",
+        "离职",
+        "personnel-change"
+      ]
+    },
+    {
+      "id": "hr.disciplinary.analysis",
+      "title": "奖惩记录查询和分析",
+      "kind": "analysis",
+      "commands": [
+        "disciplinary-by-employee",
+        "analyze-disciplinary",
+        "business query disciplinary",
+        "business analyze disciplinary"
+      ],
+      "resources": [
+        {
+          "resource": "hr.disciplinary",
+          "actions": [
+            "query",
+            "read",
+            "analyze"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "纪律处分",
+        "奖惩",
+        "处分",
+        "告诫",
+        "警告",
+        "disciplinary"
+      ]
+    },
+    {
+      "id": "hr.seal_usage.query",
+      "title": "用章记录查询",
+      "kind": "query",
+      "commands": [
+        "seal-usage-list",
+        "business query seal-usage"
+      ],
+      "resources": [
+        {
+          "resource": "hr.seal_usage",
+          "actions": [
+            "query"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "用章",
+        "印章",
+        "seal-usage",
+        "seal usage"
+      ]
+    }
+  ]
+}

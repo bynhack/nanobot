@@ -62,4 +62,45 @@ describe('thread list session lifecycle', () => {
     expect(next.sessions).toEqual([session]);
     expect(next.messagesByChat).toEqual(state.messagesByChat);
   });
+
+  it('keeps existing session order when switching to a session with history', () => {
+    const first = {
+      chat_id: 'chat-first',
+      created_at: '2026-05-10T00:00:00.000Z',
+      last_ts: '2026-05-10T00:00:00.000Z',
+      preview: '第一个会话',
+      message_count: 2,
+    };
+    const second = {
+      chat_id: 'chat-second',
+      created_at: '2026-05-11T00:00:00.000Z',
+      last_ts: '2026-05-11T00:00:00.000Z',
+      preview: '第二个会话',
+      message_count: 2,
+    };
+    const state = reducer(createInitialState({ title: 'Nanobot', authRequired: false }, '', 'chat-first'), {
+      type: 'sessions.loaded',
+      sessions: [first, second],
+    });
+
+    const next = reducer(state, {
+      type: 'server.event',
+      event: {
+        type: 'session.history',
+        chatId: 'chat-second',
+        messages: [
+          { type: 'user', content: '切换到第二个' },
+          { type: 'assistant', content: '历史回复' },
+        ],
+      },
+    });
+
+    expect(next.currentChatId).toBe('chat-second');
+    expect(next.sessions.map((session) => session.chat_id)).toEqual(['chat-first', 'chat-second']);
+    expect(next.sessions[1]).toMatchObject({
+      chat_id: 'chat-second',
+      preview: '切换到第二个',
+      message_count: 2,
+    });
+  });
 });

@@ -18,42 +18,42 @@ class WebUIConversationStarter(Base):
 def _default_conversation_starters() -> list[WebUIConversationStarter]:
     return [
         WebUIConversationStarter(
-            title="整理思路",
-            label="把零散信息归纳成清晰结构",
-            prompt="请帮我把现有信息整理成要点、问题和下一步行动",
+            title="查看负责公司",
+            label="确认当前账号可见的公司和部门",
+            prompt="请帮我查询我当前账号能查看哪些公司，以及这些公司下面有哪些部门。",
         ),
         WebUIConversationStarter(
-            title="提炼重点",
-            label="从文本、附件或对话里抓关键内容",
-            prompt="请帮我提炼这段内容的重点，并列出需要继续确认的事项",
+            title="员工花名册",
+            label="查看授权范围内员工人数和状态",
+            prompt="请帮我查询我负责公司范围内的员工花名册，并按公司、部门和在职状态做一个简要汇总。",
         ),
         WebUIConversationStarter(
-            title="生成草稿",
-            label="起草邮件、说明、报告或清单",
-            prompt="请帮我起草一份结构清晰、语气专业的初稿",
+            title="合同覆盖检查",
+            label="检查在职员工合同缺口",
+            prompt="请帮我分析我负责公司范围内的劳动合同覆盖情况，重点列出在职但缺少合同记录的员工。",
         ),
         WebUIConversationStarter(
-            title="检查方案",
-            label="发现风险、遗漏和可改进点",
-            prompt="请帮我检查这个方案可能存在的风险、遗漏和改进建议",
+            title="绩效社保概况",
+            label="按月份查看绩效和社保记录",
+            prompt="请帮我查询 2026 年 3 月我负责公司范围内的绩效记录和社保异动情况，并给出简要汇总。",
         ),
         WebUIConversationStarter(
-            title="解释概念",
-            label="用易懂方式拆解复杂问题",
-            prompt="请用简明的方式解释这个问题，并给出一个例子",
+            title="人事异动奖惩",
+            label="查看异动、纪律处分和用章记录",
+            prompt="请帮我查询 2026 年我负责公司范围内的人事异动、纪律处分和用章记录，并按类别汇总。",
         ),
         WebUIConversationStarter(
-            title="处理附件",
-            label="上传文件后总结、转写或建立索引",
-            prompt="我准备上传附件，请先告诉我你可以如何帮我阅读、总结和整理它",
+            title="查询员工档案",
+            label="按姓名查看员工基础信息和合同",
+            prompt="请帮我查询某位员工的基础信息和合同情况。如果员工不在我的权限范围内，请直接说明权限边界。",
         ),
     ]
 
 
 class WebUIUIConfig(Base):
-    welcome_title: str = "从一个问题开始。"
-    welcome_subtitle: str = "选择一个常用任务，或直接输入你想处理的内容。"
-    composer_placeholder: str = "输入问题、任务或 / 选择技能…"
+    welcome_title: str = "从一项人事工作开始。"
+    welcome_subtitle: str = "选择常用 HR 查询，或直接输入你要处理的人事问题。"
+    composer_placeholder: str = "输入人事查询、员工姓名、导入任务或 / 选择技能…"
     compact_composer_placeholder: str = "发消息…"
     conversation_starters: list[WebUIConversationStarter] = Field(default_factory=_default_conversation_starters)
 

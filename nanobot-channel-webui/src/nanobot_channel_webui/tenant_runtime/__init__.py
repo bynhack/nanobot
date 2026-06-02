@@ -1,7 +1,10 @@
 """Tenant runtime framework for the WebUI plugin.
 
-This package is the generic multi-tenant runtime surface. The older
-`permissions` package remains as a compatibility layer for the HR MVP.
+This package is the public generic multi-tenant runtime surface. The older
+`permissions` package contains the current implementation modules and remains
+available as a compatibility import path. New code should prefer imports from
+`nanobot_channel_webui.tenant_runtime` unless it is editing the implementation
+itself.
 """
 
 from .audit import PermissionAuditLogger, TenantAuditLogger

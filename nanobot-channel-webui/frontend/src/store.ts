@@ -1,6 +1,7 @@
 import type {
   ActiveTurnState,
   AppState,
+  AssistantHistoryPart,
   BootstrapConfig,
   ConnectionState,
   HistoryMessage,
@@ -66,6 +67,21 @@ function replaceActiveTurn(state: AppState, chatId: string, turn: ActiveTurnStat
   };
 }
 
+function isTurnFullyCompleted(turn: ActiveTurnState): boolean {
+  return turn.requestStatus === 'completed' && turn.waiting === false;
+}
+
+function latestAssistantMessageId(state: AppState, chatId: string): string | null {
+  const messages = state.messagesByChat[chatId] ?? [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.type === 'assistant' && message.id) {
+      return message.id;
+    }
+  }
+  return null;
+}
+
 function ensureMessageId(chatId: string, message: HistoryMessage): HistoryMessage {
   if (message.id) {
     return message;
@@ -87,6 +103,29 @@ function appendMessage(state: AppState, chatId: string, message: HistoryMessage)
   };
 }
 
+function upsertToolsMessage(
+  state: AppState,
+  chatId: string,
+  messageId: string,
+  tools: Extract<HistoryMessage, { type: 'tools' }>['tools'],
+): AppState {
+  const messages = state.messagesByChat[chatId] ?? [];
+  const index = messages.findIndex((message) => message.id === messageId && message.type === 'tools');
+  const nextMessage: HistoryMessage = { id: messageId, type: 'tools', tools };
+  if (index >= 0) {
+    const nextMessages = [...messages];
+    nextMessages[index] = nextMessage;
+    return {
+      ...state,
+      messagesByChat: {
+        ...state.messagesByChat,
+        [chatId]: nextMessages,
+      },
+    };
+  }
+  return appendMessage(state, chatId, nextMessage);
+}
+
 function commitPendingTools(state: AppState, chatId: string): AppState {
   const turn = withActiveTurn(state, chatId);
   const pending = turn.pendingTools;
@@ -99,10 +138,12 @@ function commitPendingTools(state: AppState, chatId: string): AppState {
     result: pending.results?.[index]?.detail ?? '',
     status: pending.results?.[index]?.status ?? 'ok',
   }));
-  const nextState = appendMessage(state, chatId, { type: 'tools', tools });
+  const messageId = turn.toolsMessageId ?? nextMessageId(chatId, 'tools');
+  const nextState = upsertToolsMessage(state, chatId, messageId, tools);
   return replaceActiveTurn(nextState, chatId, {
     ...withActiveTurn(nextState, chatId),
     pendingTools: null,
+    toolsMessageId: messageId,
   });
 }
 
@@ -136,6 +177,99 @@ function upsertAssistantMessage(
       [chatId]: [...messages, nextMessage],
     },
   };
+}
+
+function assistantPartsFromMessage(
+  message: Extract<HistoryMessage, { type: 'assistant' }> | null,
+): AssistantHistoryPart[] {
+  if (message?.parts?.length) {
+    return message.parts.map((part) => ({ ...part }));
+  }
+  if (message?.content) {
+    return [{ type: 'text', text: message.content }];
+  }
+  return [];
+}
+
+function upsertAssistantParts(
+  state: AppState,
+  chatId: string,
+  messageId: string,
+  update: (parts: AssistantHistoryPart[]) => AssistantHistoryPart[],
+  extras: Pick<Extract<HistoryMessage, { type: 'assistant' }>, 'buttons'> = {},
+): AppState {
+  return upsertAssistantMessage(state, chatId, messageId, (current) => {
+    const parts = update(assistantPartsFromMessage(current));
+    const content = parts
+      .filter((part): part is Extract<AssistantHistoryPart, { type: 'text' }> => part.type === 'text')
+      .map((part) => part.text)
+      .join('');
+    return {
+      id: current?.id ?? messageId,
+      type: 'assistant',
+      content,
+      parts,
+      ...(extras.buttons?.length
+        ? { buttons: extras.buttons }
+        : current?.buttons?.length
+          ? { buttons: current.buttons }
+          : {}),
+    };
+  });
+}
+
+function appendTextPart(parts: AssistantHistoryPart[], text: string): AssistantHistoryPart[] {
+  if (!text) return parts;
+  const next = [...parts];
+  const last = next.at(-1);
+  if (last?.type === 'text') {
+    next[next.length - 1] = { ...last, text: `${last.text}${text}` };
+    return next;
+  }
+  next.push({ type: 'text', text });
+  return next;
+}
+
+function replaceFinalTextPart(parts: AssistantHistoryPart[], text: string): AssistantHistoryPart[] {
+  if (!text) return parts;
+  const last = parts.at(-1);
+  if (last?.type !== 'text') {
+    return [...parts, { type: 'text', text }];
+  }
+  const next = [...parts];
+  next[next.length - 1] = { type: 'text', text };
+  return next;
+}
+
+function appendReasoningPart(parts: AssistantHistoryPart[], text: string): AssistantHistoryPart[] {
+  if (!text) return parts;
+  const next = [...parts];
+  const last = next.at(-1);
+  if (last?.type === 'reasoning' && last.streaming) {
+    next[next.length - 1] = { ...last, text: `${last.text}${text}`, streaming: true };
+    return next;
+  }
+  next.push({ type: 'reasoning', text, streaming: true });
+  return next;
+}
+
+function closeReasoningParts(parts: AssistantHistoryPart[]): AssistantHistoryPart[] {
+  return parts.map((part) => (
+    part.type === 'reasoning' && part.streaming
+      ? { ...part, streaming: false }
+      : part
+  ));
+}
+
+function replaceTrailingToolParts(
+  parts: AssistantHistoryPart[],
+  tools: Extract<AssistantHistoryPart, { type: 'tool-call' }>[],
+): AssistantHistoryPart[] {
+  let keepUntil = parts.length;
+  while (keepUntil > 0 && parts[keepUntil - 1].type === 'tool-call') {
+    keepUntil -= 1;
+  }
+  return [...parts.slice(0, keepUntil), ...tools];
 }
 
 function replaceLastMessage(
@@ -413,17 +547,20 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
 
   if (event.type === 'turn.delta') {
     const currentTurn = withActiveTurn(state, event.chatId);
+    if (isTurnFullyCompleted(currentTurn)) {
+      return state;
+    }
     const nextTurn = applyTurnEvent(currentTurn, event, {
       allocateMessageId: () => nextMessageId(event.chatId, 'assistant'),
       nowMs: () => Date.now(),
     });
     const messageId = nextTurn.messageId ?? currentTurn.messageId ?? nextMessageId(event.chatId, 'assistant');
-    const nextState = upsertAssistantMessage(state, event.chatId, messageId, (current) => ({
-      id: current?.id ?? messageId,
-      type: 'assistant',
-      content: `${current?.content ?? ''}${normalizeDeltaForStore(current?.content ?? '', event.delta)}`,
-      ...(current?.buttons?.length ? { buttons: current.buttons } : {}),
-    }));
+    const nextState = upsertAssistantParts(
+      state,
+      event.chatId,
+      messageId,
+      (parts) => appendTextPart(parts, normalizeDeltaForStore('', event.delta)),
+    );
     return replaceActiveTurn(
       nextState,
       event.chatId,
@@ -431,6 +568,44 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
         ...nextTurn,
         messageId,
       },
+    );
+  }
+
+  if (event.type === 'turn.reasoning_delta') {
+    const currentTurn = withActiveTurn(state, event.chatId);
+    if (isTurnFullyCompleted(currentTurn)) {
+      return state;
+    }
+    const messageId = currentTurn.messageId ?? nextMessageId(event.chatId, 'assistant');
+    const nextState = upsertAssistantParts(
+      state,
+      event.chatId,
+      messageId,
+      (parts) => appendReasoningPart(parts, event.delta),
+    );
+    return replaceActiveTurn(nextState, event.chatId, {
+      ...currentTurn,
+      waiting: true,
+      phase: 'streaming',
+      requestStatus: 'processing',
+      messageId,
+      streamId: event.streamId ?? currentTurn.streamId,
+    });
+  }
+
+  if (event.type === 'turn.reasoning_end') {
+    const turn = withActiveTurn(state, event.chatId);
+    if (isTurnFullyCompleted(turn)) {
+      return state;
+    }
+    if (!turn.messageId) {
+      return state;
+    }
+    return upsertAssistantParts(
+      state,
+      event.chatId,
+      turn.messageId,
+      closeReasoningParts,
     );
   }
 
@@ -446,10 +621,14 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
   }
 
   if (event.type === 'tools.started') {
+    const currentTurn = withActiveTurn(state, event.chatId);
+    if (isTurnFullyCompleted(currentTurn)) {
+      return state;
+    }
     return replaceActiveTurn(
       state,
       event.chatId,
-      applyTurnEvent(withActiveTurn(state, event.chatId), event, {
+      applyTurnEvent(currentTurn, event, {
         allocateMessageId: () => nextMessageId(event.chatId, 'assistant'),
         nowMs: () => Date.now(),
       }),
@@ -457,20 +636,45 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
   }
 
   if (event.type === 'tools.finished') {
-    const nextState = replaceActiveTurn(
-      state,
-      event.chatId,
-      applyTurnEvent(withActiveTurn(state, event.chatId), event, {
+    const currentTurn = withActiveTurn(state, event.chatId);
+    const nextTurn = applyTurnEvent(currentTurn, event, {
         allocateMessageId: () => nextMessageId(event.chatId, 'assistant'),
         nowMs: () => Date.now(),
-      }),
+    });
+    const messageId = currentTurn.messageId
+      ?? nextTurn.messageId
+      ?? latestAssistantMessageId(state, event.chatId)
+      ?? nextMessageId(event.chatId, 'assistant');
+    const toolParts: Extract<AssistantHistoryPart, { type: 'tool-call' }>[] = event.results.map((result) => ({
+      type: 'tool-call',
+      durationMs: event.durationMs,
+      tool: {
+        callId: result.callId,
+        name: result.name,
+        args: result.args,
+        result: result.detail,
+        status: result.status,
+      },
+    }));
+    const nextState = upsertAssistantParts(
+      state,
+      event.chatId,
+      messageId,
+      (parts) => replaceTrailingToolParts(parts, toolParts),
     );
-    return commitPendingTools(nextState, event.chatId);
+    if (isTurnFullyCompleted(currentTurn)) {
+      return nextState;
+    }
+    return replaceActiveTurn(nextState, event.chatId, {
+      ...nextTurn,
+      messageId,
+      pendingTools: null,
+    });
   }
 
   if (event.type === 'turn.completed') {
     const turn = withActiveTurn(state, event.chatId);
-    let nextState = commitPendingTools(state, event.chatId);
+    let nextState = state;
 
     const currentAssistantId = turn.messageId;
     const currentAssistant = currentAssistantId
@@ -495,16 +699,13 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
         });
       }
     } else if (currentAssistantId) {
-      nextState = upsertAssistantMessage(nextState, event.chatId, currentAssistantId, (current) => ({
-        id: current?.id ?? currentAssistantId,
-        type: 'assistant',
-        content: resolvedAssistantContent,
-        ...(event.buttons?.length
-          ? { buttons: event.buttons }
-          : current?.buttons?.length
-            ? { buttons: current.buttons }
-            : {}),
-      }));
+      nextState = upsertAssistantParts(
+        nextState,
+        event.chatId,
+        currentAssistantId,
+        (parts) => replaceFinalTextPart(parts, resolvedAssistantContent),
+        { buttons: event.buttons },
+      );
     } else if (completedContent.trim()) {
       const lastMessage = (nextState.messagesByChat[event.chatId] ?? []).at(-1);
       if (lastMessage?.type === 'assistant' && lastMessage.content.trim() === completedContent.trim()) {

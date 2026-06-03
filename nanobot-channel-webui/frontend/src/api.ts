@@ -1,4 +1,5 @@
 import type {
+  AssistantHistoryPart,
   AuthResponse,
   HistoryMessage,
   SessionSummary,
@@ -11,6 +12,7 @@ import type {
   SettingsSkillSummary,
   SessionWorkspace,
   UploadedAttachment,
+  UpstreamToolEvent,
 } from './types';
 
 export function authHeaders(token: string): HeadersInit {
@@ -158,20 +160,148 @@ export async function loadUpstreamSessions(token: string): Promise<SessionSummar
     .filter((row): row is SessionSummary => row !== null);
 }
 
-function upstreamThreadMessageToHistory(message: unknown): HistoryMessage | null {
-  if (!message || typeof message !== 'object') {
-    return null;
+function parseJsonObject(value: unknown): Record<string, unknown> {
+  if (!value) {
+    return {};
   }
-  const row = message as Record<string, unknown>;
-  const role = String(row.role ?? '');
-  const content = String(row.content ?? row.text ?? '');
-  if (role === 'user') {
-    return { type: 'user', content };
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, unknown>
+        : {};
+    } catch {
+      return {};
+    }
   }
-  if (role === 'assistant') {
-    return { type: 'assistant', content };
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function stringifyToolResult(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
   }
-  return null;
+  if (value == null) {
+    return '';
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function toolNameFromTrace(line: string, fallback: string): string {
+  const match = line.match(/^\s*([A-Za-z0-9_.:-]+)\s*\(/);
+  return match?.[1] || fallback;
+}
+
+function toolArgsFromTrace(line: string): Record<string, unknown> {
+  const match = line.match(/^\s*[A-Za-z0-9_.:-]+\s*\((.*)\)\s*$/s);
+  return match ? parseJsonObject(match[1]) : {};
+}
+
+function upstreamToolEventToPart(event: UpstreamToolEvent, index: number): AssistantHistoryPart {
+  const name = String(event.name || `tool_${index + 1}`);
+  return {
+    type: 'tool-call',
+    tool: {
+      callId: typeof event.call_id === 'string' ? event.call_id : undefined,
+      name,
+      args: parseJsonObject(event.arguments),
+      result: event.error ? stringifyToolResult(event.error) : stringifyToolResult(event.result),
+      status: event.error ? 'error' : 'ok',
+    },
+  };
+}
+
+function traceLineToPart(line: string, index: number): AssistantHistoryPart {
+  return {
+    type: 'tool-call',
+    tool: {
+      name: toolNameFromTrace(line, `tool_${index + 1}`),
+      args: toolArgsFromTrace(line),
+      result: '',
+      status: 'ok',
+    },
+  };
+}
+
+function upstreamTraceMessageToParts(row: Record<string, unknown>): AssistantHistoryPart[] {
+  const toolEvents = Array.isArray(row.toolEvents) ? row.toolEvents as UpstreamToolEvent[] : [];
+  if (toolEvents.length) {
+    return toolEvents
+      .filter((event) => event.phase === 'end' || event.phase === 'error')
+      .map(upstreamToolEventToPart);
+  }
+  const traces = Array.isArray(row.traces)
+    ? row.traces.filter((line): line is string => typeof line === 'string')
+    : typeof row.content === 'string' && row.content
+      ? [row.content]
+      : [];
+  return traces.map(traceLineToPart);
+}
+
+function upstreamThreadMessagesToHistory(messages: unknown[]): HistoryMessage[] {
+  const result: HistoryMessage[] = [];
+  let activityParts: AssistantHistoryPart[] = [];
+
+  const flushActivity = () => {
+    if (!activityParts.length) {
+      return;
+    }
+    result.push({
+      type: 'assistant',
+      content: '',
+      parts: activityParts,
+    });
+    activityParts = [];
+  };
+
+  for (const message of messages) {
+    if (!message || typeof message !== 'object') {
+      continue;
+    }
+    const row = message as Record<string, unknown>;
+    const role = String(row.role ?? '');
+    const kind = String(row.kind ?? 'message');
+    const content = String(row.content ?? row.text ?? '');
+
+    if (role === 'user') {
+      flushActivity();
+      result.push({ type: 'user', content });
+      continue;
+    }
+
+    if (role === 'tool' && kind === 'trace') {
+      activityParts = [...activityParts, ...upstreamTraceMessageToParts(row)];
+      continue;
+    }
+
+    if (role === 'assistant') {
+      const reasoning = typeof row.reasoning === 'string' ? row.reasoning : '';
+      if (reasoning) {
+        activityParts.push({ type: 'reasoning', text: reasoning });
+      }
+      if (content) {
+        if (activityParts.length) {
+          result.push({
+            type: 'assistant',
+            content,
+            parts: [...activityParts, { type: 'text', text: content }],
+          });
+          activityParts = [];
+        } else {
+          result.push({ type: 'assistant', content, parts: [{ type: 'text', text: content }] });
+        }
+      }
+    }
+  }
+
+  flushActivity();
+  return result;
 }
 
 export async function loadUpstreamThread(chatId: string, token: string): Promise<HistoryMessage[]> {
@@ -185,9 +315,7 @@ export async function loadUpstreamThread(chatId: string, token: string): Promise
     throw new Error(`加载会话历史失败（${response.status}）`);
   }
   const payload = (await response.json()) as { messages?: unknown[] };
-  return (payload.messages ?? [])
-    .map(upstreamThreadMessageToHistory)
-    .filter((message): message is HistoryMessage => message !== null);
+  return upstreamThreadMessagesToHistory(payload.messages ?? []);
 }
 
 export async function uploadFiles(chatId: string, files: File[], token: string): Promise<UploadedAttachment[]> {

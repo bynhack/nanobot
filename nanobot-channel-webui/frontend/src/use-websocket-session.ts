@@ -100,22 +100,23 @@ export function useWebsocketSession({
       },
       onEvent: (event) => {
         const normalized = normalizeServerEvent(event);
-        if ('type' in event && event.type === 'session.init') {
-          window.localStorage.setItem(STORAGE_KEYS.chatId, event.chatId);
-          resolvePendingThreads(event.chatId);
-        }
-        if (normalized.type === 'session.init') {
+        if (normalized?.type === 'session.init') {
           window.localStorage.setItem(STORAGE_KEYS.chatId, normalized.chatId);
           resolvePendingThreads(normalized.chatId);
         }
-        if ('type' in event && event.type === 'session.deleted' && appStore.getState().currentChatId === event.chatId) {
+        if (normalized?.type === 'session.deleted' && appStore.getState().currentChatId === normalized.chatId) {
           window.localStorage.removeItem(STORAGE_KEYS.chatId);
           resolvePendingThreads(null);
         }
-        if (normalized.type === 'error') {
+        if (normalized?.type === 'error') {
           showFlash(normalized.message);
         }
-        appStore.dispatch({ type: 'server.event', event: normalized });
+        if (!('type' in event) && event.event === 'session_updated') {
+          void refreshSessions();
+        }
+        if (normalized) {
+          appStore.dispatch({ type: 'server.event', event: normalized });
+        }
       },
     });
 
@@ -217,30 +218,42 @@ export function useWebsocketSession({
   );
 }
 
-function normalizeServerEvent(event: import('./types').ServerEvent): import('./types').ServerEvent {
+function normalizeServerEvent(event: import('./types').ServerEvent): import('./types').ServerEvent | null {
   if ('type' in event) {
     return event;
   }
 
-  const chatId = event.chat_id;
+  const chatId = typeof event.chat_id === 'string' ? event.chat_id : '';
   if (event.event === 'ready' || event.event === 'attached') {
     return { type: 'session.init', chatId, sessionId: chatId };
   }
   if (event.event === 'delta') {
     return { type: 'turn.delta', chatId, delta: event.text, streamId: event.stream_id };
   }
+  if (event.event === 'reasoning_delta') {
+    return { type: 'turn.reasoning_delta', chatId, delta: event.text, streamId: event.stream_id };
+  }
+  if (event.event === 'reasoning_end') {
+    return { type: 'turn.reasoning_end', chatId, streamId: event.stream_id };
+  }
   if (event.event === 'message') {
     if (event.kind === 'progress' && event.tool_events?.length) {
       const results = event.tool_events
         .filter((item) => item.phase === 'end')
         .map((item) => ({
+          callId: typeof item.call_id === 'string' ? item.call_id : undefined,
           name: String(item.name ?? ''),
+          args: item.arguments ?? {},
           status: item.error ? 'error' as const : 'ok' as const,
           detail: item.error ? String(item.error) : String(item.result ?? ''),
         }));
       if (results.length) {
         return { type: 'tools.finished', chatId, durationMs: 0, results };
       }
+      return null;
+    }
+    if (!event.text && !event.media_urls?.length) {
+      return null;
     }
     return { type: 'turn.completed', chatId, content: event.text ?? '', media: event.media_urls };
   }
@@ -250,8 +263,11 @@ function normalizeServerEvent(event: import('./types').ServerEvent): import('./t
   if (event.event === 'goal_status' && event.status === 'running') {
     return { type: 'turn.phase', chatId, phase: 'streaming' };
   }
+  if (event.event === 'goal_status') {
+    return null;
+  }
   if (event.event === 'error') {
     return { type: 'error', code: String(event.detail ?? 'error'), message: String(event.message ?? event.detail ?? event.reason ?? '请求失败'), chatId };
   }
-  return { type: 'turn.phase', chatId, phase: 'streaming' };
+  return null;
 }

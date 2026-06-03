@@ -14,6 +14,7 @@ export function createEmptyTurnState(): ActiveTurnState {
     streamBuffer: '',
     streamId: null,
     pendingTools: null,
+    toolsMessageId: null,
     startedAtMs: null,
     lastDurationMs: null,
   };
@@ -44,6 +45,7 @@ export function startLocalTurn(
     streamBuffer: '',
     streamId: null,
     pendingTools: null,
+    toolsMessageId: null,
     startedAtMs: options.startedAtMs,
     lastDurationMs: null,
   };
@@ -67,6 +69,7 @@ export function applyTurnEvent(
         messageId: state.messageId ?? event.streamId ?? options.allocateMessageId(),
       streamId: event.streamId ?? state.streamId,
       streamBuffer: `${state.streamBuffer}${normalizedDelta}`,
+      toolsMessageId: state.messageId ? state.toolsMessageId : null,
     };
   }
 
@@ -85,6 +88,8 @@ export function applyTurnEvent(
       waiting: !streamFinished,
       phase: event.phase,
       requestStatus: nextRequestStatus,
+      messageId: streamFinished ? null : state.messageId,
+      streamBuffer: streamFinished ? '' : state.streamBuffer,
       pendingTools: streamFinished ? null : state.pendingTools,
       streamId: event.streamId ?? state.streamId,
       lastDurationMs: streamFinished && state.startedAtMs !== null
@@ -101,27 +106,35 @@ export function applyTurnEvent(
       phase: 'running_tools',
       requestStatus: 'running_tools',
       pendingTools,
+      messageId: null,
+      streamBuffer: '',
     };
   }
 
   if (event.type === 'tools.finished') {
+    const tools = event.results.map((result, index) => (
+      state.pendingTools?.tools[index] ?? {
+        name: result.name,
+        args: result.args,
+        hint: result.name,
+      }
+    ));
     return {
       ...state,
       waiting: true,
       phase: 'running_tools',
       requestStatus: 'running_tools',
+      messageId: null,
+      streamBuffer: '',
       pendingTools: state.pendingTools
         ? {
             ...state.pendingTools,
+            tools,
             durationMs: event.durationMs,
             results: event.results,
           }
         : {
-            tools: event.results.map((result) => ({
-              name: result.name,
-              args: {},
-              hint: result.name,
-            })),
+            tools,
             durationMs: event.durationMs,
             results: event.results,
           },
@@ -138,6 +151,9 @@ export function applyTurnEvent(
     streamBuffer: '',
     streamId: event.streamId ?? state.streamId,
     pendingTools: streamAlreadyFinished ? null : state.pendingTools,
+    toolsMessageId: streamAlreadyFinished || (event.type === 'turn.completed' && Boolean(event.content?.trim()))
+      ? null
+      : state.toolsMessageId,
     lastDurationMs: streamAlreadyFinished
       ? state.lastDurationMs ?? (state.startedAtMs !== null ? Math.max(0, options.nowMs() - state.startedAtMs) : null)
       : state.lastDurationMs,

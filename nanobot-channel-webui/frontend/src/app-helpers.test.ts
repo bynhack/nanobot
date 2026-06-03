@@ -102,7 +102,7 @@ describe('tool message visibility helpers', () => {
 
     expect(
       historyMessageToThreadMessage(message as any, 'chat-1', 0, activeTurn as any).content,
-    ).toEqual([{ type: 'text', text: '处理中' }]);
+    ).toEqual([{ type: 'text', text: '处理中', status: { type: 'running' } }]);
   });
 
 });

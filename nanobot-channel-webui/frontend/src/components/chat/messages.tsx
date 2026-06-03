@@ -3,7 +3,6 @@ import {
   MessagePartPrimitive,
   MessagePrimitive,
   useAttachment,
-  useMessage,
   useMessageAttachment,
   useMessagePartText,
   type EmptyMessagePartProps,
@@ -14,7 +13,7 @@ import {
 } from '@assistant-ui/react';
 import { StreamdownTextPrimitive } from '@assistant-ui/react-streamdown';
 import { cjk } from '@streamdown/cjk';
-import { useContext, useEffect, useMemo, type PropsWithChildren } from 'react';
+import { useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react';
 
 import { showToolResult, toolStatusText } from '../../app-helpers';
 import { streamdownZhTranslations } from '../../streamdown-i18n';
@@ -97,9 +96,6 @@ function AssistantTextPart(_props: TextMessagePartProps) {
         plugins={streamdownPlugins}
         translations={streamdownZhTranslations}
       />
-      <MessagePartPrimitive.InProgress>
-        <span className="streaming-caret">▊</span>
-      </MessagePartPrimitive.InProgress>
     </div>
   );
 }
@@ -129,21 +125,56 @@ function AssistantFilePart(props: FileMessagePartProps) {
 }
 
 function ToolGroup({ children }: PropsWithChildren<{ startIndex: number; endIndex: number }>) {
-  const message = useMessage();
-  const isRunning = message.status?.type === 'running';
-  const title = isRunning ? '正在调用工具' : '工具调用';
+  return <div className="tool-list">{children}</div>;
+}
+
+function ThinkingAccordion({ children }: PropsWithChildren) {
+  const [expanded, setExpanded] = useState(true);
 
   return (
-    <div className="tool-group">
-      <div className="tool-group-header">
-        <svg className="tool-group-glyph" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-7.952m2.073-5.509l3.27.808a2.652 2.652 0 012.01 3.248l-.79 3.218" />
+    <div className={`chain-of-thought-card${expanded ? '' : ' is-collapsed'}`}>
+      <button
+        type="button"
+        className="chain-of-thought-header"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <svg className="chain-of-thought-chevron" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 7.5 10 12.5 15 7.5" />
         </svg>
-        <span>{title}</span>
-      </div>
-      <div className="tool-list">{children}</div>
+        <span>思考与工具调用</span>
+      </button>
+      {expanded ? <div className="chain-of-thought-body">{children}</div> : null}
     </div>
   );
+}
+
+function ReasoningGroup({ children }: PropsWithChildren) {
+  return <div className="reasoning-group">{children}</div>;
+}
+
+function ReasoningPart(props: { text?: string }) {
+  return (
+    <div className="reasoning-part">
+      <span className="reasoning-icon" aria-hidden="true">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M10 3.5c-2.35 0-4.25 1.73-4.25 3.86 0 1.23.63 2.32 1.61 3.03.38.27.64.67.72 1.13l.08.48h3.68l.08-.48c.08-.46.34-.86.72-1.13.98-.71 1.61-1.8 1.61-3.03 0-2.13-1.9-3.86-4.25-3.86Z" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8.4 14h3.2M8.9 16h2.2" />
+        </svg>
+      </span>
+      <span>{props.text ?? ''}</span>
+    </div>
+  );
+}
+
+function groupAssistantPart(part: { type: string }) {
+  if (part.type === 'reasoning') {
+    return ['group-chainOfThought', 'group-reasoning'];
+  }
+  if (part.type === 'tool-call') {
+    return ['group-chainOfThought', 'group-tool'];
+  }
+  return null;
 }
 
 function ToolCallPart(
@@ -276,16 +307,32 @@ export function AssistantMessage() {
     <MessagePrimitive.Root className="message-row assistant">
       <div className="assistant-stack">
         <div className="bubble assistant">
-          <MessagePrimitive.Parts
-            components={{
-              Text: AssistantTextPart,
-              Image: AssistantImagePart,
-              File: AssistantFilePart,
-              Empty: AssistantEmptyPart,
-              tools: { Fallback: ToolCallPart },
-              ToolGroup,
+          <MessagePrimitive.GroupedParts
+            groupBy={groupAssistantPart}
+          >
+            {({ part, children }) => {
+              switch (part.type) {
+                case 'group-chainOfThought':
+                  return <ThinkingAccordion>{children}</ThinkingAccordion>;
+                case 'group-reasoning':
+                  return <ReasoningGroup>{children}</ReasoningGroup>;
+                case 'group-tool':
+                  return <ToolGroup startIndex={0} endIndex={0}>{children}</ToolGroup>;
+                case 'text':
+                  return <AssistantTextPart {...part} />;
+                case 'image':
+                  return <AssistantImagePart {...part} />;
+                case 'file':
+                  return <AssistantFilePart {...part} />;
+                case 'reasoning':
+                  return <ReasoningPart {...part} />;
+                case 'tool-call':
+                  return part.toolUI ?? <ToolCallPart {...part} />;
+                default:
+                  return <AssistantEmptyPart {...part} />;
+              }
             }}
-          />
+          </MessagePrimitive.GroupedParts>
           <MessagePrimitive.Error>
             <div className="tool-meta">发生错误</div>
           </MessagePrimitive.Error>

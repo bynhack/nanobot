@@ -184,7 +184,7 @@ export function toolToPart(
 ): ThreadMessageLike['content'][number] {
   return {
     type: 'tool-call',
-    toolCallId: `${idPrefix}-tool-${index}`,
+    toolCallId: tool.callId ?? `${idPrefix}-tool-${index}`,
     toolName: tool.name,
     args: tool.args,
     argsText: JSON.stringify(tool.args),
@@ -196,6 +196,7 @@ export function toolToPart(
 
 export function pendingToolsToItems(pendingTools: PendingToolBlock): ToolHistoryItem[] {
   return pendingTools.tools.map((tool, index) => ({
+    callId: tool.callId,
     name: tool.name,
     args: tool.args,
     result: pendingTools.results?.[index]?.detail ?? '',
@@ -214,6 +215,7 @@ export function historyMessageToThreadMessage(
   const isRunningAssistant =
     message.type === 'assistant' &&
     activeTurn?.waiting &&
+    activeTurn.requestStatus !== 'completed' &&
     activeTurn.messageId != null &&
     activeTurn.messageId === id;
 
@@ -227,6 +229,37 @@ export function historyMessageToThreadMessage(
   }
 
   if (message.type === 'assistant') {
+    const baseParts = message.parts?.length
+      ? message.parts.flatMap((part, partIndex): ThreadMessageLike['content'] => {
+          if (part.type === 'text') {
+            return part.text
+              ? [{
+                  type: 'text' as const,
+                  text: part.text,
+                  status: isRunningAssistant ? { type: 'running' as const } : { type: 'complete' as const },
+                } as ThreadMessageLike['content'][number]]
+              : [];
+          }
+          if (part.type === 'reasoning') {
+            return part.text
+              ? [{
+                  type: 'reasoning',
+                  text: part.text,
+                  status: part.streaming && isRunningAssistant
+                    ? { type: 'running' as const }
+                    : { type: 'complete' as const },
+                } as ThreadMessageLike['content'][number]]
+              : [];
+          }
+          return options.showToolMessages
+            ? [toolToPart(part.tool, id, partIndex, part.durationMs)]
+            : [];
+        })
+      : [{
+          type: 'text' as const,
+          text: message.content,
+          status: isRunningAssistant ? { type: 'running' as const } : { type: 'complete' as const },
+        } as ThreadMessageLike['content'][number]];
     const toolParts = options.showToolMessages && isRunningAssistant && activeTurn?.pendingTools
       ? pendingToolsToItems(activeTurn.pendingTools).map((tool, toolIndex) =>
           toolToPart(tool, id, toolIndex, activeTurn.pendingTools?.durationMs),
@@ -236,10 +269,7 @@ export function historyMessageToThreadMessage(
       id,
       role: 'assistant',
       status: isRunningAssistant ? { type: 'running' as const } : { type: 'complete' as const, reason: 'stop' as const },
-      content: [
-        { type: 'text', text: message.content },
-        ...toolParts,
-      ] as ThreadMessageLike['content'],
+      content: [...baseParts, ...toolParts] as ThreadMessageLike['content'],
     };
   }
 

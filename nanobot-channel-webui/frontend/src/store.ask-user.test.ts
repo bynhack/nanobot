@@ -80,6 +80,7 @@ describe('ask_user store reducer', () => {
       streamBuffer: '| a | b |\n|---|---|\n| 1 | 2 |',
       streamId: 's1',
       pendingTools: null,
+      toolsMessageId: null,
       startedAtMs: 100,
       lastDurationMs: null,
     };
@@ -98,6 +99,78 @@ describe('ask_user store reducer', () => {
     expect(next.messagesByChat['chat-1'][0]).toMatchObject({
       type: 'assistant',
       content: '| a | b |\n|---|---|\n| 1 | 2 |',
+    });
+  });
+
+  it('preserves streaming order when cumulative upstream tool progress is received', () => {
+    let state = reducer(baseState(), {
+      type: 'server.event',
+      event: {
+        type: 'turn.delta',
+        chatId: 'chat-1',
+        streamId: 's1',
+        delta: '我先查一下。',
+      },
+    });
+
+    state = reducer(state, {
+      type: 'server.event',
+      event: {
+        type: 'tools.finished',
+        chatId: 'chat-1',
+        durationMs: 0,
+        results: [
+          {
+            name: 'exec',
+            args: { command: 'pwd' },
+            status: 'ok',
+            detail: '/workspace',
+          },
+        ],
+      },
+    });
+
+    state = reducer(state, {
+      type: 'server.event',
+      event: {
+        type: 'tools.finished',
+        chatId: 'chat-1',
+        durationMs: 0,
+        results: [
+          {
+            name: 'exec',
+            args: { command: 'pwd' },
+            status: 'ok',
+            detail: '/workspace',
+          },
+          {
+            name: 'exec',
+            args: { command: 'date' },
+            status: 'ok',
+            detail: 'today',
+          },
+        ],
+      },
+    });
+
+    state = reducer(state, {
+      type: 'server.event',
+      event: {
+        type: 'turn.completed',
+        chatId: 'chat-1',
+        content: '查完了。',
+      },
+    });
+
+    expect(state.messagesByChat['chat-1']).toHaveLength(1);
+    expect(state.messagesByChat['chat-1'][0]).toMatchObject({
+      type: 'assistant',
+      parts: [
+        { type: 'text', text: '我先查一下。' },
+        { type: 'tool-call', tool: { name: 'exec', args: { command: 'pwd' }, result: '/workspace' } },
+        { type: 'tool-call', tool: { name: 'exec', args: { command: 'date' }, result: 'today' } },
+        { type: 'text', text: '查完了。' },
+      ],
     });
   });
 });

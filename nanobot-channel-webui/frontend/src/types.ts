@@ -53,6 +53,7 @@ export interface SessionSummary {
 }
 
 export interface ToolHistoryItem {
+  callId?: string;
   name: string;
   args: Record<string, unknown>;
   result: string;
@@ -97,18 +98,31 @@ interface HistoryMessageBase {
 
 export type HistoryMessage =
   | (HistoryMessageBase & { type: 'user'; content: string; media?: MediaItem[] })
-  | (HistoryMessageBase & { type: 'assistant'; content: string; buttons?: string[][] })
+  | (HistoryMessageBase & {
+      type: 'assistant';
+      content: string;
+      parts?: AssistantHistoryPart[];
+      buttons?: string[][];
+    })
   | (HistoryMessageBase & { type: 'tools'; tools: ToolHistoryItem[] })
   | (HistoryMessageBase & { type: 'outbound'; content: string; media: MediaItem[] });
 
+export type AssistantHistoryPart =
+  | { type: 'text'; text: string }
+  | { type: 'reasoning'; text: string; streaming?: boolean }
+  | { type: 'tool-call'; tool: ToolHistoryItem; durationMs?: number };
+
 export interface ToolCallStart {
+  callId?: string;
   name: string;
   args: Record<string, unknown>;
   hint: string;
 }
 
 export interface ToolCallResult {
+  callId?: string;
   name: string;
+  args: Record<string, unknown>;
   status: 'ok' | 'error';
   detail: string;
 }
@@ -127,6 +141,7 @@ export interface ActiveTurnState {
   streamBuffer: string;
   streamId: string | null;
   pendingTools: PendingToolBlock | null;
+  toolsMessageId: string | null;
   startedAtMs: number | null;
   lastDurationMs: number | null;
 }
@@ -327,6 +342,8 @@ export type ServerEvent =
   | { type: 'session.deleted'; chatId: string }
   | { type: 'turn.phase'; chatId: string; phase: TurnPhase; streamId?: string; resuming?: boolean }
   | { type: 'turn.delta'; chatId: string; delta: string; streamId?: string }
+  | { type: 'turn.reasoning_delta'; chatId: string; delta: string; streamId?: string }
+  | { type: 'turn.reasoning_end'; chatId: string; streamId?: string }
   | { type: 'tools.started'; chatId: string; tools: ToolCallStart[] }
   | { type: 'tools.finished'; chatId: string; durationMs: number; results: ToolCallResult[] }
   | { type: 'turn.completed'; chatId: string; content?: string; media?: MediaItem[]; buttons?: string[][]; streamId?: string }

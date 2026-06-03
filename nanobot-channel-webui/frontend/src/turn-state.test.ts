@@ -81,7 +81,7 @@ describe('turn-state', () => {
     );
     state = applyTurnEvent(
       state,
-      { type: 'tools.finished', chatId: 'c1', durationMs: 4, results: [{ name: 'read_file', status: 'ok', detail: 'ok' }] },
+      { type: 'tools.finished', chatId: 'c1', durationMs: 4, results: [{ name: 'read_file', args: {}, status: 'ok', detail: 'ok' }] },
       {
         allocateMessageId: () => 'msg-2',
         nowMs: () => 120,

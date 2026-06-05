@@ -10,6 +10,54 @@ afterEach(() => {
 });
 
 describe('case graph workbench', () => {
+  it('restores drill settings from the persisted relation graph state', async () => {
+    vi.stubGlobal('window', {
+      __NANOBOT_WEBUI_BOOTSTRAP__: { title: 'Nanobot', authRequired: false },
+      localStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+      },
+      innerWidth: 1440,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    });
+    const { graphStateToTabForTest } = await import('./workbench');
+
+    const tab = graphStateToTabForTest({
+      schemaVersion: 'case-graph.state.v1',
+      caseId: '37',
+      graphId: 'graph-1',
+      graphName: '图1',
+      revision: 1,
+      updatedAt: '2026-01-01T00:00:00Z',
+      lastStepId: '0001',
+      graph: {
+        nodes: [],
+        edges: [],
+        tradeFacts: {},
+        tradeCards: [],
+        groupMap: {},
+        sourceSelectId: [],
+        summarySelectedAccountId: [],
+        summarySelectedAccountName: [],
+        excludedTrades: [],
+        excludedAccountId: [],
+        excludedAccountName: [],
+        layout: { nodePositions: {}, viewport: { x: 0, y: 0, zoom: 1 } },
+        filters: { minAmount: null, maxAmount: null, startTime: '', endTime: '' },
+        drillNums: 3,
+        drillType: 2,
+        excludedNodes: [],
+        manualEdges: [],
+        annotations: [],
+        graphData: null,
+      },
+    });
+
+    expect(tab.drillNums).toBe(3);
+    expect(tab.drillType).toBe(2);
+  });
+
   it('merges drill results as an extension from the selected node without moving existing nodes', async () => {
     vi.stubGlobal('window', {
       __NANOBOT_WEBUI_BOOTSTRAP__: { title: 'Nanobot', authRequired: false },

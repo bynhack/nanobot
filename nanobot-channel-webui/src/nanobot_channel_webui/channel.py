@@ -467,6 +467,7 @@ class WebUIChannel(BaseChannel):
         app.router.add_post("/api/case-graph/relation/summary-selection", self._handle_case_graph_relation_summary_selection)
         app.router.add_post("/api/case-graph/relation/exclude-node", self._handle_case_graph_relation_exclude_node)
         app.router.add_post("/api/case-graph/relation/restore-node", self._handle_case_graph_relation_restore_node)
+        app.router.add_post("/api/case-graph/relation/investigation-group", self._handle_case_graph_relation_investigation_group)
         app.router.add_post("/api/case-graph/relation/manual-node", self._handle_case_graph_relation_manual_node)
         app.router.add_post("/api/case-graph/relation/manual-trade", self._handle_case_graph_relation_manual_trade)
         app.router.add_post("/api/case-graph/relation/reality-relation", self._handle_case_graph_relation_reality_relation)
@@ -994,6 +995,22 @@ class WebUIChannel(BaseChannel):
                 graph_id,
                 dict(payload),
             )
+            graph_settings = {
+                key: graph.get(key)
+                for key in ("drillNums", "drillType")
+                if key in payload
+            }
+            case_id = str(graph.get("caseId") or "").strip()
+            if case_id and graph_settings:
+                try:
+                    await asyncio.to_thread(
+                        self._case_graph_state_service.update_graph_settings,
+                        case_id=case_id,
+                        graph_id=graph_id,
+                        settings=graph_settings,
+                    )
+                except FileNotFoundError:
+                    pass
         except KeyError as exc:
             return web.json_response({"error": f"图不存在: {exc.args[0]}"}, status=404)
         except CaseGraphCorruptError as exc:
@@ -1316,6 +1333,49 @@ class WebUIChannel(BaseChannel):
             return web.json_response({"error": "图不存在或还没有可恢复的图数据"}, status=404)
         except Exception as exc:
             return web.json_response({"error": f"恢复节点失败: {exc}"}, status=502)
+        return web.json_response(result)
+
+    async def _handle_case_graph_relation_investigation_group(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            _require_text_field(payload, "graphId")
+            _require_text_field(payload, "caseId")
+            _require_text_field(payload, "operation")
+        except ValueError as exc:
+            field_labels = {"graphId": "图谱", "caseId": "案件", "operation": "操作类型"}
+            return web.json_response({"error": f"缺少或无效的必要字段: {field_labels.get(exc.args[0], '请求内容')}"}, status=400)
+        if "nodeIds" in payload and not isinstance(payload.get("nodeIds"), list):
+            return web.json_response({"error": "研判组成员必须是数组"}, status=400)
+
+        try:
+            result = await asyncio.to_thread(
+                self._case_graph_relation_service.apply_investigation_group,
+                dict(payload),
+            )
+        except ValueError as exc:
+            field_labels = {
+                "graphId": "图谱",
+                "caseId": "案件",
+                "operation": "操作类型",
+                "groupId": "研判组",
+                "nodeIds": "研判组成员",
+                "memberNodeId": "组内主体",
+            }
+            return web.json_response({"error": f"缺少或无效的必要字段: {field_labels.get(exc.args[0], '请求内容')}"}, status=400)
+        except FileNotFoundError:
+            return web.json_response({"error": "图不存在或还没有可归并的图数据"}, status=404)
+        except Exception as exc:
+            return web.json_response({"error": f"研判组操作失败: {exc}"}, status=502)
         return web.json_response(result)
 
     async def _handle_case_graph_relation_manual_node(self, request: Any) -> Any:

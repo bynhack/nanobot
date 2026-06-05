@@ -38,6 +38,31 @@ class GraphRepository:
     def load_graph(self, case_id: str, graph_id: str) -> dict[str, Any]:
         return self.load_current(case_id, graph_id)["graph"]
 
+    def update_graph_settings(
+        self,
+        *,
+        case_id: str,
+        graph_id: str,
+        settings: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        current = self.load_current(case_id, graph_id)
+        graph = dict(current["graph"])
+        changed = False
+        for key in ("drillNums", "drillType"):
+            if key in settings and graph.get(key) != settings.get(key):
+                graph[key] = settings.get(key)
+                changed = True
+        if not changed:
+            return current
+        next_current = normalize_graph_document({
+            **current,
+            "graph": self._graph_for_storage(graph, self._load_trade_facts(case_id, graph_id)),
+            "updatedAt": now_iso(),
+        })
+        next_current_for_storage = self._state_for_storage(next_current)
+        self._write_json(self.graph_dir(case_id, graph_id) / "graph.json", next_current_for_storage)
+        return self._hydrate_graph_facts(case_id, graph_id, next_current_for_storage)
+
     def append_step(
         self,
         *,

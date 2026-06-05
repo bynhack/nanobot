@@ -32,7 +32,7 @@ interface EdgeDetailDrawerProps {
   partyContext?: EdgeDetailPartyContext | null;
 }
 
-type EdgeDetailSortKey = 'payer' | 'payee' | 'amount' | 'time';
+type EdgeDetailSortKey = 'payer' | 'payee' | 'method' | 'amount' | 'time';
 
 export function EdgeDetailDrawer({
   detail,
@@ -233,6 +233,9 @@ export function EdgeDetailDrawer({
                         <th aria-sort={sortableHeaderAria(sortState, 'payee')}>
                           <SortableColumnHeader label="收款方" sortKey="payee" sortState={sortState} onSortChange={setSortState} />
                         </th>
+                        <th aria-sort={sortableHeaderAria(sortState, 'method')}>
+                          <SortableColumnHeader label="交易方式" sortKey="method" sortState={sortState} onSortChange={setSortState} />
+                        </th>
                         <th aria-sort={sortableHeaderAria(sortState, 'amount')}>
                           <SortableColumnHeader label="交易金额" sortKey="amount" sortState={sortState} defaultDirection="desc" onSortChange={setSortState} />
                         </th>
@@ -261,6 +264,7 @@ export function EdgeDetailDrawer({
                             </td>
                             <td>{renderPartyCell(resolveEdgeDetailParty(item, 'payer', partyContext))}</td>
                             <td>{renderPartyCell(resolveEdgeDetailParty(item, 'payee', partyContext))}</td>
+                            <td>{resolveEdgeDetailMethod(item)}</td>
                             <td>{formatRowAmount(item.tradeAmount)}</td>
                             <td>{item.tradeTime || '-'}</td>
                             <td>
@@ -341,6 +345,7 @@ export function EdgeDetailDrawer({
 const edgeDetailSortAccessors: SortAccessors<CaseGraphTargetDetailItem, EdgeDetailSortKey> = {
   payer: (item) => [item.payerAccountName, item.payerTradeCard],
   payee: (item) => [item.payeeAccountName, item.payeeTradeCard],
+  method: (item) => resolveEdgeDetailMethod(item),
   amount: (item) => Number(item.tradeAmount || 0),
   time: (item) => item.tradeTime,
 };
@@ -386,12 +391,17 @@ export function filterEdgeDetailItems(
       item.tradeId,
       item.serialNumber,
       item.tradeAbstract,
+      resolveEdgeDetailMethod(item),
       item.payerAccountName,
       item.payerTradeCard,
       item.payeeAccountName,
       item.payeeTradeCard,
     ].some((value) => String(value ?? '').toLowerCase().includes(keyword));
   });
+}
+
+export function resolveEdgeDetailMethod(item: CaseGraphTargetDetailItem): string {
+  return String(item.method || '').trim() || '转账';
 }
 
 function SelectionCheckbox({

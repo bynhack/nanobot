@@ -1,19 +1,26 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildGraphPngFilenameForTest,
+  createNodeCardBoundsForTest,
   buildNodeContextMenuItemsForTest,
   buildReplayTimelineViewForTest,
   buildGraphBehaviorsForTest,
   clearGraphInteractionStatesForTest,
   clearGraphTransientStatesForTest,
   createGraphRenderSnapshotForTest,
+  buildCollapsedInvestigationGroupRenderEdgesForTest,
+  buildInvestigationGroupSummariesForTest,
   computeParallelEdgeOffsetsForTest,
   resolveNextSelectedNodeIdsForTest,
   resolveEdgeTypeForTest,
   resolveGraphCanvasLayoutForTest,
   resolveGraphRenderTransitionForTest,
+  expandExportBoundsForTest,
+  mergeExportBoundsForTest,
   resolveMenuPositionForTest,
   resolveNodeSubtitleForTest,
+  dataUrlToBlobForTest,
   shouldSuppressNativeContextMenuForTest,
   shouldStopNativeContextMenuPropagationForTest,
   shouldEmitFocusChangeForTest,
@@ -21,6 +28,66 @@ import {
 import type { CaseGraphData } from './types';
 
 describe('graph canvas parallel edge offsets', () => {
+  it('builds an investigation-friendly PNG export filename', () => {
+    expect(buildGraphPngFilenameForTest(new Date('2026-06-04T09:08:07'))).toBe('资金关系图-20260604090807.png');
+  });
+
+  it('converts exported graph data URLs into PNG blobs', async () => {
+    const blob = dataUrlToBlobForTest('data:image/png;base64,SGVsbG8=');
+
+    expect(blob.type).toBe('image/png');
+    expect(blob.size).toBe(5);
+    await expect(blob.text()).resolves.toBe('Hello');
+  });
+
+  it('expands PNG export bounds to include custom HTML node cards', () => {
+    const graphLayerBounds = {
+      minX: 0,
+      minY: 0,
+      maxX: 120,
+      maxY: 80,
+      width: 120,
+      height: 80,
+    };
+    const nodeBounds = createNodeCardBoundsForTest(200, 100);
+    const exportBounds = mergeExportBoundsForTest([graphLayerBounds, nodeBounds]);
+
+    expect(nodeBounds).toEqual({
+      minX: 76,
+      minY: 58,
+      maxX: 324,
+      maxY: 142,
+      width: 248,
+      height: 84,
+    });
+    expect(exportBounds).toEqual({
+      minX: 0,
+      minY: 0,
+      maxX: 324,
+      maxY: 142,
+      width: 324,
+      height: 142,
+    });
+  });
+
+  it('adds whitespace around exported PNG bounds', () => {
+    expect(expandExportBoundsForTest({
+      minX: 10,
+      minY: 20,
+      maxX: 110,
+      maxY: 220,
+      width: 100,
+      height: 200,
+    }, 40)).toEqual({
+      minX: -30,
+      minY: -20,
+      maxX: 150,
+      maxY: 260,
+      width: 180,
+      height: 280,
+    });
+  });
+
   it('keeps bidirectional quadratic edges on matching curve offset signs', () => {
     const edges: CaseGraphData['edges'] = [
       {
@@ -48,6 +115,155 @@ describe('graph canvas parallel edge offsets', () => {
     expect(offsets.get('a->b')).toBeGreaterThan(0);
     expect(offsets.get('b->a')).toBeGreaterThan(0);
     expect(offsets.get('a->b')).toBe(offsets.get('b->a'));
+  });
+
+  it('aggregates external money edges when an investigation group is collapsed', () => {
+    const nodes: CaseGraphData['nodes'] = [
+      { id: 'a', label: '成员A' },
+      { id: 'b', label: '成员B' },
+      { id: 'c', label: '成员C' },
+      { id: 'x', label: '外部主体' },
+    ];
+    const edges: CaseGraphData['edges'] = [
+      {
+        id: 'a->x',
+        from: 'a',
+        to: 'x',
+        source: 'a',
+        target: 'x',
+        tradeAmount: 1000,
+        tradeCount: 1,
+        tradeIds: ['t1'],
+      },
+      {
+        id: 'b->x',
+        from: 'b',
+        to: 'x',
+        source: 'b',
+        target: 'x',
+        tradeAmount: 2500,
+        tradeCount: 2,
+        tradeIds: ['t2', 't3'],
+      },
+      {
+        id: 'x->c',
+        from: 'x',
+        to: 'c',
+        source: 'x',
+        target: 'c',
+        tradeAmount: 400,
+        tradeCount: 1,
+        tradeIds: ['t4'],
+      },
+      {
+        id: 'a->b',
+        from: 'a',
+        to: 'b',
+        source: 'a',
+        target: 'b',
+        tradeAmount: 300,
+        tradeCount: 1,
+        tradeIds: ['internal'],
+      },
+    ];
+
+    const collapsedEdges = buildCollapsedInvestigationGroupRenderEdgesForTest(edges, [
+      { id: 'group-1', name: '研判组 1', memberNodeIds: ['a', 'b', 'c'], collapsed: true },
+    ], nodes);
+
+    expect(collapsedEdges).toHaveLength(2);
+    expect(collapsedEdges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: 'investigation-group-edge:group-1->x',
+        source: 'group-1',
+        target: 'x',
+        tradeAmount: 3500,
+        tradeCount: 3,
+        tradeIds: ['t1', 't2', 't3'],
+      }),
+      expect.objectContaining({
+        id: 'investigation-group-edge:x->group-1',
+        source: 'x',
+        target: 'group-1',
+        tradeAmount: 400,
+        tradeCount: 1,
+        tradeIds: ['t4'],
+      }),
+    ]));
+    expect(collapsedEdges.some((edge) => edge.id === 'a->b')).toBe(false);
+
+    const expandedEdges = buildCollapsedInvestigationGroupRenderEdgesForTest(edges, [
+      { id: 'group-1', name: '研判组 1', memberNodeIds: ['a', 'b', 'c'], collapsed: false },
+    ], nodes);
+    expect(expandedEdges).toBe(edges);
+  });
+
+  it('summarizes investigation group money without counting internal transfers as external flow', () => {
+    const nodes: CaseGraphData['nodes'] = [
+      { id: 'a', label: '成员A' },
+      { id: 'b', label: '成员B' },
+      { id: 'x', label: '外部甲' },
+      { id: 'y', label: '外部乙' },
+    ];
+    const edges: CaseGraphData['edges'] = [
+      {
+        id: 'x->a',
+        from: 'x',
+        to: 'a',
+        source: 'x',
+        target: 'a',
+        tradeAmount: 1200,
+        tradeCount: 2,
+      },
+      {
+        id: 'b->y',
+        from: 'b',
+        to: 'y',
+        source: 'b',
+        target: 'y',
+        tradeAmount: 3400,
+        tradeCount: 3,
+      },
+      {
+        id: 'a->b',
+        from: 'a',
+        to: 'b',
+        source: 'a',
+        target: 'b',
+        tradeAmount: 900,
+        tradeCount: 1,
+      },
+      {
+        id: 'y->a',
+        from: 'y',
+        to: 'a',
+        source: 'y',
+        target: 'a',
+        tradeAmount: 600,
+        tradeCount: 1,
+      },
+    ];
+
+    const summaries = buildInvestigationGroupSummariesForTest([
+      { id: 'group-1', name: '研判组 1', memberNodeIds: ['a', 'b'], collapsed: true },
+    ], nodes, edges);
+    const summary = summaries.get('group-1');
+
+    expect(summary).toEqual(expect.objectContaining({
+      memberCount: 2,
+      incomingAmount: 1800,
+      incomingCount: 3,
+      outgoingAmount: 3400,
+      outgoingCount: 3,
+      internalAmount: 900,
+      internalCount: 1,
+      externalEdgeCount: 3,
+      counterpartCount: 2,
+    }));
+    expect(summary?.counterpartRows).toEqual([
+      expect.objectContaining({ nodeId: 'y', name: '外部乙', direction: 'both', amount: 4000, count: 4 }),
+      expect.objectContaining({ nodeId: 'x', name: '外部甲', direction: 'in', amount: 1200, count: 2 }),
+    ]);
   });
 
   it('uses quadratic edges for stable two-sided bidirectional rendering', () => {
@@ -275,12 +491,10 @@ describe('graph canvas parallel edge offsets', () => {
     expect(buildNodeContextMenuItemsForTest({
       selectedCount: 1,
       canDrill: false,
-      canDetailAnalysis: true,
       canSummaryAnalysis: true,
       canExclude: true,
     })).toEqual([
-      { name: '交易核查', value: 'detail-analysis' },
-      { name: '线索扩展', value: 'summary-analysis' },
+      { name: '综合筛选', value: 'summary-analysis' },
       { name: '补充资金往来', value: 'manual-trade' },
       { name: '标注现实关系', value: 'reality-relation' },
       { name: '取消上图', value: 'exclude' },
@@ -292,7 +506,6 @@ describe('graph canvas parallel edge offsets', () => {
       selectedCount: 1,
       canRestore: true,
       canDrill: true,
-      canDetailAnalysis: true,
       canSummaryAnalysis: true,
       canManualActions: true,
       canExclude: true,

@@ -44,6 +44,14 @@ def finite_number(value: Any) -> float | None:
     return number
 
 
+def positive_int(value: Any, *, default: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return default
+    return number if number > 0 else default
+
+
 def normalize_layout(value: Any, nodes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     raw = dict_value(value)
     raw_positions = dict_value(raw.get("nodePositions"))
@@ -101,6 +109,7 @@ def normalize_graph_body(value: Any) -> dict[str, Any]:
         "factStore": dict_value(raw.get("factStore")),
         "tradeCards": [dict(item) for item in list_value(raw.get("tradeCards")) if isinstance(item, dict)],
         "groupMap": dict_value(raw.get("groupMap")),
+        "investigationGroups": [dict(item) for item in list_value(raw.get("investigationGroups")) if isinstance(item, dict)],
         "sourceSelectId": text_list(raw.get("sourceSelectId")),
         "summarySelectedAccountId": text_list(raw.get("summarySelectedAccountId")),
         "summarySelectedAccountName": text_list(raw.get("summarySelectedAccountName")),
@@ -109,6 +118,8 @@ def normalize_graph_body(value: Any) -> dict[str, Any]:
         "excludedAccountName": text_list(raw.get("excludedAccountName")),
         "layout": normalize_layout(raw.get("layout"), nodes),
         "filters": normalize_filters(raw.get("filters")),
+        "drillNums": positive_int(raw.get("drillNums"), default=10),
+        "drillType": raw.get("drillType") if raw.get("drillType") not in (None, "") else 1,
         "excludedNodes": [dict(item) for item in list_value(raw.get("excludedNodes")) if isinstance(item, dict)],
         "manualEdges": [dict(item) for item in list_value(raw.get("manualEdges")) if isinstance(item, dict)],
         "realityRelations": [dict(item) for item in list_value(raw.get("realityRelations")) if isinstance(item, dict)],

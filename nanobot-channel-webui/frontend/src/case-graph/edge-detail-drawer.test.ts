@@ -4,6 +4,7 @@ import {
   buildEdgeDetailSummaryForTest,
   filterEdgeDetailItems,
   filterEdgeDetailItemsForGraphEdge,
+  resolveEdgeDetailMethod,
   resolveEdgeDetailParty,
 } from './edge-detail-drawer';
 import type { CaseGraphTargetDetailItem } from './types';
@@ -34,6 +35,25 @@ describe('edge detail display names', () => {
     });
   });
 
+  it('keeps original transaction parties when no edge context is provided', () => {
+    const item = {
+      ...detailItem,
+      payerAccountName: '原始付款人',
+      payerTradeCard: 'payer-card',
+      payeeAccountName: '原始收款人',
+      payeeTradeCard: 'payee-card',
+    };
+
+    expect(resolveEdgeDetailParty(item, 'payer', null)).toEqual({
+      name: '原始付款人',
+      account: 'payer-card',
+    });
+    expect(resolveEdgeDetailParty(item, 'payee', null)).toEqual({
+      name: '原始收款人',
+      account: 'payee-card',
+    });
+  });
+
   it('filters transaction detail rows by amount, time, and keyword', () => {
     const rows = Array.from({ length: 18 }, (_, index) => ({
       ...detailItem,
@@ -61,6 +81,21 @@ describe('edge detail display names', () => {
       startTime: '',
       endTime: '',
     }).map((item) => item.tradeId)).toEqual(['t-15']);
+    expect(filterEdgeDetailItems([
+      { ...detailItem, tradeId: 'cash', method: '现金交易' },
+      { ...detailItem, tradeId: 'transfer', method: '转账' },
+    ], {
+      keyword: '现金',
+      minAmount: '',
+      maxAmount: '',
+      startTime: '',
+      endTime: '',
+    }).map((item) => item.tradeId)).toEqual(['cash']);
+  });
+
+  it('defaults existing database rows to transfer and shows manual trade methods', () => {
+    expect(resolveEdgeDetailMethod(detailItem)).toBe('转账');
+    expect(resolveEdgeDetailMethod({ ...detailItem, method: '现金交易' })).toBe('现金交易');
   });
 
   it('keeps edge detail aligned with the current graph edge trade ids and keeps excluded rows visible', () => {

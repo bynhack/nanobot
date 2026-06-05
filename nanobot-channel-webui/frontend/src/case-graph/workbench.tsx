@@ -29,6 +29,7 @@ import {
   addCaseGraphManualNode,
   addCaseGraphManualTrade,
   addCaseGraphRealityRelation,
+  applyCaseGraphInvestigationGroup,
   applyCaseGraphSummarySelection,
   completeCaseGraphRelation,
   createCaseGraph,
@@ -62,7 +63,7 @@ import {
   type NodeDetailAnalysisRelation,
 } from './node-detail-analysis-drawer';
 import { ManualClueDrawer } from './manual-clue-drawer';
-import { SummaryAnalysisDrawer, type SummaryAnalysisItem } from './summary-analysis-drawer';
+import { SummaryAnalysisDrawer, type SummaryAnalysisItem, type SummaryAnalysisItemAction } from './summary-analysis-drawer';
 import type {
   CaseGraphCaseOption,
   CaseGraphConversationFocus,
@@ -85,7 +86,9 @@ import type {
   CaseGraphTradeCard,
   AddCaseGraphManualNodePayload,
   AddCaseGraphManualTradePayload,
+  CaseGraphManualPartyPayload,
   AddCaseGraphRealityRelationPayload,
+  ApplyCaseGraphInvestigationGroupPayload,
 } from './types';
 import type { SkillCandidate } from '../skill-quick-select';
 import { runConfigWithSelectedSkill, selectedSkillNameFromRunConfig } from '../skill-quick-select';
@@ -237,6 +240,10 @@ export function CaseGraphWorkbench({
   const [manualClueFocusNode, setManualClueFocusNode] = useState<CaseGraphNode | null>(null);
   const [manualCluePosition, setManualCluePosition] = useState<{ x: number; y: number } | null>(null);
   const [manualClueApplying, setManualClueApplying] = useState(false);
+  const [groupDraftOpen, setGroupDraftOpen] = useState(false);
+  const [groupDraftNodes, setGroupDraftNodes] = useState<CaseGraphNode[]>([]);
+  const [groupDraftForm, setGroupDraftForm] = useState({ name: '', groupType: '团伙成员', note: '' });
+  const [groupOperationApplying, setGroupOperationApplying] = useState(false);
   const [requests, setRequests] = useState({
     creating: false,
     querying: false,
@@ -1585,7 +1592,7 @@ export function CaseGraphWorkbench({
     handleRestoreExcludedTrades(excludedTradeSelection);
   }, [excludedTradeSelection, handleRestoreExcludedTrades]);
 
-  const handleOpenEdgeDetail = useCallback((edgeId: string, edgeFocus?: CaseGraphConversationFocus) => {
+  const handleOpenEdgeDetail = useCallback((edgeId: string, edgeFocus?: CaseGraphConversationFocus, edgeOverride?: CaseGraphData['edges'][number]) => {
     if (!activeTab) return;
     if (edgeFocus?.type === 'edge') {
       syncGraphContext(edgeFocus);
@@ -1672,8 +1679,9 @@ export function CaseGraphWorkbench({
         });
       return;
     }
-    const edge = (activeTab.graphData?.edges ?? []).find((item) => item.id === edgeId);
+    const edge = edgeOverride ?? (activeTab.graphData?.edges ?? []).find((item) => item.id === edgeId);
     if (!edge) return;
+    const usesRenderedInvestigationGroupEdge = String(edge.id || edgeId).startsWith('investigation-group-edge:');
     if (!edgeFocus) {
       syncGraphContext({
         type: 'edge',
@@ -1696,10 +1704,11 @@ export function CaseGraphWorkbench({
         setError('当前交易线缺少明细定位字段');
         return;
       }
-      setEdgeDetailPartyContext({
-        payerName: resolveNodeDisplayName(source, edge.source, activeTab.groupMap),
-        payeeName: resolveNodeDisplayName(target, edge.target, activeTab.groupMap),
-      });
+      const detailPartyContext = usesRenderedInvestigationGroupEdge ? null : edgeFocus;
+      setEdgeDetailPartyContext(detailPartyContext?.type === 'edge' ? {
+        payerName: detailPartyContext.fromName || edge.source,
+        payeeName: detailPartyContext.toName || edge.target,
+      } : null);
       setEdgeDetailContext({ edgeId: resolveWorkbenchEdgeId(edge), edge });
       setEdgeDetailSelectedTradeIds([]);
       setEdgeDetailOpen(true);
@@ -1708,7 +1717,11 @@ export function CaseGraphWorkbench({
       setError(null);
       return;
     }
-    setEdgeDetailPartyContext({
+    const detailPartyContext = usesRenderedInvestigationGroupEdge ? null : edgeFocus;
+    setEdgeDetailPartyContext(detailPartyContext?.type === 'edge' ? {
+      payerName: detailPartyContext.fromName || edge.source,
+      payeeName: detailPartyContext.toName || edge.target,
+    } : {
       payerName: resolveNodeDisplayName(source, edge.source, activeTab.groupMap),
       payeeName: resolveNodeDisplayName(target, edge.target, activeTab.groupMap),
     });
@@ -1967,13 +1980,9 @@ export function CaseGraphWorkbench({
       .then((result) => {
         const items = Array.isArray(result.items) ? result.items : [];
         setSummaryAnalysisItems(items);
-        setSummaryAnalysisSelectedNodeIds(
-          items
-            .filter((item) => item.status === 'candidate' || (!item.isOnGraph && !item.isExcluded))
-            .map((item) => item.nodeId),
-        );
+        setSummaryAnalysisSelectedNodeIds([]);
         if (!items.length) {
-          setError('当前主体暂时没有可补充上图的关联主体');
+          setError('当前主体暂时没有可管理的关联主体');
         } else {
           setError(null);
         }
@@ -1982,7 +1991,7 @@ export function CaseGraphWorkbench({
         setSummaryAnalysisNode(null);
         setSummaryAnalysisItems([]);
         setSummaryAnalysisSelectedNodeIds([]);
-        setError(err instanceof Error ? err.message : '线索候选读取失败');
+        setError(err instanceof Error ? err.message : '综合筛选读取失败');
       })
       .finally(() => {
         setSummaryAnalysisLoading(false);
@@ -2011,13 +2020,9 @@ export function CaseGraphWorkbench({
       .then((result) => {
         const items = Array.isArray(result.items) ? result.items : [];
         setSummaryAnalysisItems(items);
-        setSummaryAnalysisSelectedNodeIds(
-          items
-            .filter((item) => item.status === 'candidate' || (!item.isOnGraph && !item.isExcluded))
-            .map((item) => item.nodeId),
-        );
+        setSummaryAnalysisSelectedNodeIds([]);
         if (!items.length) {
-          setError('案件交易流水中暂时没有可补充上图的主体');
+          setError('案件交易流水中暂时没有可综合筛选的主体');
         } else {
           setError(null);
         }
@@ -2028,7 +2033,7 @@ export function CaseGraphWorkbench({
         setSummaryAnalysisNode(null);
         setSummaryAnalysisItems([]);
         setSummaryAnalysisSelectedNodeIds([]);
-        setError(err instanceof Error ? err.message : '线索候选读取失败');
+        setError(err instanceof Error ? err.message : '综合筛选读取失败');
       })
       .finally(() => {
         setSummaryAnalysisLoading(false);
@@ -2062,37 +2067,82 @@ export function CaseGraphWorkbench({
     const items = summaryAnalysisItems;
     const candidateNodeIds = items.map((item) => item.nodeId).filter(Boolean);
     if (!candidateNodeIds.length) {
-      setError(summaryAnalysisScope === 'global' ? '案件交易流水中暂时没有可补充的线索' : '当前主体暂时没有可补充的线索');
+      setError(summaryAnalysisScope === 'global' ? '案件交易流水中暂时没有可综合筛选的主体' : '当前主体暂时没有可管理的关联主体');
+      return;
+    }
+    const selectedItems = items.filter((item) => summaryAnalysisSelectedNodeIds.includes(item.nodeId));
+    if (!selectedItems.length) {
+      setError('请选择需要处理的主体');
       return;
     }
     const candidateNodeIdSet = new Set(candidateNodeIds);
-    const selectedCandidates = items
-      .filter((item) => summaryAnalysisSelectedNodeIds.includes(item.nodeId))
+    const includeItems = selectedItems.filter((item) => summaryAnalysisItemAction(item) !== 'exclude');
+    const excludeItems = selectedItems.filter((item) => summaryAnalysisItemAction(item) === 'exclude');
+    const selectedCandidates = includeItems
       .map((item) => ({ nodeId: item.nodeId, label: item.label, accounts: item.accounts ?? [] }));
+    const selectedIncludeNodeIds = includeItems.map((item) => item.nodeId).filter((nodeId) => candidateNodeIdSet.has(nodeId));
+    const excludedNodePayloads = buildExcludedNodePayloadsFromSummaryItems(excludeItems, activeTab);
     setReplaySelection(null);
     setSummaryAnalysisApplying(true);
-    applyCaseGraphSummarySelection(
-      {
-        caseId: activeTab.caseId,
-        graphId: activeTab.graphId,
-        focusNodeId: summaryAnalysisScope === 'node' ? summaryAnalysisNode?.id ?? null : null,
-        scope: summaryAnalysisScope,
-        candidateNodeIds,
-        selectedNodeIds: summaryAnalysisSelectedNodeIds.filter((nodeId) => candidateNodeIdSet.has(nodeId)),
-        selectedCandidates,
-        options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
-      },
-      token,
-    )
+    let latestResult: CaseGraphRelationResponse | null = null;
+    const excludeTask = excludedNodePayloads.length
+      ? excludeCaseGraphNode(
+        {
+          caseId: activeTab.caseId,
+          graphId: activeTab.graphId,
+          nodes: excludedNodePayloads,
+        },
+        token,
+      ).then((result) => {
+        latestResult = result;
+        return result;
+      })
+      : Promise.resolve(null as CaseGraphRelationResponse | null);
+
+    excludeTask
+      .then(() => {
+        if (!selectedIncludeNodeIds.length) {
+          return Promise.resolve(null as CaseGraphRelationResponse | null);
+        }
+        return applyCaseGraphSummarySelection(
+          {
+            caseId: activeTab.caseId,
+            graphId: activeTab.graphId,
+            focusNodeId: summaryAnalysisScope === 'node' ? summaryAnalysisNode?.id ?? null : null,
+            scope: summaryAnalysisScope,
+            candidateNodeIds,
+            selectedNodeIds: selectedIncludeNodeIds,
+            selectedCandidates,
+            options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+          },
+          token,
+        ).then((result) => {
+          latestResult = result;
+          return result;
+        });
+      })
       .then((result) => {
-        applyRelationResultToActiveTab(result);
+        if (result) {
+          applyRelationResultToActiveTab(result);
+          requestGraphStepInsight(result, activeTab);
+        } else if (latestResult) {
+          applyRelationResultToActiveTab(latestResult);
+          requestGraphStepInsight(latestResult, activeTab);
+        } else if (excludedNodePayloads.length) {
+          return loadCaseGraphState(activeTab.caseId, activeTab.graphId, token).then((state) => {
+            applyRelationResultToActiveTab({ graph: state.graph, graphState: state });
+            return null;
+          });
+        }
+        return null;
+      })
+      .then(() => {
         void refreshGraphSteps(activeTab);
         handleCloseSummaryAnalysis();
         setError(null);
-        requestGraphStepInsight(result, activeTab);
       })
       .catch((err: unknown) => {
-        setError(err instanceof Error ? err.message : '线索扩展失败');
+        setError(err instanceof Error ? err.message : '综合筛选操作失败');
       })
       .finally(() => {
         setSummaryAnalysisApplying(false);
@@ -2107,6 +2157,67 @@ export function CaseGraphWorkbench({
     summaryAnalysisScope,
     summaryAnalysisItems,
     summaryAnalysisSelectedNodeIds,
+    token,
+  ]);
+
+  const handleApplySummaryAnalysisItemAction = useCallback((nodeId: string, action: SummaryAnalysisItemAction) => {
+    if (!activeTab || (summaryAnalysisScope === 'node' && !summaryAnalysisNode)) return;
+    const item = summaryAnalysisItems.find((candidate) => candidate.nodeId === nodeId);
+    if (!item) return;
+    setReplaySelection(null);
+    setSummaryAnalysisApplying(true);
+    const candidateNodeIds = summaryAnalysisItems.map((candidate) => candidate.nodeId).filter(Boolean);
+    const run = (): Promise<CaseGraphRelationResponse | null> => {
+      if (action === 'exclude') {
+        const [payload] = buildExcludedNodePayloadsFromSummaryItems([item], activeTab);
+        if (!payload) {
+          return Promise.reject(new Error('没有找到可取消上图的主体'));
+        }
+        return excludeCaseGraphNode({
+          caseId: activeTab.caseId,
+          graphId: activeTab.graphId,
+          node: payload,
+        }, token);
+      }
+      return applyCaseGraphSummarySelection(
+        {
+          caseId: activeTab.caseId,
+          graphId: activeTab.graphId,
+          focusNodeId: summaryAnalysisScope === 'node' ? summaryAnalysisNode?.id ?? null : null,
+          scope: summaryAnalysisScope,
+          candidateNodeIds,
+          selectedNodeIds: [nodeId],
+          selectedCandidates: [{ nodeId: item.nodeId, label: item.label, accounts: item.accounts ?? [] }],
+          options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+        },
+        token,
+      );
+    };
+    run()
+      .then((result) => {
+        if (result) {
+          applyRelationResultToActiveTab(result);
+          void refreshGraphSteps(activeTab);
+          handleCloseSummaryAnalysis();
+          setError(null);
+          requestGraphStepInsight(result, activeTab);
+        }
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : '综合筛选操作失败');
+      })
+      .finally(() => {
+        setSummaryAnalysisApplying(false);
+      });
+  }, [
+    activeTab,
+    applyRelationResultToActiveTab,
+    handleCloseSummaryAnalysis,
+    refreshGraphSteps,
+    requestGraphStepInsight,
+    summaryAnalysisItems,
+    summaryAnalysisNode,
+    summaryAnalysisScope,
     token,
   ]);
 
@@ -2251,6 +2362,72 @@ export function CaseGraphWorkbench({
       });
   }, [activeTab, applyRelationResultToActiveTab, handleCloseManualClue, refreshGraphSteps, requestGraphStepInsight, token]);
 
+  const handleOpenInvestigationGroup = useCallback((nodes: CaseGraphNode[]) => {
+    if (!activeTab) return;
+    const validNodes = nodes.filter((node) => !node.isExcluded);
+    if (validNodes.length < 2) {
+      setError('请至少选择 2 个可上图主体进行归并');
+      return;
+    }
+    setReplaySelection(null);
+    setGroupDraftNodes(validNodes);
+    const nextIndex = (activeTab.graphData?.investigationGroups?.length ?? 0) + 1;
+    setGroupDraftForm({
+      name: `研判组 ${nextIndex}`,
+      groupType: '团伙成员',
+      note: '',
+    });
+    setGroupDraftOpen(true);
+  }, [activeTab]);
+
+  const handleCloseInvestigationGroup = useCallback(() => {
+    setGroupDraftOpen(false);
+    setGroupDraftNodes([]);
+    setGroupDraftForm({ name: '', groupType: '团伙成员', note: '' });
+  }, []);
+
+  const applyInvestigationGroupOperation = useCallback((operationPayload: Omit<ApplyCaseGraphInvestigationGroupPayload, 'caseId' | 'graphId' | 'options'>) => {
+    if (!activeTab) return;
+    setReplaySelection(null);
+    setGroupOperationApplying(true);
+    applyCaseGraphInvestigationGroup(
+      {
+        caseId: activeTab.caseId,
+        graphId: activeTab.graphId,
+        ...operationPayload,
+        options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+      },
+      token,
+    )
+      .then((result) => {
+        applyRelationResultToActiveTab(result);
+        void refreshGraphSteps(activeTab);
+        setError(null);
+        if (operationPayload.operation === 'create') {
+          handleCloseInvestigationGroup();
+        }
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : '研判组操作失败');
+      })
+      .finally(() => {
+        setGroupOperationApplying(false);
+      });
+  }, [activeTab, applyRelationResultToActiveTab, handleCloseInvestigationGroup, refreshGraphSteps, token]);
+
+  const handleSubmitInvestigationGroup = useCallback(() => {
+    if (!activeTab || groupDraftNodes.length < 2) return;
+    const name = groupDraftForm.name.trim();
+    applyInvestigationGroupOperation({
+      operation: 'create',
+      nodeIds: groupDraftNodes.map((node) => node.id),
+      name: name || `研判组 ${(activeTab.graphData?.investigationGroups?.length ?? 0) + 1}`,
+      groupType: groupDraftForm.groupType,
+      note: groupDraftForm.note,
+      collapsed: true,
+    });
+  }, [activeTab, applyInvestigationGroupOperation, groupDraftForm.groupType, groupDraftForm.name, groupDraftForm.note, groupDraftNodes]);
+
   const removeTabLocally = useCallback((graphId: string) => {
     setGraphTabs((current) => current.filter((item) => item.graphId !== graphId));
     setActiveTabId((current) => {
@@ -2340,10 +2517,21 @@ export function CaseGraphWorkbench({
       token,
     )
       .then((graph) => {
-        const nextTab = graphToTab(graph);
-        setGraphTabs((current) => current.map((tab) => (tab.graphId === nextTab.graphId ? { ...tab, ...nextTab } : tab)));
+        setGraphTabs((current) =>
+          current.map((tab) =>
+            tab.graphId === graph.graph_id
+              ? {
+                  ...tab,
+                  drillNums: Number(graph.drillNums || drillNums),
+                  drillType: graph.drillType ?? drillType,
+                  minAmount: graph.minAmount ?? minAmount,
+                  maxAmount: graph.maxAmount ?? maxAmount,
+                }
+              : tab,
+          ),
+        );
         setSavedGraphs((current) =>
-          current.map((item) => (item.graphId === nextTab.graphId ? { ...item, chatId: nextTab.chatId } : item)),
+          current.map((item) => (item.graphId === graph.graph_id ? { ...item, chatId: graph.chatId || item.chatId } : item)),
         );
         appStore.dispatch({ type: 'caseGraph.graph.loaded', graph });
         setGraphConfigDialogOpen(false);
@@ -2357,7 +2545,7 @@ export function CaseGraphWorkbench({
       });
   }, [activeTab, graphConfigForm, token]);
 
-  const graphActionBusy = requests.querying || requests.drilling || requests.filtering || requests.excluding || requests.creating || requests.deleting;
+  const graphActionBusy = requests.querying || requests.drilling || requests.filtering || requests.excluding || requests.creating || requests.deleting || summaryAnalysisApplying || manualClueApplying || groupOperationApplying;
 
   const previewCaseGraphAction = useCallback((action: CaseGraphChatAction): CaseGraphActionPreview => {
     const title = caseGraphActionTitle(action);
@@ -2398,6 +2586,41 @@ export function CaseGraphWorkbench({
       }
       const excluded = resolveExcludedNodeForAction(action, activeTab);
       return excluded.error ? { title, summary, disabledReason: excluded.error } : { title, summary };
+    }
+    if (action.type === 'extend_clues') {
+      const scope = resolveClueExtensionScopeForAction(action, activeTab, conversationFocus);
+      if (scope.error) {
+        return { title, summary, disabledReason: scope.error };
+      }
+      return { title, summary: `${summary}；确认后会综合筛选主体并把符合条件的结果加入当前图` };
+    }
+    if (action.type === 'create_subject') {
+      if (!action.subjectName?.trim()) {
+        return { title, summary, disabledReason: '请说明要创建的交易主体名称' };
+      }
+      return { title, summary: `${summary}；确认后会在当前图上创建这个交易主体` };
+    }
+    if (action.type === 'add_manual_trade') {
+      const form = buildManualTradeFormForAction(action, activeTab);
+      if (form.error) {
+        return { title, summary, disabledReason: form.error };
+      }
+      return { title, summary: `${summary}；确认后会把这笔资金往来补充到当前图` };
+    }
+    if (action.type === 'add_reality_relation') {
+      const form = buildRealityRelationFormForAction(action, activeTab);
+      if (form.error) {
+        return { title, summary, disabledReason: form.error };
+      }
+      return { title, summary: `${summary}；确认后会在当前图上标注这条现实关系` };
+    }
+    if (action.type === 'exclude_trades' || action.type === 'restore_trades') {
+      const resolvedTrades = resolveTradeIdsForAction(action, activeTab, conversationFocus);
+      if (resolvedTrades.error) {
+        return { title, summary, disabledReason: resolvedTrades.error };
+      }
+      const verb = action.type === 'restore_trades' ? '恢复' : '排除';
+      return { title, summary: `${summary}；预计${verb} ${resolvedTrades.tradeIds.length} 笔交易流水` };
     }
     const resolved = resolveNodeForAction(action, activeTab, conversationFocus);
     if (resolved.error) {
@@ -2444,6 +2667,98 @@ export function CaseGraphWorkbench({
       handleCompleteGraphRelations();
       return;
     }
+    if (action.type === 'create_subject') {
+      setReplaySelection(null);
+      setManualClueApplying(true);
+      addCaseGraphManualNode(
+        {
+          caseId: activeTab.caseId,
+          graphId: activeTab.graphId,
+          label: action.subjectName?.trim() || '',
+          tradeCard: action.subjectTradeCard?.trim() || undefined,
+          discoveryReason: action.discoveryReason?.trim() || undefined,
+          sourceNote: action.sourceNote?.trim() || undefined,
+          note: action.note?.trim() || action.reason?.trim() || undefined,
+          options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+        },
+        token,
+      )
+        .then((result) => {
+          applyRelationResultToActiveTab(result);
+          void refreshGraphSteps(activeTab);
+          setError(null);
+          requestGraphStepInsight(result, activeTab);
+        })
+        .catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : '创建交易主体失败');
+        })
+        .finally(() => {
+          setManualClueApplying(false);
+        });
+      return;
+    }
+    if (action.type === 'add_manual_trade') {
+      const form = buildManualTradeFormForAction(action, activeTab);
+      if (form.error || !form.payload) {
+        showFlash(form.error || '补充资金往来缺少必要信息');
+        return;
+      }
+      setReplaySelection(null);
+      setManualClueApplying(true);
+      addCaseGraphManualTrade(
+        {
+          caseId: activeTab.caseId,
+          graphId: activeTab.graphId,
+          ...form.payload,
+          options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+        },
+        token,
+      )
+        .then((result) => {
+          applyRelationResultToActiveTab(result);
+          void refreshGraphSteps(activeTab);
+          setError(null);
+          requestGraphStepInsight(result, activeTab);
+        })
+        .catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : '补充资金往来失败');
+        })
+        .finally(() => {
+          setManualClueApplying(false);
+        });
+      return;
+    }
+    if (action.type === 'add_reality_relation') {
+      const form = buildRealityRelationFormForAction(action, activeTab);
+      if (form.error || !form.payload) {
+        showFlash(form.error || '标注现实关系缺少必要信息');
+        return;
+      }
+      setReplaySelection(null);
+      setManualClueApplying(true);
+      addCaseGraphRealityRelation(
+        {
+          caseId: activeTab.caseId,
+          graphId: activeTab.graphId,
+          ...form.payload,
+          options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+        },
+        token,
+      )
+        .then((result) => {
+          applyRelationResultToActiveTab(result);
+          void refreshGraphSteps(activeTab);
+          setError(null);
+          requestGraphStepInsight(result, activeTab);
+        })
+        .catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : '标注现实关系失败');
+        })
+        .finally(() => {
+          setManualClueApplying(false);
+        });
+      return;
+    }
     if (action.type === 'restore_node') {
       if (action.all) {
         handleRestoreAllExcludedNodes();
@@ -2453,6 +2768,97 @@ export function CaseGraphWorkbench({
       if (excluded.node) {
         handleRestoreNode(excluded.node.nodeId);
       }
+      return;
+    }
+    if (action.type === 'extend_clues') {
+      const scope = resolveClueExtensionScopeForAction(action, activeTab, conversationFocus);
+      if (scope.error) {
+        showFlash(scope.error);
+        return;
+      }
+      setReplaySelection(null);
+      setSummaryAnalysisApplying(true);
+      loadCaseGraphSummaryCandidates(
+        {
+          caseId: activeTab.caseId,
+          graphId: activeTab.graphId,
+          focusNodeId: scope.node?.id ?? null,
+          scope: scope.scope,
+          direction: normalizeActionDirectionForExecute(action.direction),
+        },
+        token,
+      )
+        .then((result) => {
+          const items = Array.isArray(result.items) ? result.items : [];
+          const selectedItems = filterSummaryCandidatesForAction(items, action);
+          if (!selectedItems.length) {
+            throw new Error('没有找到符合条件的主体');
+          }
+          return applyCaseGraphSummarySelection(
+            {
+              caseId: activeTab.caseId,
+              graphId: activeTab.graphId,
+              focusNodeId: scope.node?.id ?? null,
+              scope: scope.scope,
+              direction: normalizeActionDirectionForExecute(action.direction),
+              candidateNodeIds: items.map((item) => item.nodeId).filter(Boolean),
+              selectedNodeIds: selectedItems.map((item) => item.nodeId).filter(Boolean),
+              selectedCandidates: selectedItems.map((item) => ({ nodeId: item.nodeId, label: item.label, accounts: item.accounts ?? [] })),
+              filters: action.filters ?? {},
+              options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+            },
+            token,
+          );
+        })
+        .then((result) => {
+          applyRelationResultToActiveTab(result);
+          void refreshGraphSteps(activeTab);
+          setError(null);
+          requestGraphStepInsight(result, activeTab);
+        })
+      .catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : '综合筛选操作失败');
+        })
+        .finally(() => {
+          setSummaryAnalysisApplying(false);
+        });
+      return;
+    }
+    if (action.type === 'exclude_trades' || action.type === 'restore_trades') {
+      const resolvedTrades = resolveTradeIdsForAction(action, activeTab, conversationFocus);
+      if (resolvedTrades.error || !resolvedTrades.tradeIds.length) {
+        showFlash(resolvedTrades.error || '没有找到符合条件的交易流水');
+        return;
+      }
+      const tradeSet = new Set(resolvedTrades.tradeIds.map((tradeId) => String(tradeId || '').trim()).filter(Boolean));
+      const nextExcludedTrades = action.type === 'restore_trades'
+        ? activeTab.excludedTrades.filter((tradeId) => !tradeSet.has(String(tradeId || '').trim()))
+        : buildAppliedExcludedTradeIds(activeTab.excludedTrades, resolvedTrades.tradeIds);
+      setReplaySelection(null);
+      setRequests((current) => ({ ...current, excluding: true }));
+      excludeCaseGraphTrades(
+        {
+          caseId: activeTab.caseId,
+          graphId: activeTab.graphId,
+          excludedTrades: nextExcludedTrades,
+          tradeFacts: activeTab.tradeFacts ?? activeTab.graphData?.tradeFacts ?? {},
+          edgeTradeIds: buildEdgeTradeIdsFromGraph(activeTab.graphData),
+          options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+        },
+        token,
+      )
+        .then((result) => {
+          applyRelationResultToActiveTab(result);
+          void refreshGraphSteps(activeTab);
+          setError(null);
+          requestGraphStepInsight(result, activeTab);
+        })
+        .catch((err: unknown) => {
+          setError(err instanceof Error ? err.message : '交易流水操作失败');
+        })
+        .finally(() => {
+          setRequests((current) => ({ ...current, excluding: false }));
+        });
       return;
     }
     const resolved = resolveNodeForAction(action, activeTab, conversationFocus);
@@ -2481,6 +2887,11 @@ export function CaseGraphWorkbench({
     handleExcludeNode,
     handleRestoreAllExcludedNodes,
     handleRestoreNode,
+    applyRelationResultToActiveTab,
+    refreshGraphSteps,
+    requestGraphStepInsight,
+    setSummaryAnalysisApplying,
+    token,
     previewCaseGraphAction,
     showFlash,
     updateActiveTab,
@@ -2802,12 +3213,6 @@ export function CaseGraphWorkbench({
               onCompleteGraphRelations={handleCompleteGraphRelations}
               onOpenGraphConfig={openGraphConfigDialog}
               onDrillDown={handleDrill}
-              onOpenNodeDetailAnalysis={(node) => {
-                if (replayActive) {
-                  return;
-                }
-                handleOpenNodeDetailAnalysis(node);
-              }}
               onOpenNodeSummaryAnalysis={(node) => {
                 if (replayActive) {
                   return;
@@ -2846,12 +3251,61 @@ export function CaseGraphWorkbench({
                 }
                 handleRestoreNode(nodeId);
               }}
-              excluding={requests.excluding}
-              onOpenEdgeDetail={(edgeId, edgeFocus) => {
+              onCreateInvestigationGroup={(nodes) => {
                 if (replayActive) {
                   return;
                 }
-                handleOpenEdgeDetail(edgeId, edgeFocus);
+                handleOpenInvestigationGroup(nodes);
+              }}
+              onToggleInvestigationGroup={(groupId, collapsed) => {
+                if (replayActive) {
+                  return;
+                }
+                applyInvestigationGroupOperation({ operation: collapsed ? 'collapse' : 'expand', groupId });
+              }}
+              onUpdateInvestigationGroup={(groupId, input) => {
+                if (replayActive) {
+                  return;
+                }
+                applyInvestigationGroupOperation({
+                  operation: 'update',
+                  groupId,
+                  name: input.name,
+                  groupType: input.groupType,
+                  note: input.note,
+                });
+              }}
+              onUngroupInvestigationGroup={(groupId) => {
+                if (replayActive) {
+                  return;
+                }
+                applyInvestigationGroupOperation({ operation: 'ungroup', groupId });
+              }}
+              onRemoveInvestigationGroupMember={(groupId, nodeId) => {
+                if (replayActive) {
+                  return;
+                }
+                applyInvestigationGroupOperation({ operation: 'remove_member', groupId, memberNodeId: nodeId });
+              }}
+              onRemoveInvestigationGroupMembers={(groupId, nodeIds) => {
+                if (replayActive) {
+                  return;
+                }
+                applyInvestigationGroupOperation({ operation: 'remove_member', groupId, memberNodeIds: nodeIds });
+              }}
+              onAddInvestigationGroupMembers={(groupId, nodeIds) => {
+                if (replayActive) {
+                  return;
+                }
+                applyInvestigationGroupOperation({ operation: 'add_members', groupId, memberNodeIds: nodeIds });
+              }}
+              groupOperationLoading={groupOperationApplying}
+              excluding={requests.excluding}
+              onOpenEdgeDetail={(edgeId, edgeFocus, edgeOverride) => {
+                if (replayActive) {
+                  return;
+                }
+                handleOpenEdgeDetail(edgeId, edgeFocus, edgeOverride);
               }}
               onFocusChange={(focus) => {
                 if (!activeTab) {
@@ -3029,6 +3483,7 @@ export function CaseGraphWorkbench({
         onToggleNode={handleToggleSummaryAnalysisNode}
         onToggleNodes={handleSetSummaryAnalysisNodes}
         onApply={handleApplySummaryAnalysis}
+        onApplyItemAction={handleApplySummaryAnalysisItemAction}
         onClose={handleCloseSummaryAnalysis}
       />
 
@@ -3044,6 +3499,82 @@ export function CaseGraphWorkbench({
         onApplyRelation={handleApplyRealityRelation}
         onClose={handleCloseManualClue}
       />
+
+      {groupDraftOpen ? (
+        <div className="case-graph-modal-mask" role="presentation" onClick={handleCloseInvestigationGroup}>
+          <section
+            className="case-graph-modal case-graph-investigation-group-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="case-graph-investigation-group-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="case-graph-modal-header">
+              <div>
+                <h2 id="case-graph-investigation-group-title">归并成组</h2>
+                <span>已选择 {groupDraftNodes.length} 个主体，成组后可整体收起或拆分。</span>
+              </div>
+              <button className="case-graph-icon-button" type="button" onClick={handleCloseInvestigationGroup}>
+                <X size={16} />
+              </button>
+            </div>
+            <div className="case-graph-investigation-group-body">
+              <div className="case-graph-investigation-group-fields">
+                <label>
+                  <span>组名</span>
+                  <input
+                    value={groupDraftForm.name}
+                    onChange={(event) => setGroupDraftForm((current) => ({ ...current, name: event.target.value }))}
+                    placeholder="例如：伍华中核心团伙"
+                  />
+                </label>
+                <label>
+                  <span>组类型</span>
+                  <select
+                    value={groupDraftForm.groupType}
+                    onChange={(event) => setGroupDraftForm((current) => ({ ...current, groupType: event.target.value }))}
+                  >
+                    <option value="团伙成员">团伙成员</option>
+                    <option value="关联账号">关联账号</option>
+                    <option value="控制关系">控制关系</option>
+                    <option value="资金中转">资金中转</option>
+                    <option value="其他">其他</option>
+                  </select>
+                </label>
+                <label className="case-graph-investigation-group-note">
+                  <span>研判说明</span>
+                  <textarea
+                    value={groupDraftForm.note}
+                    onChange={(event) => setGroupDraftForm((current) => ({ ...current, note: event.target.value }))}
+                    placeholder="说明为什么把这些主体归为一组，例如同案关系、共同控制、同一团伙等。"
+                  />
+                </label>
+              </div>
+              <div className="case-graph-investigation-group-members">
+                <strong>组内主体</strong>
+                <div>
+                  {groupDraftNodes.map((node) => (
+                    <span key={node.id}>{node.label || node.name || node.accountName || node.tradeCard || node.id}</span>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <footer className="case-graph-modal-footer">
+              <button className="case-graph-secondary-button" type="button" onClick={handleCloseInvestigationGroup}>
+                取消
+              </button>
+              <button
+                className="case-graph-primary-button"
+                type="button"
+                disabled={groupOperationApplying || groupDraftNodes.length < 2}
+                onClick={handleSubmitInvestigationGroup}
+              >
+                {groupOperationApplying ? '保存中' : '保存到图'}
+              </button>
+            </footer>
+          </section>
+        </div>
+      ) : null}
 
       {originPanelOpen ? (
         <div className="case-graph-modal-mask case-graph-origin-mask" role="presentation" onClick={() => setOriginPanelOpen(false)}>
@@ -3469,7 +4000,7 @@ function formatGraphStepOperation(step: CaseGraphStepSnapshot): string {
     complete_current_graph: '补全关系',
     filter_current_graph: '全图筛选',
     detail_trade_filter: '交易核查',
-    summary_analysis: '线索扩展',
+    summary_analysis: '综合筛选',
     manual_node_add: '创建交易主体',
     manual_trade_add: '补充资金往来',
     reality_relation_add: '标注现实关系',
@@ -3490,7 +4021,7 @@ function resolveRelationOperationLabel(result: CaseGraphRelationResponse): strin
     complete_current_graph: '补全关系',
     filter_current_graph: '全图筛选',
     detail_trade_filter: '交易核查',
-    summary_analysis: '线索扩展',
+    summary_analysis: '综合筛选',
     manual_node_add: '创建交易主体',
     manual_trade_add: '补充资金往来',
     reality_relation_add: '标注现实关系',
@@ -3522,7 +4053,7 @@ function formatGraphStepSummary(summary: Record<string, unknown>): string {
     addedEdgeCount: '新增资金线',
     updatedNodeCount: '更新主体',
     updatedEdgeCount: '更新资金线',
-    candidateNodeCount: '候选主体',
+    candidateNodeCount: '综合筛选主体',
     retainedNodeCount: '保留主体',
   };
   return Object.entries(summary)
@@ -3638,8 +4169,8 @@ function graphStateToTab(state: CaseGraphStateSnapshot, fallback?: Partial<Graph
     excludedAccountId: state.graph.excludedAccountId?.[0] ?? null,
     excludedNodes: [...(state.graph.excludedNodes ?? [])],
     showExcludedNodes: fallbackTab?.showExcludedNodes ?? false,
-    drillNums: Number(fallbackTab?.drillNums ?? fallbackSnapshot?.drillNums ?? 10),
-    drillType: fallbackTab?.drillType ?? fallbackSnapshot?.drillType ?? 1,
+    drillNums: Number(state.graph.drillNums ?? fallbackTab?.drillNums ?? fallbackSnapshot?.drillNums ?? 10),
+    drillType: state.graph.drillType ?? fallbackTab?.drillType ?? fallbackSnapshot?.drillType ?? 1,
     minAmount: filters.minAmount ?? null,
     maxAmount: filters.maxAmount ?? null,
     startTime: filters.startTime ?? '',
@@ -3938,6 +4469,7 @@ function buildTradeFactsFromDetails(
         tradeAmount: Number(item.tradeAmount || 0),
         tradeTime: item.tradeTime ?? null,
         tradeAbstract: item.tradeAbstract || '',
+        method: item.method || '转账',
         payerAccountId: item.payerAccountId ?? null,
         payerAccountName: item.payerAccountName || '',
         payerTradeCard: item.payerTradeCard || '',
@@ -3977,6 +4509,7 @@ function buildDetailItemsFromGraphTradeFacts(
       tradeAmount: Number(fact.tradeAmount || 0),
       tradeTime: fact.tradeTime ?? null,
       tradeAbstract: fact.tradeAbstract || fact.method || '人工补充资金往来',
+      method: fact.method || '转账',
       payerAccountId: fact.payerAccountId ?? null,
       payerAccountName: fact.payerAccountName || '',
       payerTradeCard: fact.payerTradeCard || '',
@@ -4497,6 +5030,392 @@ function resolveExcludedNodeForAction(
   return { node: null, error: '没有找到这个已取消上图的主体' };
 }
 
+type TradeActionScope =
+  | { kind: 'all' }
+  | { kind: 'node'; node: CaseGraphNode; direction: DrillDirection }
+  | { kind: 'pair'; fromNode: CaseGraphNode; toNode: CaseGraphNode; direction: DrillDirection };
+
+function resolveTradeIdsForAction(
+  action: CaseGraphChatAction,
+  tab: GraphTabState,
+  focus: CaseGraphConversationFocus | null,
+): { tradeIds: string[]; error?: string } {
+  const facts = tab.tradeFacts ?? tab.graphData?.tradeFacts ?? {};
+  const factEntries = Object.entries(facts);
+  if (!factEntries.length) {
+    return { tradeIds: [], error: '当前图还没有可用于筛选的交易流水事实' };
+  }
+  const scope = resolveTradeActionScope(action, tab, focus);
+  if (scope.error || !scope.scope) {
+    return { tradeIds: [], error: scope.error || '请说明要处理哪一段交易流水' };
+  }
+  const filterCount = Object.keys(action.filters ?? {}).length;
+  if (action.selection === 'outside' && filterCount === 0) {
+    return { tradeIds: [], error: '保留交易流水需要说明金额、时间或关键词条件' };
+  }
+
+  const graphTradeIds = new Set(
+    (tab.graphData?.edges ?? [])
+      .flatMap((edge) => edge.tradeIds ?? [])
+      .map(normalizeTradeId)
+      .filter(Boolean),
+  );
+  const excludedTradeIds = new Set(tab.excludedTrades.map(normalizeTradeId).filter(Boolean));
+  const candidateIds = new Set(action.type === 'restore_trades' ? excludedTradeIds : graphTradeIds);
+  if (!candidateIds.size && action.type === 'restore_trades') {
+    return { tradeIds: [], error: '当前没有已排除的交易流水' };
+  }
+  if (!candidateIds.size) {
+    return { tradeIds: [], error: '当前图上没有可处理的交易流水' };
+  }
+
+  const scopedTradeIds = factEntries
+    .map(([key, fact]) => ({ tradeId: resolveTradeFactId(key, fact), fact }))
+    .filter(({ tradeId }) => tradeId && candidateIds.has(tradeId))
+    .filter(({ fact }) => tradeFactMatchesScope(fact, scope.scope!, tab))
+    .filter(({ fact }) => {
+      const matches = tradeFactMatchesFilters(fact, action.filters ?? {});
+      return action.selection === 'outside' ? !matches : matches;
+    })
+    .map(({ tradeId }) => tradeId);
+  const matchedTradeIds = action.type === 'restore_trades'
+    ? scopedTradeIds
+    : scopedTradeIds.filter((tradeId) => !excludedTradeIds.has(tradeId));
+
+  const uniqueTradeIds = [...new Set(matchedTradeIds)];
+  if (!uniqueTradeIds.length) {
+    const uniqueScopedTradeIds = [...new Set(scopedTradeIds)];
+    if (action.type === 'exclude_trades' && uniqueScopedTradeIds.length) {
+      return { tradeIds: [], error: '符合条件的交易流水已经全部排除' };
+    }
+    return { tradeIds: [], error: action.type === 'restore_trades' ? '没有找到符合条件的已排除交易流水' : '没有找到符合条件的交易流水' };
+  }
+  return { tradeIds: uniqueTradeIds };
+}
+
+function resolveClueExtensionScopeForAction(
+  action: CaseGraphChatAction,
+  tab: GraphTabState,
+  focus: CaseGraphConversationFocus | null,
+): { scope: 'node' | 'global'; node: CaseGraphNode | null; error?: string } {
+  if (action.clueScope === 'global' || action.all) {
+    return { scope: 'global', node: null };
+  }
+  const node = resolveNodeForAction(action, tab, focus);
+  if (node.error || !node.node) {
+    return { scope: 'node', node: null, error: node.error || '请说明要围绕哪个主体做综合筛选' };
+  }
+  return { scope: 'node', node: node.node };
+}
+
+function buildManualTradeFormForAction(
+  action: CaseGraphChatAction,
+  tab: GraphTabState,
+): {
+  payload?: Omit<AddCaseGraphManualTradePayload, 'caseId' | 'graphId' | 'options'>;
+  error?: string;
+} {
+  const amount = parseActionAmount(action.amount);
+  if (amount == null || amount <= 0) {
+    return { error: '请说明补充资金往来的交易金额' };
+  }
+  const payer = resolveManualPartyForAction(action, tab, 'payer');
+  if (payer.error || !payer.payload) {
+    return { error: payer.error || '请说明付款方' };
+  }
+  const payee = resolveManualPartyForAction(action, tab, 'payee');
+  if (payee.error || !payee.payload) {
+    return { error: payee.error || '请说明收款方' };
+  }
+  if (payer.created && payee.created) {
+    return { error: '补充资金往来至少需要一端是当前图上的主体' };
+  }
+  const payerId = String(payer.payload.nodeId || payer.payload.id || '').trim();
+  const payeeId = String(payee.payload.nodeId || payee.payload.id || '').trim();
+  if (payerId && payeeId && payerId === payeeId) {
+    return { error: '付款方和收款方不能是同一个主体' };
+  }
+  return {
+    payload: {
+      payer: payer.payload,
+      payee: payee.payload,
+      amount,
+      tradeTime: action.tradeTime?.trim() || null,
+      method: '现金交易',
+      summary: action.summary?.trim() || action.reason?.trim() || '',
+      sourceNote: action.sourceNote?.trim() || action.note?.trim() || '',
+    },
+  };
+}
+
+function resolveManualPartyForAction(
+  action: CaseGraphChatAction,
+  tab: GraphTabState,
+  side: 'payer' | 'payee',
+): { payload?: CaseGraphManualPartyPayload; created: boolean; error?: string } {
+  const query = String(side === 'payer' ? action.payerQuery || '' : action.payeeQuery || '').trim();
+  const tradeCard = String(side === 'payer' ? action.payerTradeCard || '' : action.payeeTradeCard || '').trim();
+  const createNew = side === 'payer' ? Boolean(action.payerCreateNew) : Boolean(action.payeeCreateNew);
+  const label = query || tradeCard;
+  const sideLabel = side === 'payer' ? '付款方' : '收款方';
+  if (createNew) {
+    if (!label) {
+      return { created: true, error: `请说明新建${sideLabel}的名称或账号` };
+    }
+    return {
+      created: true,
+      payload: {
+        label,
+        name: label,
+        accountName: label,
+        tradeCard: tradeCard || undefined,
+        createNew: true,
+      },
+    };
+  }
+  if (!query && !tradeCard) {
+    return { created: false, error: `请说明${sideLabel}` };
+  }
+  const resolved = resolveNodeByActionQuery(query || tradeCard, tab);
+  if (resolved.error || !resolved.node) {
+    return { created: false, error: `没有找到${sideLabel}：${query || tradeCard}` };
+  }
+  return { created: false, payload: manualPartyPayloadFromGraphNode(resolved.node) };
+}
+
+function manualPartyPayloadFromGraphNode(node: CaseGraphNode): CaseGraphManualPartyPayload {
+  const primaryAccount = Array.isArray(node.accounts) ? node.accounts[0] : undefined;
+  return {
+    nodeId: node.id,
+    id: node.id,
+    label: node.label || node.name || node.accountName || primaryAccount?.accountName || node.tradeCard || node.id,
+    name: node.name || node.label || node.accountName || primaryAccount?.accountName,
+    accountName: node.accountName || node.name || node.label || primaryAccount?.accountName,
+    accountId: node.accountId ?? primaryAccount?.accountId ?? null,
+    tradeCard: node.tradeCard || primaryAccount?.tradeCard || undefined,
+  };
+}
+
+function buildRealityRelationFormForAction(
+  action: CaseGraphChatAction,
+  tab: GraphTabState,
+): {
+  payload?: Omit<AddCaseGraphRealityRelationPayload, 'caseId' | 'graphId' | 'options'>;
+  error?: string;
+} {
+  const sourceQuery = String(action.sourceNodeQuery || action.fromQuery || action.nodeQuery || '').trim();
+  const targetQuery = String(action.targetNodeQuery || action.toQuery || action.counterpartyQuery || '').trim();
+  if (!sourceQuery || !targetQuery) {
+    return { error: '请说明要标注现实关系的两个主体' };
+  }
+  const relationType = String(action.relationType || action.label || '').trim();
+  if (!relationType) {
+    return { error: '请说明现实关系类型，例如母女、亲属、同伙或上下级' };
+  }
+  const source = resolveNodeByActionQuery(sourceQuery, tab);
+  if (source.error || !source.node) {
+    return { error: `没有找到关系一方：${sourceQuery}` };
+  }
+  const target = resolveNodeByActionQuery(targetQuery, tab);
+  if (target.error || !target.node) {
+    return { error: `没有找到关系另一方：${targetQuery}` };
+  }
+  if (source.node.id === target.node.id) {
+    return { error: '现实关系两端不能是同一个主体' };
+  }
+  return {
+    payload: {
+      sourceNodeId: source.node.id,
+      targetNodeId: target.node.id,
+      relationType,
+      label: relationType,
+      note: action.note?.trim() || action.reason?.trim() || '',
+    },
+  };
+}
+
+function filterSummaryCandidatesForAction(items: SummaryAnalysisItem[], action: CaseGraphChatAction): SummaryAnalysisItem[] {
+  return items
+    .filter((item) => item.status === 'candidate' || (!item.isOnGraph && !item.isExcluded))
+    .filter((item) => summaryCandidateMatchesFilters(item, action));
+}
+
+function summaryCandidateMatchesFilters(item: SummaryAnalysisItem, action: CaseGraphChatAction): boolean {
+  const filters = action.filters ?? {};
+  const direction = normalizeActionDirectionForExecute(action.direction);
+  const amount = summaryCandidateAmountForDirection(item, direction);
+  const tradeCount = summaryCandidateCountForDirection(item, direction);
+  const minAmount = parseActionAmount(filters.minAmount);
+  const maxAmount = parseActionAmount(filters.maxAmount);
+  const minTradeCount = parseActionCount(filters.minTradeCount);
+  const maxTradeCount = parseActionCount(filters.maxTradeCount);
+  if (minAmount != null && amount < minAmount) return false;
+  if (maxAmount != null && amount > maxAmount) return false;
+  if (minTradeCount != null && tradeCount < minTradeCount) return false;
+  if (maxTradeCount != null && tradeCount > maxTradeCount) return false;
+  if (filters.startTime && item.endTime && String(item.endTime).slice(0, 10) < String(filters.startTime).slice(0, 10)) return false;
+  if (filters.endTime && item.startTime && String(item.startTime).slice(0, 10) > String(filters.endTime).slice(0, 10)) return false;
+  const keyword = normalizeActionSearchText(filters.keyword || '');
+  if (keyword) {
+    const text = [
+      item.label,
+      item.accountText,
+      ...(item.accounts ?? []).flatMap((account) => [account.accountId, account.accountName, account.tradeCard]),
+    ].map((value) => normalizeActionSearchText(value)).join(' ');
+    if (!text.includes(keyword)) return false;
+  }
+  return true;
+}
+
+function summaryCandidateAmountForDirection(item: SummaryAnalysisItem, direction: DrillDirection): number {
+  if (direction === 'in') return Number(item.receivedAmount || 0);
+  if (direction === 'out') return Number(item.paidAmount || 0);
+  return Number(item.totalAmount || 0);
+}
+
+function summaryCandidateCountForDirection(item: SummaryAnalysisItem, direction: DrillDirection): number {
+  if (direction === 'in') return Number(item.receivedCount || 0);
+  if (direction === 'out') return Number(item.paidCount || 0);
+  return Number((item.receivedCount || 0) + (item.paidCount || 0)) || (item.tradeIds ?? []).length;
+}
+
+function resolveTradeActionScope(
+  action: CaseGraphChatAction,
+  tab: GraphTabState,
+  focus: CaseGraphConversationFocus | null,
+): { scope: TradeActionScope | null; error?: string } {
+  const direction = normalizeActionDirectionForExecute(action.direction);
+  const fromQuery = String(action.fromQuery || '').trim();
+  const toQuery = String(action.toQuery || '').trim();
+  if (fromQuery && toQuery) {
+    const fromNode = resolveNodeByActionQuery(fromQuery, tab);
+    if (fromNode.error || !fromNode.node) return { scope: null, error: `没有找到付款方：${fromQuery}` };
+    const toNode = resolveNodeByActionQuery(toQuery, tab);
+    if (toNode.error || !toNode.node) return { scope: null, error: `没有找到收款方：${toQuery}` };
+    return { scope: { kind: 'pair', fromNode: fromNode.node, toNode: toNode.node, direction } };
+  }
+
+  const nodeQuery = String(action.nodeQuery || action.nodeName || '').trim();
+  const counterpartyQuery = String(action.counterpartyQuery || '').trim();
+  if (nodeQuery && counterpartyQuery) {
+    const node = resolveNodeByActionQuery(nodeQuery, tab);
+    if (node.error || !node.node) return { scope: null, error: `没有找到主体：${nodeQuery}` };
+    const counterparty = resolveNodeByActionQuery(counterpartyQuery, tab);
+    if (counterparty.error || !counterparty.node) return { scope: null, error: `没有找到交易对手：${counterpartyQuery}` };
+    if (direction === 'in') {
+      return { scope: { kind: 'pair', fromNode: counterparty.node, toNode: node.node, direction: 'out' } };
+    }
+    if (direction === 'out') {
+      return { scope: { kind: 'pair', fromNode: node.node, toNode: counterparty.node, direction: 'out' } };
+    }
+    return { scope: { kind: 'pair', fromNode: node.node, toNode: counterparty.node, direction: 'both' } };
+  }
+
+  const resolvedNode = resolveNodeForAction(action, tab, focus);
+  if (resolvedNode.node) {
+    return { scope: { kind: 'node', node: resolvedNode.node, direction } };
+  }
+
+  if (focus?.type === 'edge') {
+    const nodes = tab.graphData?.nodes ?? [];
+    const sourceNode = nodes.find((node) => node.id === focus.from);
+    const targetNode = nodes.find((node) => node.id === focus.to);
+    if (sourceNode && targetNode) {
+      return { scope: { kind: 'pair', fromNode: sourceNode, toNode: targetNode, direction: 'both' } };
+    }
+  }
+
+  if (action.all || Object.keys(action.filters ?? {}).length) {
+    return { scope: { kind: 'all' } };
+  }
+  return { scope: null, error: '请说明主体、交易对手，或给出要处理的金额/时间条件' };
+}
+
+function resolveNodeByActionQuery(query: string, tab: GraphTabState): { node: CaseGraphNode | null; error?: string } {
+  return resolveNodeForAction({ type: 'exclude_node', nodeQuery: query }, tab, null);
+}
+
+function resolveTradeFactId(key: string, fact: CaseGraphTradeFact): string {
+  return normalizeTradeId(fact.tradeId || fact.serialNumber || key);
+}
+
+function normalizeTradeId(value: unknown): string {
+  return String(value ?? '').trim();
+}
+
+function tradeFactMatchesScope(fact: CaseGraphTradeFact, scope: TradeActionScope, tab: GraphTabState): boolean {
+  if (scope.kind === 'all') return true;
+  if (scope.kind === 'node') {
+    const payer = tradeFactMatchesNodeSide(fact, scope.node, tab, 'payer');
+    const payee = tradeFactMatchesNodeSide(fact, scope.node, tab, 'payee');
+    if (scope.direction === 'in') return payee;
+    if (scope.direction === 'out') return payer;
+    return payer || payee;
+  }
+  const forward = tradeFactMatchesNodeSide(fact, scope.fromNode, tab, 'payer')
+    && tradeFactMatchesNodeSide(fact, scope.toNode, tab, 'payee');
+  const backward = tradeFactMatchesNodeSide(fact, scope.toNode, tab, 'payer')
+    && tradeFactMatchesNodeSide(fact, scope.fromNode, tab, 'payee');
+  if (scope.direction === 'out') return forward;
+  if (scope.direction === 'in') return backward;
+  return forward || backward;
+}
+
+function tradeFactMatchesNodeSide(
+  fact: CaseGraphTradeFact,
+  node: CaseGraphNode,
+  tab: GraphTabState,
+  side: 'payer' | 'payee',
+): boolean {
+  const nodeTexts = collectNodeSearchTexts(node, tab.groupMap);
+  const values = side === 'payer'
+    ? [fact.payerAccountId, fact.payerAccountName, fact.payerTradeCard]
+    : [fact.payeeAccountId, fact.payeeAccountName, fact.payeeTradeCard];
+  const factTexts = values.map((value) => normalizeActionSearchText(value)).filter(Boolean);
+  return factTexts.some((factText) =>
+    nodeTexts.some((nodeText) => factText === nodeText || factText.includes(nodeText) || nodeText.includes(factText)),
+  );
+}
+
+function tradeFactMatchesFilters(fact: CaseGraphTradeFact, filters: CaseGraphChatActionFilters): boolean {
+  const amount = Number(fact.tradeAmount || 0);
+  const minAmount = parseActionAmount(filters.minAmount);
+  const maxAmount = parseActionAmount(filters.maxAmount);
+  if (minAmount != null && amount < minAmount) return false;
+  if (maxAmount != null && amount > maxAmount) return false;
+  const tradeDate = String(fact.tradeTime || '').slice(0, 10);
+  if (filters.startTime && tradeDate && tradeDate < String(filters.startTime).slice(0, 10)) return false;
+  if (filters.endTime && tradeDate && tradeDate > String(filters.endTime).slice(0, 10)) return false;
+  const keyword = normalizeActionSearchText(filters.keyword || '');
+  if (keyword) {
+    const text = [
+      fact.tradeId,
+      fact.serialNumber,
+      fact.tradeAbstract,
+      fact.payerAccountName,
+      fact.payerTradeCard,
+      fact.payeeAccountName,
+      fact.payeeTradeCard,
+    ].map((value) => normalizeActionSearchText(value)).join(' ');
+    if (!text.includes(keyword)) return false;
+  }
+  return true;
+}
+
+function parseActionAmount(value: unknown): number | null {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const normalized = Number(text.replace(/[,\s，]/g, '').replace(/[元]/g, '').replace(/万$/, '')) * (/万/.test(text) ? 10000 : 1);
+  return Number.isFinite(normalized) ? normalized : null;
+}
+
+function parseActionCount(value: unknown): number | null {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const normalized = Number(text.replace(/[,\s，]/g, '').replace(/[笔次条]/g, ''));
+  return Number.isFinite(normalized) ? normalized : null;
+}
+
 function buildExcludedNodePayloadFromGraphNode(node: CaseGraphNode): CaseGraphExcludedNode {
   const accounts = Array.isArray(node.accounts) ? node.accounts : [];
   const accountIds = accounts.map((account) => String(account.accountId || '').trim()).filter(Boolean);
@@ -4511,6 +5430,45 @@ function buildExcludedNodePayloadFromGraphNode(node: CaseGraphNode): CaseGraphEx
     tradeCards: [...new Set([...tradeCards, ownTradeCard].filter(Boolean))],
     reason: 'manual',
   };
+}
+
+function summaryAnalysisItemAction(item: SummaryAnalysisItem): SummaryAnalysisItemAction {
+  if (item.status === 'on_graph' || item.isOnGraph) return 'exclude';
+  if (item.status === 'excluded' || item.isExcluded) return 'restore';
+  return 'add';
+}
+
+function buildExcludedNodePayloadsFromSummaryItems(
+  items: SummaryAnalysisItem[],
+  tab: GraphTabState,
+): CaseGraphExcludedNode[] {
+  const graphNodes = new Map((tab.graphData?.nodes ?? []).map((node) => [String(node.id || '').trim(), node]));
+  return items
+    .map((item) => {
+      const nodeId = String(item.nodeId || '').trim();
+      const graphNode = graphNodes.get(nodeId);
+      if (graphNode) {
+        return buildExcludedNodePayloadFromGraphNode(graphNode);
+      }
+      const accountIds = (item.accounts ?? [])
+        .map((account) => String(account.accountId || '').trim())
+        .filter(Boolean);
+      const tradeCards = (item.accounts ?? [])
+        .map((account) => String(account.tradeCard || '').trim())
+        .filter(Boolean);
+      if (!nodeId && !accountIds.length && !tradeCards.length) {
+        return null;
+      }
+      return {
+        nodeId,
+        label: String(item.label || nodeId || '').trim(),
+        type: 'account',
+        accountIds: [...new Set(accountIds)],
+        tradeCards: [...new Set(tradeCards)],
+        reason: 'manual',
+      };
+    })
+    .filter((node): node is CaseGraphExcludedNode => Boolean(node));
 }
 
 function resolveTradeCardForGraphNode(
@@ -4742,6 +5700,10 @@ function isCaseGraphOperationIntent(text: string): boolean {
     || /(补全|核查).{0,12}(关系|资金关系|资金往来)/.test(normalized)
     || /(筛选|过滤|只看|只保留).{0,16}(金额|资金线|交易|时间)/.test(normalized)
     || /(金额|资金线|交易).{0,12}(不少于|不低于|大于等于|超过|高于|不超过|低于|小于等于)/.test(normalized)
+    || /(创建|新增|新建).{0,12}(交易主体|主体|交易对象|节点)/.test(normalized)
+    || /(补充|新增|添加|手动).{0,12}(资金往来|交易流水|交易|转账)/.test(normalized)
+    || /(标注|添加|新增|记录).{0,12}(现实关系|亲属关系|关系)/.test(normalized)
+    || /有个新的交易主体|有一笔.{0,12}(交易|资金往来|转账)/.test(normalized)
   );
 }
 

@@ -75,7 +75,7 @@ describe('ChatWorkspace component boundary', () => {
     expect(edgeClickBlock).toContain('setActiveEdgeId(edgeId)');
     expect(edgeClickBlock).toContain('edgeLookupRef.current.get(edgeId)');
     expect(edgeClickBlock).toContain('nodeLookupRef.current');
-    expect(edgeClickBlock).toContain('onOpenEdgeDetailRef.current(edgeId, edgeFocus ?? undefined)');
+    expect(edgeClickBlock).toContain('onOpenEdgeDetailRef.current(edgeId, edgeFocus ?? undefined, edge)');
     expect(focusEffectBlock).toContain("type: 'edge'");
     expect(focusEffectBlock).toContain('from: selectedEdge.source');
     expect(focusEffectBlock).toContain('to: selectedEdge.target');
@@ -96,8 +96,8 @@ describe('ChatWorkspace component boundary', () => {
     expect(edgeClickBlock).toContain('const edgeFocus = buildEdgeFocusPayload');
     expect(edgeClickBlock).toContain('edgeLookupRef.current.get(edgeId)');
     expect(edgeClickBlock).toContain('nodeLookupRef.current');
-    expect(edgeClickBlock).toContain('onOpenEdgeDetailRef.current(edgeId, edgeFocus ?? undefined)');
-    expect(workbenchSource).toContain('const handleOpenEdgeDetail = useCallback((edgeId: string, edgeFocus?: CaseGraphConversationFocus)');
+    expect(edgeClickBlock).toContain('onOpenEdgeDetailRef.current(edgeId, edgeFocus ?? undefined, edge)');
+    expect(workbenchSource).toContain("const handleOpenEdgeDetail = useCallback((edgeId: string, edgeFocus?: CaseGraphConversationFocus, edgeOverride?: CaseGraphData['edges'][number])");
     expect(workbenchSource).toContain("if (edgeFocus?.type === 'edge')");
     expect(workbenchSource).toContain('syncGraphContext(edgeFocus)');
     expect(focusChangeBlock).toContain("if (focus.type === 'edge')");

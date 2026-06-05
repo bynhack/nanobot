@@ -247,12 +247,37 @@ class PyMySQLCaseGraphQueryClient:
     ) -> QueryResult:
         parsed_case_id = self._parse_case_id(case_id)
         normalized_direction = direction if direction in {"in", "out", "both"} else "both"
-        seed = self._extract_trade_card_seed(seed_accounts)
-        if not seed["account_ids"] and not seed["pay_accounts"]:
-            return {"nodes": [], "edges": []}
-
-        seed_clauses, seed_params = self._seed_where_clause(seed, direction=normalized_direction)
         query_filters = filters or {}
+        rows: list[dict[str, Any]] = []
+        for seed_group in self._relation_seed_account_groups(seed_accounts):
+            seed = self._extract_trade_card_seed(seed_group)
+            if not seed["account_ids"] and not seed["pay_accounts"]:
+                continue
+            for query_direction in self._relation_one_hop_directions(normalized_direction):
+                rows.extend(
+                    self._query_relation_one_hop_rows(
+                        case_id=parsed_case_id,
+                        seed=seed,
+                        direction=query_direction,
+                        query_filters=query_filters,
+                    )
+                )
+        if not rows:
+            return {"nodes": [], "edges": []}
+        rows = self._dedupe_relation_rows(rows)
+        graph = self._relation_graph_from_one_hop_rows(rows, seed_accounts=seed_accounts)
+        graph["tradeFacts"] = self._relation_trade_facts_for_rows(parsed_case_id, rows)
+        return graph
+
+    def _query_relation_one_hop_rows(
+        self,
+        *,
+        case_id: int,
+        seed: dict[str, list[Any]],
+        direction: str,
+        query_filters: QueryPayload,
+    ) -> list[dict[str, Any]]:
+        seed_clauses, seed_params = self._seed_where_clause(seed, direction=direction)
         filter_sql, filter_params = self._trade_filter_clauses(query_filters)
         order_by_sql = "trade_amount DESC, trade_count DESC"
         if self._drill_sort_type(query_filters) == 2:
@@ -261,8 +286,8 @@ class PyMySQLCaseGraphQueryClient:
         params = seed_params + filter_params
         if limit_sql:
             params += (self._query_limit(query_filters),)
-        trade_info_cte = self._trade_info_cte(parsed_case_id)
-        rows = self._query(
+        trade_info_cte = self._trade_info_cte(case_id)
+        return self._query(
             f"""
             {trade_info_cte}
             SELECT
@@ -290,9 +315,6 @@ class PyMySQLCaseGraphQueryClient:
             """,
             params,
         )
-        graph = self._relation_graph_from_one_hop_rows(rows, seed_accounts=seed_accounts)
-        graph["tradeFacts"] = self._relation_trade_facts_for_rows(parsed_case_id, rows)
-        return graph
 
     def query_relation_between_accounts(
         self,
@@ -1398,35 +1420,31 @@ class PyMySQLCaseGraphQueryClient:
         *,
         seed_accounts: list[dict[str, Any]],
     ) -> QueryResult:
-        seed_node = cls._relation_seed_node(seed_accounts)
-        nodes_by_id: dict[str, dict[str, Any]] = {seed_node["id"]: seed_node}
-        seed_ids = {
-            str(account.get("accountId") or "").strip()
-            for account in seed_accounts
-            if str(account.get("accountId") or "").strip()
-        }
-        seed_cards = {
-            str(account.get("tradeCard") or account.get("payAccount") or "").strip()
-            for account in seed_accounts
-            if str(account.get("tradeCard") or account.get("payAccount") or "").strip()
-        }
+        seed_nodes = cls._relation_seed_nodes(seed_accounts)
+        nodes_by_id: dict[str, dict[str, Any]] = {node["id"]: node for node in seed_nodes}
+        seed_lookup = cls._relation_seed_lookup(seed_nodes)
         edges: list[dict[str, Any]] = []
         for row in rows:
-            payer_is_seed = cls._relation_party_is_seed(row, "payer", seed_ids, seed_cards)
-            payee_is_seed = cls._relation_party_is_seed(row, "payee", seed_ids, seed_cards)
-            if payer_is_seed and payee_is_seed:
+            payer_seed_id = cls._relation_party_seed_node_id(row, "payer", seed_lookup)
+            payee_seed_id = cls._relation_party_seed_node_id(row, "payee", seed_lookup)
+            if payer_seed_id and payee_seed_id and payer_seed_id == payee_seed_id:
                 continue
-            if payer_is_seed:
+            if payer_seed_id and payee_seed_id:
+                source_id = payer_seed_id
+                target_id = payee_seed_id
+                counterparty = None
+            elif payer_seed_id:
                 counterparty = cls._relation_party_node(row, "payee")
-                source_id = seed_node["id"]
+                source_id = payer_seed_id
                 target_id = counterparty["id"]
-            elif payee_is_seed:
+            elif payee_seed_id:
                 counterparty = cls._relation_party_node(row, "payer")
                 source_id = counterparty["id"]
-                target_id = seed_node["id"]
+                target_id = payee_seed_id
             else:
                 continue
-            nodes_by_id.setdefault(counterparty["id"], counterparty)
+            if counterparty is not None:
+                nodes_by_id.setdefault(counterparty["id"], counterparty)
             edges.append(
                 {
                     "id": f"money:{source_id}->{target_id}",
@@ -1443,6 +1461,61 @@ class PyMySQLCaseGraphQueryClient:
                 }
             )
         return {"nodes": list(nodes_by_id.values()), "edges": edges}
+
+    @classmethod
+    def _relation_seed_nodes(cls, seed_accounts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [cls._relation_seed_node(accounts) for accounts in cls._relation_seed_account_groups(seed_accounts)]
+
+    @classmethod
+    def _relation_seed_account_groups(cls, seed_accounts: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for account in seed_accounts:
+            key = cls._relation_seed_group_key(account)
+            groups.setdefault(key, []).append(account)
+        return list(groups.values())
+
+    @staticmethod
+    def _relation_one_hop_directions(direction: str) -> list[str]:
+        if direction == "in":
+            return ["in"]
+        if direction == "out":
+            return ["out"]
+        return ["in", "out"]
+
+    @classmethod
+    def _dedupe_relation_rows(cls, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        deduped: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+        for row in rows:
+            key = cls._relation_row_pair_key(row)
+            if key not in deduped:
+                deduped[key] = dict(row)
+        return list(deduped.values())
+
+    @staticmethod
+    def _relation_row_pair_key(row: dict[str, Any]) -> tuple[str, str, str, str]:
+        return (
+            str(row.get("payer_account_id") or "").strip(),
+            str(row.get("payer_pay_account") or "").strip(),
+            str(row.get("payee_account_id") or "").strip(),
+            str(row.get("payee_pay_account") or "").strip(),
+        )
+
+    @staticmethod
+    def _relation_seed_group_key(account: dict[str, Any]) -> str:
+        suspect_id = str(account.get("suspectId") or "").strip()
+        if suspect_id:
+            return f"suspect:{suspect_id}"
+        suspect_name = str(account.get("suspectName") or "").strip()
+        if suspect_name:
+            return f"name:{suspect_name}"
+        account_name = str(account.get("accountName") or "").strip()
+        if account_name:
+            return f"account-name:{account_name}"
+        account_id = str(account.get("accountId") or "").strip()
+        if account_id:
+            return f"account:{account_id}"
+        trade_card = str(account.get("tradeCard") or account.get("payAccount") or "").strip()
+        return f"card:{trade_card or 'seed'}"
 
     @classmethod
     def _relation_seed_node(cls, seed_accounts: list[dict[str, Any]]) -> dict[str, Any]:
@@ -1476,6 +1549,47 @@ class PyMySQLCaseGraphQueryClient:
             "accounts": accounts,
             "depth": 0,
         }
+
+    @staticmethod
+    def _relation_seed_lookup(seed_nodes: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+        account_ids: dict[str, str] = {}
+        pay_accounts: dict[str, str] = {}
+        for node in seed_nodes:
+            node_id = str(node.get("id") or "").strip()
+            if not node_id:
+                continue
+            for account_id in node.get("accountIds") or []:
+                normalized_account_id = str(account_id or "").strip()
+                if normalized_account_id:
+                    account_ids[normalized_account_id] = node_id
+            for account in node.get("accounts") or []:
+                if not isinstance(account, dict):
+                    continue
+                normalized_account_id = str(account.get("accountId") or "").strip()
+                trade_card = str(account.get("tradeCard") or account.get("payAccount") or "").strip()
+                if normalized_account_id:
+                    account_ids[normalized_account_id] = node_id
+                if trade_card:
+                    pay_accounts[trade_card] = node_id
+        return {"accountIds": account_ids, "payAccounts": pay_accounts}
+
+    @staticmethod
+    def _relation_party_seed_node_id(
+        row: dict[str, Any],
+        prefix: str,
+        seed_lookup: dict[str, dict[str, str]],
+    ) -> str | None:
+        account_id = str(row.get(f"{prefix}_account_id") or "").strip()
+        pay_account = str(row.get(f"{prefix}_pay_account") or "").strip()
+        return (
+            seed_lookup["accountIds"].get(account_id)
+            if account_id
+            else None
+        ) or (
+            seed_lookup["payAccounts"].get(pay_account)
+            if pay_account
+            else None
+        )
 
     @staticmethod
     def _relation_party_is_seed(

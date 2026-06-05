@@ -12,6 +12,7 @@ import type {
   AddCaseGraphManualNodePayload,
   AddCaseGraphManualTradePayload,
   AddCaseGraphRealityRelationPayload,
+  ApplyCaseGraphInvestigationGroupPayload,
   ApplyCaseGraphSummarySelectionPayload,
   CompleteCaseGraphRelationPayload,
   CreateCaseGraphPayload,
@@ -214,14 +215,14 @@ export function applyCaseGraphSummarySelection(
   payload: ApplyCaseGraphSummarySelectionPayload,
   token: string,
 ): Promise<CaseGraphRelationResponse> {
-  return postJson('/api/case-graph/relation/summary-selection', payload, token, '线索扩展失败');
+  return postJson('/api/case-graph/relation/summary-selection', payload, token, '综合筛选操作失败');
 }
 
 export function loadCaseGraphSummaryCandidates(
   payload: QueryCaseGraphSummaryCandidatesPayload,
   token: string,
 ): Promise<{ items: SummaryAnalysisItem[] }> {
-  return postJson('/api/case-graph/relation/summary-candidates', payload, token, '线索候选读取失败');
+  return postJson('/api/case-graph/relation/summary-candidates', payload, token, '综合筛选读取失败');
 }
 
 export function excludeCaseGraphNode(
@@ -236,6 +237,13 @@ export function restoreCaseGraphNode(
   token: string,
 ): Promise<CaseGraphRelationResponse> {
   return postJson('/api/case-graph/relation/restore-node', payload, token, '恢复节点失败');
+}
+
+export function applyCaseGraphInvestigationGroup(
+  payload: ApplyCaseGraphInvestigationGroupPayload,
+  token: string,
+): Promise<CaseGraphRelationResponse> {
+  return postJson('/api/case-graph/relation/investigation-group', payload, token, '研判组操作失败');
 }
 
 export function addCaseGraphManualTrade(

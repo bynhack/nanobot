@@ -59,6 +59,7 @@ export function buildFlowGraphProjection(
     nodes: groupedGraph.nodes.map((node) => ({ ...node })),
     edges: flowEdges,
     tradeFacts: { ...(groupedGraph.tradeFacts ?? {}) },
+    investigationGroups: [...(groupedGraph.investigationGroups ?? [])],
     realityRelations: [...(groupedGraph.realityRelations ?? [])],
   };
 }
@@ -165,6 +166,7 @@ function buildGroupedGraph(
     nodes: [...nodesByKey.values()],
     edges: [...edgeMap.values()],
     tradeFacts: { ...(graphData.tradeFacts ?? {}) },
+    investigationGroups: [...(graphData.investigationGroups ?? [])],
     realityRelations: (graphData.realityRelations ?? [])
       .map((relation) => {
         const sourceNode = graphData.nodes.find((node) => node.id === relation.source || node.id === relation.sourceNodeId);

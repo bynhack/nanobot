@@ -32,6 +32,8 @@ export interface SummaryAnalysisItem {
   status?: 'candidate' | 'on_graph' | 'excluded';
 }
 
+export type SummaryAnalysisItemAction = 'add' | 'exclude' | 'restore';
+
 interface SummaryAnalysisDrawerProps {
   open: boolean;
   scope?: 'node' | 'global';
@@ -43,6 +45,7 @@ interface SummaryAnalysisDrawerProps {
   onToggleNode: (nodeId: string) => void;
   onToggleNodes: (nodeIds: string[], selected: boolean) => void;
   onApply: () => void;
+  onApplyItemAction: (nodeId: string, action: SummaryAnalysisItemAction) => void;
   onClose: () => void;
 }
 
@@ -58,6 +61,7 @@ interface SummaryAnalysisFilters {
 }
 
 type SummarySortKey = 'counterparty' | 'received' | 'paid' | 'net' | 'range' | 'time' | 'trades' | 'status';
+type SummaryStatusFilter = 'all' | 'candidate' | 'on_graph' | 'excluded';
 
 export function SummaryAnalysisDrawer({
   open,
@@ -70,23 +74,28 @@ export function SummaryAnalysisDrawer({
   onToggleNode,
   onToggleNodes,
   onApply,
+  onApplyItemAction,
   onClose,
 }: SummaryAnalysisDrawerProps) {
   const [filters, setFilters] = useState<SummaryAnalysisFilters>(emptySummaryFilters);
   const [sortState, setSortState] = useState<SortState<SummarySortKey> | null>(null);
+  const [statusFilter, setStatusFilter] = useState<SummaryStatusFilter>('all');
 
   useEffect(() => {
     if (!open) {
       setFilters(emptySummaryFilters());
       setSortState(null);
+      setStatusFilter('all');
     }
   }, [open]);
 
+  const statusCounts = useMemo(() => countSummaryStatuses(items), [items]);
   const selectedSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
-  const filteredItems = useMemo(
-    () => filterSummaryAnalysisItems(items, filters),
-    [filters, items],
-  );
+  const filteredItems = useMemo(() => {
+    const byFormFilters = filterSummaryAnalysisItems(items, filters);
+    if (statusFilter === 'all') return byFormFilters;
+    return byFormFilters.filter((item) => summaryItemStatus(item) === statusFilter);
+  }, [filters, items, statusFilter]);
   const sortedItems = useMemo(
     () => sortItemsByState(filteredItems, sortState, summarySortAccessors),
     [filteredItems, sortState],
@@ -99,6 +108,7 @@ export function SummaryAnalysisDrawer({
   const allFilteredSelected = filteredNodeIds.length > 0 && selectedFilteredCount === filteredNodeIds.length;
   const someFilteredSelected = selectedFilteredCount > 0 && selectedFilteredCount < filteredNodeIds.length;
   const selectedTotalCount = items.filter((item) => selectedSet.has(item.nodeId)).length;
+  const selectedActionCounts = useMemo(() => countSummaryStatuses(items.filter((item) => selectedSet.has(item.nodeId))), [items, selectedSet]);
 
   if (!open) {
     return null;
@@ -113,20 +123,34 @@ export function SummaryAnalysisDrawer({
         className="case-graph-summary-analysis-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="线索扩展"
+        aria-label="综合筛选"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="case-graph-edge-detail-header">
           <div className="case-graph-detail-analysis-title">
-            <h2>线索扩展</h2>
-            <span>{isGlobalScope ? `全局综合查询 · 数据库候选 ${items.length} 个` : `${title} · 数据库候选 ${items.length} 个`}</span>
+            <h2>综合筛选</h2>
+            <span>{isGlobalScope ? `全图综合查询 · 主体 ${items.length} 个` : `${title} · 可加入或排除的主体 ${items.length} 个`}</span>
           </div>
-          <button type="button" className="case-graph-edge-detail-close" onClick={onClose} aria-label="关闭线索扩展">
+          <button type="button" className="case-graph-edge-detail-close" onClick={onClose} aria-label="关闭综合筛选">
             <X size={20} />
           </button>
         </div>
 
         <div className="case-graph-summary-analysis-body">
+          <div className="case-graph-summary-status-tabs" aria-label="按上图状态筛选主体">
+            {SUMMARY_STATUS_FILTERS.map((filter) => (
+              <button
+                key={filter.value}
+                type="button"
+                className={statusFilter === filter.value ? 'is-active' : ''}
+                onClick={() => setStatusFilter(filter.value)}
+              >
+                <span>{filter.label}</span>
+                <strong>{statusCountForFilter(statusCounts, filter.value)}</strong>
+              </button>
+            ))}
+          </div>
+
           <div className="case-graph-summary-analysis-toolbar">
             <input
               type="search"
@@ -207,7 +231,7 @@ export function SummaryAnalysisDrawer({
             {loading ? (
               <div className="case-graph-empty">
                 <FileSearch size={18} />
-                <span>{isGlobalScope ? '正在从案件交易流水中查找可补充上图的主体。' : '正在从案件交易流水中查找可扩展线索。'}</span>
+                <span>{isGlobalScope ? '正在从案件交易流水中筛选主体。' : '正在从案件交易流水中筛选关联主体。'}</span>
               </div>
             ) : filteredItems.length ? (
               <table className="case-graph-edge-table case-graph-summary-analysis-table">
@@ -246,19 +270,22 @@ export function SummaryAnalysisDrawer({
                     <th aria-sort={sortableHeaderAria(sortState, 'status')}>
                       <SortableColumnHeader label="状态" sortKey="status" sortState={sortState} onSortChange={setSortState} />
                     </th>
+                    <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sortedItems.map((item) => {
                     const checked = selectedSet.has(item.nodeId);
+                    const status = summaryItemStatus(item);
+                    const action = summaryActionForStatus(status);
                     return (
-                      <tr key={item.nodeId} className={checked ? 'is-selected' : ''}>
+                      <tr key={item.nodeId} className={`${checked ? 'is-selected' : ''} is-${status}`}>
                         <td>
                           <input
                             type="checkbox"
                             checked={checked}
                             onChange={() => onToggleNode(item.nodeId)}
-                            aria-label="选择主体加入图谱"
+                            aria-label="选择主体"
                           />
                         </td>
                         <td>
@@ -273,7 +300,17 @@ export function SummaryAnalysisDrawer({
                         <td>{formatAmountRange(item.minAmount, item.maxAmount)}</td>
                         <td>{formatTimeRange(item.startTime, item.endTime)}</td>
                         <td>{item.tradeIds.length} 笔</td>
-                        <td><span className="case-graph-summary-status">{formatSummaryStatus(item)}</span></td>
+                        <td><span className={`case-graph-summary-status is-${status}`}>{formatSummaryStatus(item)}</span></td>
+                        <td>
+                          <button
+                            type="button"
+                            className={`case-graph-secondary-button case-graph-summary-row-action${action === 'exclude' ? ' case-graph-summary-row-action--danger' : ''}`}
+                            disabled={applying}
+                            onClick={() => onApplyItemAction(item.nodeId, action)}
+                          >
+                            {summaryActionLabel(action)}
+                          </button>
+                        </td>
                       </tr>
                     );
                   })}
@@ -282,14 +319,14 @@ export function SummaryAnalysisDrawer({
             ) : (
               <div className="case-graph-empty">
                 <FileSearch size={18} />
-                <span>{isGlobalScope ? '当前筛选条件下没有可补充上图的主体。' : '当前筛选条件下没有可补充上图的关联主体。'}</span>
+                <span>{isGlobalScope ? '当前筛选条件下没有可处理的主体。' : '当前筛选条件下没有关联主体。'}</span>
               </div>
             )}
           </div>
         </div>
 
         <footer className="case-graph-detail-analysis-footer">
-          <span>{isGlobalScope ? `将把 ${selectedTotalCount} / ${items.length} 个候选主体加入当前图谱` : `将把 ${selectedTotalCount} / ${items.length} 个候选主体及相关资金线补充到当前图谱`}</span>
+          <span>{buildSummaryFooterText(selectedTotalCount, selectedActionCounts)}</span>
           <button type="button" className="case-graph-secondary-button" onClick={onClose}>
             取消
           </button>
@@ -300,7 +337,7 @@ export function SummaryAnalysisDrawer({
             onClick={onApply}
           >
             <Check size={14} />
-            <span>{applying ? '加入中' : '加入图谱'}</span>
+            <span>{applying ? '处理中' : '应用到图'}</span>
           </button>
         </footer>
       </section>
@@ -319,16 +356,64 @@ const summarySortAccessors: SortAccessors<SummaryAnalysisItem, SummarySortKey> =
   status: (item) => summaryStatusRank(item),
 };
 
+const SUMMARY_STATUS_FILTERS: Array<{ value: SummaryStatusFilter; label: string }> = [
+  { value: 'all', label: '全部' },
+  { value: 'on_graph', label: '已上图' },
+  { value: 'candidate', label: '未上图' },
+  { value: 'excluded', label: '已取消' },
+];
+
+function summaryItemStatus(item: SummaryAnalysisItem): Exclude<SummaryStatusFilter, 'all'> {
+  if (item.status === 'excluded' || item.isExcluded) return 'excluded';
+  if (item.status === 'on_graph' || item.isOnGraph) return 'on_graph';
+  return 'candidate';
+}
+
 function formatSummaryStatus(item: SummaryAnalysisItem): string {
-  if (item.status === 'excluded' || item.isExcluded) return '已取消上图';
-  if (item.status === 'on_graph' || item.isOnGraph) return '已上图';
-  return '可补充';
+  const status = summaryItemStatus(item);
+  if (status === 'excluded') return '已取消上图';
+  if (status === 'on_graph') return '已上图';
+  return '未上图';
 }
 
 function summaryStatusRank(item: SummaryAnalysisItem): number {
-  if (item.status === 'excluded' || item.isExcluded) return 2;
-  if (item.status === 'on_graph' || item.isOnGraph) return 1;
-  return 0;
+  const status = summaryItemStatus(item);
+  if (status === 'on_graph') return 0;
+  if (status === 'candidate') return 1;
+  return 2;
+}
+
+function countSummaryStatuses(items: SummaryAnalysisItem[]): Record<Exclude<SummaryStatusFilter, 'all'>, number> {
+  return items.reduce<Record<Exclude<SummaryStatusFilter, 'all'>, number>>((counts, item) => {
+    counts[summaryItemStatus(item)] += 1;
+    return counts;
+  }, { candidate: 0, on_graph: 0, excluded: 0 });
+}
+
+function statusCountForFilter(counts: Record<Exclude<SummaryStatusFilter, 'all'>, number>, filter: SummaryStatusFilter): number {
+  if (filter === 'all') return counts.candidate + counts.on_graph + counts.excluded;
+  return counts[filter];
+}
+
+function summaryActionForStatus(status: Exclude<SummaryStatusFilter, 'all'>): SummaryAnalysisItemAction {
+  if (status === 'on_graph') return 'exclude';
+  if (status === 'excluded') return 'restore';
+  return 'add';
+}
+
+function summaryActionLabel(action: SummaryAnalysisItemAction): string {
+  if (action === 'exclude') return '取消上图';
+  if (action === 'restore') return '恢复上图';
+  return '加入图';
+}
+
+function buildSummaryFooterText(total: number, counts: Record<Exclude<SummaryStatusFilter, 'all'>, number>): string {
+  if (!total) return '请选择需要处理的主体';
+  const parts: string[] = [];
+  if (counts.candidate) parts.push(`加入 ${counts.candidate} 个未上图主体`);
+  if (counts.on_graph) parts.push(`取消 ${counts.on_graph} 个已上图主体`);
+  if (counts.excluded) parts.push(`恢复 ${counts.excluded} 个已取消主体`);
+  return parts.join('，');
 }
 
 export function buildSummaryAnalysisItems(

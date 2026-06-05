@@ -26,6 +26,17 @@ from nanobot_channel_webui.case_graph.mysql_client import CaseGraphMySQLConfig, 
 from nanobot_channel_webui.case_graph.relation_service import RelationGraphService
 
 
+class DummyRelationQueryClient:
+    def query_relation_one_hop(self, **_: object) -> dict[str, object]:
+        raise AssertionError("query_relation_one_hop should not be called")
+
+    def query_relation_between_accounts(self, **_: object) -> dict[str, object]:
+        raise AssertionError("query_relation_between_accounts should not be called")
+
+    def query_relation_global_candidates(self, **_: object) -> dict[str, object]:
+        raise AssertionError("query_relation_global_candidates should not be called")
+
+
 def test_normalize_relation_query_payload_requires_seed_accounts() -> None:
     payload = normalize_relation_query_payload({
         "caseId": "37",
@@ -78,7 +89,7 @@ def test_relation_storage_writes_graph_and_step(tmp_path: Path) -> None:
         graph_id="graph-1",
         step_type="seed_one_hop",
         request={"caseId": "37"},
-        graph={"nodes": [], "edges": []},
+        graph={"nodes": [], "edges": [], "drillNums": 6, "drillType": 2},
         delta={"addedNodes": [], "addedEdges": [], "updatedNodes": [], "updatedEdges": []},
         summary={"addedNodeCount": 0, "addedEdgeCount": 0},
     )
@@ -89,6 +100,32 @@ def test_relation_storage_writes_graph_and_step(tmp_path: Path) -> None:
     assert step_file.exists()
     assert result["step"]["stepId"] == "0001"
     assert result["step"]["file"] == str(step_file)
+    assert result["graph"]["drillNums"] == 6
+    assert result["graph"]["drillType"] == 2
+
+
+def test_relation_storage_updates_graph_settings_without_new_step(tmp_path: Path) -> None:
+    storage = RelationGraphStorage(tmp_path)
+    storage.save_step(
+        case_id="37",
+        graph_id="graph-1",
+        step_type="seed_one_hop",
+        request={"caseId": "37"},
+        graph={"nodes": [], "edges": [], "drillNums": 10, "drillType": 1},
+        delta={"addedNodes": [], "addedEdges": [], "updatedNodes": [], "updatedEdges": []},
+        summary={},
+    )
+
+    current = storage._repository.update_graph_settings(
+        case_id="37",
+        graph_id="graph-1",
+        settings={"drillNums": 3, "drillType": 2},
+    )
+    steps = storage._repository.list_steps("37", "graph-1")
+
+    assert current["graph"]["drillNums"] == 3
+    assert current["graph"]["drillType"] == 2
+    assert [step["stepId"] for step in steps] == ["0001"]
 
 
 def test_relation_storage_current_projection_matches_latest_step_graph(tmp_path: Path) -> None:
@@ -118,6 +155,89 @@ def test_relation_storage_current_projection_matches_latest_step_graph(tmp_path:
     assert current["revision"] == 2
     assert current["graph"] == second["graphState"]["graph"]
     assert current["graph"]["layout"]["nodePositions"]["a"] == {"x": 120.0, "y": 240.0}
+
+
+def test_relation_service_removes_multiple_investigation_group_members(tmp_path: Path) -> None:
+    storage = RelationGraphStorage(tmp_path)
+    storage.save_step(
+        case_id="37",
+        graph_id="graph-1",
+        step_type="seed_one_hop",
+        request={"caseId": "37"},
+        graph={
+            "nodes": [{"id": "a"}, {"id": "b"}, {"id": "c"}, {"id": "d"}],
+            "edges": [],
+            "investigationGroups": [
+                {
+                    "id": "group-1",
+                    "name": "研判组 1",
+                    "memberNodeIds": ["a", "b", "c", "d"],
+                    "collapsed": True,
+                }
+            ],
+        },
+        delta={"addedNodes": [], "addedEdges": [], "updatedNodes": [], "updatedEdges": []},
+        summary={},
+    )
+    service = RelationGraphService(query_client=DummyRelationQueryClient(), storage=storage, workspace_root=tmp_path)
+
+    result = service.apply_investigation_group({
+        "caseId": "37",
+        "graphId": "graph-1",
+        "operation": "remove_member",
+        "groupId": "group-1",
+        "memberNodeIds": ["a", "b"],
+    })
+
+    group = result["graph"]["investigationGroups"][0]
+    assert group["memberNodeIds"] == ["c", "d"]
+    assert result["delta"]["updatedGroups"][0]["memberNodeIds"] == ["c", "d"]
+    assert result["step"]["type"] == "investigation_group_remove_member"
+
+
+def test_relation_service_adds_members_to_investigation_group_and_detaches_other_group(tmp_path: Path) -> None:
+    storage = RelationGraphStorage(tmp_path)
+    storage.save_step(
+        case_id="37",
+        graph_id="graph-1",
+        step_type="seed_one_hop",
+        request={"caseId": "37"},
+        graph={
+            "nodes": [{"id": "a"}, {"id": "b"}, {"id": "c"}, {"id": "d"}, {"id": "e"}],
+            "edges": [],
+            "investigationGroups": [
+                {
+                    "id": "group-1",
+                    "name": "研判组 1",
+                    "memberNodeIds": ["a", "b"],
+                    "collapsed": True,
+                },
+                {
+                    "id": "group-2",
+                    "name": "研判组 2",
+                    "memberNodeIds": ["c", "d", "e"],
+                    "collapsed": True,
+                },
+            ],
+        },
+        delta={"addedNodes": [], "addedEdges": [], "updatedNodes": [], "updatedEdges": []},
+        summary={},
+    )
+    service = RelationGraphService(query_client=DummyRelationQueryClient(), storage=storage, workspace_root=tmp_path)
+
+    result = service.apply_investigation_group({
+        "caseId": "37",
+        "graphId": "graph-1",
+        "operation": "add_members",
+        "groupId": "group-1",
+        "memberNodeIds": ["c"],
+    })
+
+    groups = {group["id"]: group for group in result["graph"]["investigationGroups"]}
+    assert groups["group-1"]["memberNodeIds"] == ["a", "b", "c"]
+    assert groups["group-2"]["memberNodeIds"] == ["d", "e"]
+    assert result["delta"]["updatedGroups"][0]["id"] == "group-1"
+    assert result["step"]["type"] == "investigation_group_add_members"
 
 
 def test_graph_repository_patches_latest_step_layout_without_new_step(tmp_path: Path) -> None:
@@ -303,6 +423,122 @@ def test_relation_seed_one_hop_queries_only_seed_counterparties() -> None:
     assert result["tradeFacts"]["10"]["serialNumber"] == "S-10"
 
 
+def test_relation_seed_one_hop_keeps_multiple_seed_subjects_separate() -> None:
+    class StubClient(PyMySQLCaseGraphQueryClient):
+        def __init__(self) -> None:
+            super().__init__(CaseGraphMySQLConfig(host="", port=3306, user="", password="", database=""))
+            self.relation_query_params: list[tuple[object, ...]] = []
+
+        def _query(self, sql: str, params: tuple[object, ...]) -> list[dict[str, object]]:
+            if "GROUP_CONCAT" not in sql:
+                assert "WHERE id IN" in sql
+                assert set(params) == {"10", "11", "12"}
+                return [
+                    {"id": 10, "serial_number": "S-10", "trade_amount": 20000, "trade_time": "2026-01-14 03:46:33"},
+                    {"id": 11, "serial_number": "S-11", "trade_amount": 24000, "trade_time": "2026-01-18 23:10:34"},
+                    {"id": 12, "serial_number": "S-12", "trade_amount": 40000, "trade_time": "2026-01-21 01:26:16"},
+                ]
+            self.relation_query_params.append(params)
+            assert "LIMIT %s" in sql
+            if params == (1, "W-1", 200) and "payee_account_id IN" in sql:
+                assert "payee_account_id IN" in sql
+                assert "payee_pay_account IN" in sql
+                assert "payer_account_id IN" not in sql
+                return [
+                    {
+                        "payer_account_id": 9,
+                        "payer_pay_account": "C-9",
+                        "payer_account_name": "蔡召东",
+                        "payee_account_id": 1,
+                        "payee_pay_account": "W-1",
+                        "payee_account_name": "伍华中",
+                        "trade_count": 1,
+                        "trade_amount": 24000,
+                        "start_time": "2026-01-18 23:10:34",
+                        "end_time": "2026-01-18 23:10:34",
+                        "trade_ids": "11",
+                    },
+                    {
+                        "payer_account_id": 35,
+                        "payer_pay_account": "F-35",
+                        "payer_account_name": "冯燕青",
+                        "payee_account_id": 1,
+                        "payee_pay_account": "W-1",
+                        "payee_account_name": "伍华中",
+                        "trade_count": 2,
+                        "trade_amount": 40000,
+                        "start_time": "2026-01-21 01:26:16",
+                        "end_time": "2026-01-21 01:26:16",
+                        "trade_ids": "12",
+                    },
+                ]
+            if params == (1, "W-1", 200):
+                assert "payer_account_id IN" in sql
+                assert "payer_pay_account IN" in sql
+                return []
+            if params == (35, "F-35", 200):
+                if "payer_account_id IN" in sql:
+                    return [
+                        {
+                            "payer_account_id": 35,
+                            "payer_pay_account": "F-35",
+                            "payer_account_name": "冯燕青",
+                            "payee_account_id": 107,
+                            "payee_pay_account": "G-107",
+                            "payee_account_name": "冯光彩",
+                            "trade_count": 1,
+                            "trade_amount": 20000,
+                            "start_time": "2026-01-14 03:46:33",
+                            "end_time": "2026-01-14 03:46:33",
+                            "trade_ids": "10",
+                        },
+                        {
+                            "payer_account_id": 35,
+                            "payer_pay_account": "F-35",
+                            "payer_account_name": "冯燕青",
+                            "payee_account_id": 1,
+                            "payee_pay_account": "W-1",
+                            "payee_account_name": "伍华中",
+                            "trade_count": 2,
+                            "trade_amount": 40000,
+                            "start_time": "2026-01-21 01:26:16",
+                            "end_time": "2026-01-21 01:26:16",
+                            "trade_ids": "12",
+                        },
+                    ]
+                return []
+            return []
+
+    client = StubClient()
+    result = client.query_relation_one_hop(
+        case_id=37,
+        seed_accounts=[
+            {"accountId": "1", "tradeCard": "W-1", "accountName": "伍华中", "suspectId": "1", "suspectName": "伍华中"},
+            {"accountId": "35", "tradeCard": "F-35", "accountName": "冯燕青", "suspectId": "2", "suspectName": "冯燕青"},
+        ],
+        direction="both",
+        filters={},
+    )
+
+    nodes = {node["id"]: node for node in result["nodes"]}
+    edges = {edge["id"]: edge for edge in result["edges"]}
+
+    assert nodes["subject:suspect:1"]["label"] == "伍华中"
+    assert nodes["subject:suspect:1"]["accountIds"] == ["1"]
+    assert nodes["subject:suspect:2"]["label"] == "冯燕青"
+    assert nodes["subject:suspect:2"]["accountIds"] == ["35"]
+    assert edges["money:subject:suspect:2->account:107"]["from"] == "subject:suspect:2"
+    assert edges["money:account:9->subject:suspect:1"]["to"] == "subject:suspect:1"
+    assert edges["money:subject:suspect:2->subject:suspect:1"]["tradeIds"] == ["12"]
+    assert result["tradeFacts"]["12"]["serialNumber"] == "S-12"
+    assert client.relation_query_params == [
+        (1, "W-1", 200),
+        (1, "W-1", 200),
+        (35, "F-35", 200),
+        (35, "F-35", 200),
+    ]
+
+
 def test_relation_seed_one_hop_applies_graph_drill_config() -> None:
     class StubClient(PyMySQLCaseGraphQueryClient):
         def __init__(self) -> None:
@@ -328,6 +564,33 @@ def test_relation_seed_one_hop_applies_graph_drill_config() -> None:
     assert client.last_params[-1] == 7
 
 
+def test_relation_seed_one_hop_limits_each_direction_for_single_seed() -> None:
+    class StubClient(PyMySQLCaseGraphQueryClient):
+        def __init__(self) -> None:
+            super().__init__(CaseGraphMySQLConfig(host="", port=3306, user="", password="", database=""))
+            self.calls: list[tuple[str, tuple[object, ...]]] = []
+
+        def _query(self, sql: str, params: tuple[object, ...]) -> list[dict[str, object]]:
+            self.calls.append((sql, params))
+            return []
+
+    client = StubClient()
+    client.query_relation_one_hop(
+        case_id=37,
+        seed_accounts=[{"accountId": "1", "tradeCard": "W-1", "accountName": "伍华中"}],
+        direction="both",
+        filters={"drillNums": 10},
+    )
+
+    assert len(client.calls) == 2
+    assert "payee_account_id IN" in client.calls[0][0]
+    assert "payer_account_id IN" not in client.calls[0][0]
+    assert client.calls[0][1] == (1, "W-1", 10)
+    assert "payer_account_id IN" in client.calls[1][0]
+    assert "payee_account_id IN" not in client.calls[1][0]
+    assert client.calls[1][1] == (1, "W-1", 10)
+
+
 def test_relation_seed_one_hop_can_run_without_limit_for_summary_candidates() -> None:
     class StubClient(PyMySQLCaseGraphQueryClient):
         def __init__(self) -> None:
@@ -349,7 +612,7 @@ def test_relation_seed_one_hop_can_run_without_limit_for_summary_candidates() ->
     )
 
     assert "LIMIT %s" not in client.last_sql
-    assert client.last_params == (1, 1, "W-1", "W-1")
+    assert client.last_params == (1, "W-1")
 
 
 def test_relation_global_candidates_uses_enriched_trade_info() -> None:
@@ -443,6 +706,8 @@ def test_relation_service_persists_seed_one_hop_step(tmp_path: Path) -> None:
     assert result["schemaVersion"] == "case-graph.relation.v1"
     assert result["step"]["type"] == "seed_one_hop"
     assert result["graph"]["nodes"][0]["id"] == "subject:suspect:1"
+    assert result["graph"]["drillNums"] == 5
+    assert result["graph"]["drillType"] == 2
     assert (tmp_path / ".nanobot_channel_webui" / "case_graphs" / "37" / "graph-1" / "graph.json").exists()
 
 

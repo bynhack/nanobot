@@ -93,6 +93,7 @@ class RelationGraphService:
         if existing_pair_graph.get("edges"):
             graph = self._merge_graphs(graph, existing_pair_graph, keep_base_edges=True)
         graph = self._merge_graphs(current_graph, graph, keep_base_edges=True)
+        graph = self._apply_drill_config(graph, request, fallback_graph=current_graph)
         graph = self._apply_excluded_nodes(graph, excluded_nodes)
         self._sync_snapshot_graph(
             request["graphId"],
@@ -320,6 +321,176 @@ class RelationGraphService:
             graph=graph,
             delta={"addedNodes": [], "addedEdges": [], "updatedNodes": [{"nodeId": node_id}], "updatedEdges": []},
             summary={"excludedNodeCount": len(excluded_nodes)},
+        )
+
+    def apply_investigation_group(self, payload: dict[str, Any]) -> dict[str, Any]:
+        case_id = str(payload.get("caseId") or "").strip()
+        graph_id = str(payload.get("graphId") or "").strip()
+        operation = str(payload.get("operation") or "").strip()
+        if not case_id:
+            raise ValueError("caseId")
+        if not graph_id:
+            raise ValueError("graphId")
+        if operation not in {"create", "update", "collapse", "expand", "ungroup", "remove_member", "add_members"}:
+            raise ValueError("operation")
+
+        graph = self._storage.load_graph(case_id, graph_id)
+        options = dict(payload.get("options") or {}) if isinstance(payload.get("options"), dict) else {}
+        graph = self._apply_node_positions(graph, options)
+        node_ids = {
+            str(node.get("id") or "").strip()
+            for node in graph.get("nodes") or []
+            if isinstance(node, dict) and str(node.get("id") or "").strip()
+        }
+        groups = self._normalize_investigation_groups(graph.get("investigationGroups"), node_ids=node_ids)
+        updated_groups: list[dict[str, Any]] = []
+        removed_group_ids: list[str] = []
+        now = self._now_iso()
+
+        if operation == "create":
+            requested_node_ids = [
+                node_id for node_id in self._text_list(payload.get("nodeIds"))
+                if node_id in node_ids
+            ]
+            excluded_ids = {
+                str(item.get("nodeId") or "").strip()
+                for item in self._normalize_excluded_nodes_list(graph.get("excludedNodes") or [])
+                if str(item.get("nodeId") or "").strip()
+            }
+            member_node_ids = [node_id for node_id in requested_node_ids if node_id not in excluded_ids]
+            member_node_ids = self._unique_text_list(member_node_ids)
+            if len(member_node_ids) < 2:
+                raise ValueError("nodeIds")
+            groups, removed_group_ids = self._remove_members_from_investigation_groups(groups, member_node_ids)
+            group_name = str(payload.get("name") or "").strip() or f"研判组 {len(groups) + 1}"
+            group = {
+                "id": str(payload.get("groupId") or "").strip() or f"investigation_group:{uuid4().hex}",
+                "name": group_name,
+                "memberNodeIds": member_node_ids,
+                "groupType": str(payload.get("groupType") or "").strip(),
+                "note": str(payload.get("note") or "").strip(),
+                "collapsed": bool(payload.get("collapsed", False)),
+                "createdAt": now,
+                "updatedAt": now,
+            }
+            groups.append(group)
+            updated_groups = [group]
+        else:
+            group_id = str(payload.get("groupId") or "").strip()
+            if not group_id:
+                raise ValueError("groupId")
+            member_node_ids_to_add: list[str] = []
+            if operation == "add_members":
+                excluded_ids = {
+                    str(item.get("nodeId") or "").strip()
+                    for item in self._normalize_excluded_nodes_list(graph.get("excludedNodes") or [])
+                    if str(item.get("nodeId") or "").strip()
+                }
+                member_node_ids_to_add = [
+                    node_id for node_id in self._text_list(payload.get("memberNodeIds") or payload.get("nodeIds"))
+                    if node_id in node_ids and node_id not in excluded_ids
+                ]
+                member_node_ids_to_add = self._unique_text_list(member_node_ids_to_add)
+                if not member_node_ids_to_add:
+                    raise ValueError("memberNodeIds")
+                groups, pre_removed_group_ids = self._remove_members_from_investigation_groups(groups, member_node_ids_to_add)
+                removed_group_ids.extend(pre_removed_group_ids)
+
+            matched = False
+            next_groups: list[dict[str, Any]] = []
+            for group in groups:
+                if str(group.get("id") or "").strip() != group_id:
+                    next_groups.append(group)
+                    continue
+                matched = True
+                if operation == "ungroup":
+                    removed_group_ids.append(group_id)
+                    continue
+                next_group = dict(group)
+                if operation == "update":
+                    for key in ("name", "groupType", "note"):
+                        if key in payload:
+                            next_group[key] = str(payload.get(key) or "").strip()
+                    if "collapsed" in payload:
+                        next_group["collapsed"] = bool(payload.get("collapsed"))
+                elif operation == "collapse":
+                    next_group["collapsed"] = True
+                elif operation == "expand":
+                    next_group["collapsed"] = False
+                elif operation == "remove_member":
+                    member_node_ids = self._unique_text_list([
+                        *self._text_list(payload.get("memberNodeIds")),
+                        str(payload.get("memberNodeId") or "").strip(),
+                    ])
+                    if not member_node_ids:
+                        raise ValueError("memberNodeId")
+                    member_node_id_set = set(member_node_ids)
+                    next_group["memberNodeIds"] = [
+                        node_id for node_id in self._text_list(next_group.get("memberNodeIds"))
+                        if node_id not in member_node_id_set
+                    ]
+                    if len(next_group["memberNodeIds"]) < 2:
+                        removed_group_ids.append(group_id)
+                        continue
+                elif operation == "add_members":
+                    next_group["memberNodeIds"] = self._unique_text_list([
+                        *self._text_list(next_group.get("memberNodeIds")),
+                        *member_node_ids_to_add,
+                    ])
+                    if len(next_group["memberNodeIds"]) < 2:
+                        raise ValueError("memberNodeIds")
+                next_group["updatedAt"] = now
+                updated_groups.append(next_group)
+                next_groups.append(next_group)
+            if not matched:
+                raise ValueError("groupId")
+            groups = next_groups
+
+        next_graph = {
+            **graph,
+            "investigationGroups": groups,
+        }
+        self._sync_snapshot_graph(graph_id, next_graph, trade_cards=self._accounts_from_graph(next_graph))
+        delta = self._build_delta(graph, next_graph)
+        delta["updatedGroups"] = updated_groups
+        delta["removedGroupIds"] = removed_group_ids
+        label_map = {
+            "create": "归并成组",
+            "update": "编辑研判组",
+            "collapse": "收起研判组",
+            "expand": "展开研判组",
+            "ungroup": "拆分研判组",
+            "remove_member": "移出研判组",
+            "add_members": "加入研判组",
+        }
+        request = {
+            "caseId": case_id,
+            "graphId": graph_id,
+            "operation": operation,
+            "groupId": payload.get("groupId"),
+            "nodeIds": self._text_list(payload.get("nodeIds")),
+            "memberNodeId": str(payload.get("memberNodeId") or "").strip() or None,
+            "memberNodeIds": self._text_list(payload.get("memberNodeIds")),
+            "name": str(payload.get("name") or "").strip() or None,
+            "groupType": str(payload.get("groupType") or "").strip() or None,
+            "note": str(payload.get("note") or "").strip() or None,
+            "collapsed": payload.get("collapsed") if "collapsed" in payload else None,
+            "options": options,
+        }
+        return self._storage.save_step(
+            case_id=case_id,
+            graph_id=graph_id,
+            step_type=f"investigation_group_{operation}",
+            request=request,
+            graph=next_graph,
+            delta=delta,
+            summary={
+                "label": label_map[operation],
+                "groupCount": len(groups),
+                "updatedGroupCount": len(updated_groups),
+                "removedGroupCount": len(removed_group_ids),
+                "memberNodeCount": len(updated_groups[0].get("memberNodeIds") or []) if updated_groups else 0,
+            },
         )
 
     def add_manual_node(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -929,9 +1100,37 @@ class RelationGraphService:
         filters["limit"] = request.get("drillNums")
         return filters
 
+    @classmethod
+    def _apply_drill_config(
+        cls,
+        graph: dict[str, Any],
+        request: dict[str, Any] | None = None,
+        *,
+        fallback_graph: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        next_graph = dict(graph)
+        fallback = fallback_graph or {}
+        drill_nums = (request or {}).get("drillNums")
+        if drill_nums in (None, ""):
+            drill_nums = fallback.get("drillNums")
+        next_graph["drillNums"] = cls._positive_int(drill_nums, default=cls._positive_int(next_graph.get("drillNums"), default=10))
+        drill_type = (request or {}).get("drillType")
+        if drill_type in (None, ""):
+            drill_type = fallback.get("drillType")
+        next_graph["drillType"] = drill_type if drill_type not in (None, "") else next_graph.get("drillType", 1)
+        return next_graph
+
     @staticmethod
     def _summary_relation_filters() -> dict[str, Any]:
         return {"_relationUnbounded": True}
+
+    @staticmethod
+    def _positive_int(value: Any, *, default: int) -> int:
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return default
+        return number if number > 0 else default
 
     @classmethod
     def _summary_items_from_global_candidates(
@@ -1776,6 +1975,70 @@ class RelationGraphService:
             if node_id:
                 nodes_by_id[node_id] = excluded_node
         return list(nodes_by_id.values())
+
+    @classmethod
+    def _normalize_investigation_groups(
+        cls,
+        value: Any,
+        *,
+        node_ids: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        groups: list[dict[str, Any]] = []
+        used_members: set[str] = set()
+        valid_node_ids = node_ids or set()
+        for item in value or []:
+            if not isinstance(item, dict):
+                continue
+            group_id = str(item.get("id") or "").strip()
+            if not group_id:
+                continue
+            member_node_ids: list[str] = []
+            for node_id in cls._text_list(item.get("memberNodeIds") or item.get("nodeIds")):
+                if valid_node_ids and node_id not in valid_node_ids:
+                    continue
+                if node_id in used_members:
+                    continue
+                member_node_ids.append(node_id)
+                used_members.add(node_id)
+            member_node_ids = cls._unique_text_list(member_node_ids)
+            if len(member_node_ids) < 2:
+                continue
+            groups.append(
+                {
+                    "id": group_id,
+                    "name": str(item.get("name") or "研判组").strip() or "研判组",
+                    "memberNodeIds": member_node_ids,
+                    "groupType": str(item.get("groupType") or "").strip(),
+                    "note": str(item.get("note") or "").strip(),
+                    "collapsed": bool(item.get("collapsed")),
+                    "createdAt": str(item.get("createdAt") or "").strip(),
+                    "updatedAt": str(item.get("updatedAt") or "").strip(),
+                }
+            )
+        return groups
+
+    @classmethod
+    def _remove_members_from_investigation_groups(
+        cls,
+        groups: list[dict[str, Any]],
+        member_node_ids: list[str],
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        member_set = set(member_node_ids)
+        next_groups: list[dict[str, Any]] = []
+        removed_group_ids: list[str] = []
+        for group in groups:
+            group_id = str(group.get("id") or "").strip()
+            next_group = dict(group)
+            next_group["memberNodeIds"] = [
+                node_id for node_id in cls._text_list(group.get("memberNodeIds"))
+                if node_id not in member_set
+            ]
+            if len(next_group["memberNodeIds"]) < 2:
+                if group_id:
+                    removed_group_ids.append(group_id)
+                continue
+            next_groups.append(next_group)
+        return next_groups, removed_group_ids
 
     @classmethod
     def _normalize_excluded_nodes_list(cls, value: Any) -> list[dict[str, Any]]:

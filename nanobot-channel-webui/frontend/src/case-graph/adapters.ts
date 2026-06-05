@@ -46,6 +46,11 @@ export function normalizeCaseGraphOriginData(
     money,
     phone,
     groups,
+    investigationGroups: Array.isArray((value as CaseGraphQueryResult).graph?.investigationGroups)
+      ? [...((value as CaseGraphQueryResult).graph?.investigationGroups ?? [])]
+      : Array.isArray((value as { investigationGroups?: CaseGraphData['investigationGroups'] }).investigationGroups)
+        ? [...(((value as { investigationGroups?: CaseGraphData['investigationGroups'] }).investigationGroups) ?? [])]
+        : [],
     excludedTrades: Array.isArray((value as CaseGraphQueryResult).excludedTrades)
       ? [...((value as CaseGraphQueryResult).excludedTrades ?? [])]
       : [],
@@ -123,6 +128,7 @@ export function originDataToCanvasData(originData: CaseGraphOriginData | null): 
     tradeFacts: { ...(originData.tradeFacts ?? {}) },
     excludedNodes: [...(originData.excludedNodes ?? [])],
     realityRelations: [],
+    investigationGroups: [...(originData.investigationGroups ?? [])],
   };
 }
 
@@ -138,6 +144,7 @@ export function graphStateToCanvasData(state: CaseGraphStateSnapshot | null | un
     tradeFacts: { ...(state.graph.tradeFacts ?? {}) },
     excludedNodes: [...(state.graph.excludedNodes ?? [])],
     realityRelations: [...(state.graph.realityRelations ?? [])],
+    investigationGroups: [...(state.graph.investigationGroups ?? [])],
   };
 }
 
@@ -150,6 +157,7 @@ export function graphStateToOriginData(state: CaseGraphStateSnapshot | null | un
     money: state.graph.edges.map((edge) => normalizeMoneyEdge(edge)),
     phone: [],
     groups: normalizeCaseGraphGroupMap(state.graph.groupMap),
+    investigationGroups: [...(state.graph.investigationGroups ?? [])],
     excludedTrades: [...(state.graph.excludedTrades ?? [])],
     tradeFacts: { ...(state.graph.tradeFacts ?? {}) },
     excludedAccountId: state.graph.excludedAccountId?.[0] ?? null,

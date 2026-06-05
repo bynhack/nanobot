@@ -42,7 +42,7 @@ interface ManualClueDrawerProps {
   onClose: () => void;
 }
 
-const TRADE_METHODS = ['现金', '线下转交', '第三方代付', '抵扣结算', '其他'];
+const CASH_TRADE_METHOD = '现金交易';
 const RELATION_TYPES = ['母女', '父子', '母子', '父女', '夫妻', '亲属', '朋友', '同事', '同伙', '上下级', '其他'];
 
 export function ManualClueDrawer({
@@ -67,7 +67,7 @@ export function ManualClueDrawer({
   const [payeeNodeId, setPayeeNodeId] = useState('');
   const [amount, setAmount] = useState('');
   const [tradeTime, setTradeTime] = useState('');
-  const [method, setMethod] = useState(TRADE_METHODS[0]);
+  const [method, setMethod] = useState(CASH_TRADE_METHOD);
   const [summary, setSummary] = useState('');
   const [sourceNote, setSourceNote] = useState('');
   const [sourceNodeId, setSourceNodeId] = useState('');
@@ -88,7 +88,7 @@ export function ManualClueDrawer({
     setPayeeNodeId('');
     setAmount('');
     setTradeTime('');
-    setMethod(TRADE_METHODS[0]);
+    setMethod(CASH_TRADE_METHOD);
     setSummary('');
     setSourceNote('');
     setSourceNodeId(focusId);
@@ -222,9 +222,7 @@ export function ManualClueDrawer({
               </label>
               <label>
                 <span>往来方式</span>
-                <select value={method} onChange={(event) => setMethod(event.target.value)}>
-                  {TRADE_METHODS.map((item) => <option key={item} value={item}>{item}</option>)}
-                </select>
+                <input value={CASH_TRADE_METHOD} readOnly aria-readonly="true" />
               </label>
               <label>
                 <span>线索来源</span>

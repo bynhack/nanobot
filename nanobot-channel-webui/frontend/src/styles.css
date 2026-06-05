@@ -2122,6 +2122,83 @@
     background: var(--color-bg-raised);
     box-shadow: var(--shadow-3);
   }
+  .case-graph-investigation-group-modal {
+    width: min(760px, calc(100vw - 64px));
+    max-height: calc(100vh - 64px);
+    overflow: hidden;
+  }
+  .case-graph-investigation-group-body {
+    display: grid;
+    gap: 18px;
+    min-height: 0;
+  }
+  .case-graph-investigation-group-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1.3fr) minmax(180px, 0.7fr);
+    gap: 14px;
+  }
+  .case-graph-investigation-group-fields label {
+    min-width: 0;
+    display: grid;
+    gap: 8px;
+    color: var(--color-text-secondary);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .case-graph-investigation-group-fields input,
+  .case-graph-investigation-group-fields select,
+  .case-graph-investigation-group-fields textarea {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 8px;
+    background: var(--color-bg-raised);
+    color: var(--color-text-primary);
+    font-size: 14px;
+  }
+  .case-graph-investigation-group-fields input,
+  .case-graph-investigation-group-fields select {
+    height: 40px;
+    padding: 0 12px;
+  }
+  .case-graph-investigation-group-note {
+    grid-column: 1 / -1;
+  }
+  .case-graph-investigation-group-note textarea {
+    min-height: 96px;
+    padding: 10px 12px;
+    resize: vertical;
+  }
+  .case-graph-investigation-group-members {
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--color-bg-page) 70%, var(--color-bg-raised));
+  }
+  .case-graph-investigation-group-members strong {
+    color: var(--color-text-primary);
+    font-size: 13px;
+  }
+  .case-graph-investigation-group-members div {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    max-height: 128px;
+    overflow: auto;
+  }
+  .case-graph-investigation-group-members span {
+    max-width: 240px;
+    padding: 6px 9px;
+    border-radius: 8px;
+    background: var(--color-bg-raised);
+    color: var(--color-text-secondary);
+    font-size: 12.5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .case-graph-manual-clue-tabs {
     display: flex;
     gap: 8px;
@@ -2387,6 +2464,47 @@
     padding: 18px 20px 0;
     overflow: hidden;
   }
+  .case-graph-summary-status-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding-bottom: 14px;
+  }
+  .case-graph-summary-status-tabs button {
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 999px;
+    background: var(--color-bg-raised);
+    color: var(--color-text-secondary);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .case-graph-summary-status-tabs button:hover {
+    border-color: color-mix(in srgb, var(--color-accent) 26%, var(--color-border-subtle));
+    color: var(--color-text-primary);
+  }
+  .case-graph-summary-status-tabs button.is-active {
+    border-color: color-mix(in srgb, var(--color-accent) 58%, var(--color-border-subtle));
+    background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-raised));
+    color: var(--color-accent);
+  }
+  .case-graph-summary-status-tabs strong {
+    min-width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 7px;
+    border-radius: 999px;
+    background: var(--color-bg-elevated);
+    color: inherit;
+    font-size: 12px;
+  }
   .case-graph-detail-analysis-toolbar {
     display: grid;
     grid-template-columns: minmax(260px, 1fr) repeat(4, minmax(130px, 160px));
@@ -2480,11 +2598,28 @@
     width: 72px;
     text-align: center;
   }
+  .case-graph-summary-analysis-table th:last-child,
+  .case-graph-summary-analysis-table td:last-child {
+    width: 110px;
+    text-align: center;
+  }
+  .case-graph-summary-analysis-table th:nth-last-child(2),
+  .case-graph-summary-analysis-table td:nth-last-child(2) {
+    width: 118px;
+    min-width: 118px;
+    text-align: center;
+  }
   .case-graph-detail-analysis-table tbody tr.is-selected {
     background: color-mix(in srgb, var(--color-danger) 7%, var(--color-bg-raised));
   }
   .case-graph-summary-analysis-table tbody tr.is-selected {
     background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-raised));
+  }
+  .case-graph-summary-analysis-table tbody tr.is-on_graph {
+    background-image: linear-gradient(90deg, color-mix(in srgb, var(--color-accent) 7%, transparent), transparent 28%);
+  }
+  .case-graph-summary-analysis-table tbody tr.is-excluded {
+    background-image: linear-gradient(90deg, color-mix(in srgb, var(--color-danger) 6%, transparent), transparent 28%);
   }
   .case-graph-detail-analysis-table input[type='checkbox'] {
     width: 16px;
@@ -2497,15 +2632,36 @@
     accent-color: var(--color-accent);
   }
   .case-graph-summary-status {
-    width: fit-content;
     display: inline-flex;
     align-items: center;
+    justify-content: center;
+    min-width: 56px;
     padding: 2px 7px;
     border-radius: 999px;
-    background: color-mix(in srgb, var(--color-danger) 9%, var(--color-bg-elevated));
-    color: var(--color-danger);
+    background: color-mix(in srgb, var(--color-success) 10%, var(--color-bg-elevated));
+    color: var(--color-success);
     font-size: 11px;
     font-weight: 700;
+    white-space: nowrap;
+  }
+  .case-graph-summary-status.is-on_graph {
+    background: color-mix(in srgb, var(--color-accent) 11%, var(--color-bg-elevated));
+    color: var(--color-accent);
+  }
+  .case-graph-summary-status.is-excluded {
+    background: color-mix(in srgb, var(--color-danger) 9%, var(--color-bg-elevated));
+    color: var(--color-danger);
+  }
+  .case-graph-summary-row-action {
+    height: 30px;
+    padding: 0 10px;
+    border-radius: 6px;
+    font-size: 12px;
+  }
+  .case-graph-summary-row-action--danger {
+    color: var(--color-danger);
+    border-color: color-mix(in srgb, var(--color-danger) 28%, var(--color-border-subtle));
+    background: color-mix(in srgb, var(--color-danger) 5%, var(--color-bg-raised));
   }
   .case-graph-detail-analysis-footer {
     display: flex;
@@ -3002,16 +3158,31 @@
   }
   .case-graph-canvas-overlay-tools {
     position: absolute;
-    top: 14px;
-    right: 14px;
+    top: 12px;
+    right: 12px;
     z-index: 12;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     pointer-events: none;
   }
   .case-graph-canvas-overlay-tools .case-graph-mini-button {
     pointer-events: auto;
+    height: 26px;
+    gap: 4px;
+    padding: 0 8px;
+    border-radius: 7px;
+    font-size: 13px;
+    line-height: 1;
+    box-shadow: 0 4px 10px rgba(15, 23, 42, 0.1);
+  }
+  .case-graph-canvas-overlay-tools .case-graph-mini-button svg {
+    width: 13px;
+    height: 13px;
+  }
+  .case-graph-canvas-overlay-tools .case-graph-mini-button--icon {
+    width: 26px;
+    padding: 0;
   }
   .case-graph-mini-button {
     height: 30px;
@@ -3035,6 +3206,21 @@
     border-color: color-mix(in srgb, var(--color-accent) 52%, var(--color-border-subtle));
     background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-raised));
     color: var(--color-accent);
+  }
+  .case-graph-export-error {
+    position: absolute;
+    top: 38px;
+    right: 0;
+    max-width: 220px;
+    padding: 7px 10px;
+    border: 1px solid color-mix(in srgb, var(--color-danger) 24%, var(--color-border-subtle));
+    border-radius: var(--r-xs);
+    background: color-mix(in srgb, var(--color-danger) 7%, var(--color-bg-raised));
+    color: var(--color-danger);
+    font-size: 12px;
+    line-height: 1.4;
+    box-shadow: var(--shadow-1);
+    pointer-events: auto;
   }
   .case-graph-clue-pattern-panel {
     position: absolute;
@@ -3625,6 +3811,293 @@
     color: var(--color-text-primary);
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .case-graph-selection-toolbar--group {
+    border-color: color-mix(in srgb, var(--color-accent) 26%, var(--color-border-subtle));
+    background: color-mix(in srgb, var(--color-bg-raised) 94%, var(--color-accent-soft));
+  }
+  .case-graph-selection-toolbar--group > span {
+    max-width: 220px;
+  }
+  .case-graph-group-detail-popover {
+    width: min(880px, calc(100vw - 64px));
+    max-height: calc(100vh - 64px);
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    overflow: hidden;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 28%, var(--color-border-subtle));
+    border-radius: 8px;
+    background: var(--color-bg-raised);
+    box-shadow: var(--shadow-3);
+  }
+  .case-graph-group-detail-header,
+  .case-graph-group-detail-title,
+  .case-graph-group-detail-section-title,
+  .case-graph-group-detail-actions {
+    display: flex;
+    align-items: center;
+  }
+  .case-graph-group-detail-header {
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px 18px 12px;
+  }
+  .case-graph-group-detail-title {
+    min-width: 0;
+    gap: 10px;
+    color: var(--color-accent);
+  }
+  .case-graph-group-detail-title > div {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+  }
+  .case-graph-group-detail-title strong,
+  .case-graph-group-detail-title span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .case-graph-group-detail-title strong {
+    color: var(--color-text-primary);
+    font-size: 18px;
+  }
+  .case-graph-group-detail-title span {
+    color: var(--color-text-secondary);
+    font-size: 12px;
+  }
+  .case-graph-group-detail-body {
+    min-height: 0;
+    display: grid;
+    gap: 12px;
+    padding: 0 18px 16px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .case-graph-group-detail-stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .case-graph-group-detail-stats > div {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+    padding: 10px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 8px;
+    background: var(--color-bg-raised);
+  }
+  .case-graph-group-detail-stats span,
+  .case-graph-group-detail-stats em {
+    overflow: hidden;
+    color: var(--color-text-muted);
+    font-size: 11px;
+    font-style: normal;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .case-graph-group-detail-stats strong {
+    overflow: hidden;
+    color: var(--color-text-primary);
+    font-size: 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .case-graph-group-detail-fields {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 128px;
+    gap: 10px;
+  }
+  .case-graph-group-detail-fields label {
+    min-width: 0;
+    display: grid;
+    gap: 6px;
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .case-graph-group-detail-fields input,
+  .case-graph-group-detail-fields select,
+  .case-graph-group-detail-fields textarea {
+    width: 100%;
+    min-width: 0;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 8px;
+    background: var(--color-bg-raised);
+    color: var(--color-text-primary);
+    font-size: 13px;
+  }
+  .case-graph-group-detail-fields input,
+  .case-graph-group-detail-fields select {
+    height: 34px;
+    padding: 0 10px;
+  }
+  .case-graph-group-detail-note {
+    grid-column: 1 / -1;
+  }
+  .case-graph-group-detail-note textarea {
+    min-height: 62px;
+    max-height: 112px;
+    padding: 8px 10px;
+    resize: vertical;
+  }
+  .case-graph-group-detail-section {
+    display: grid;
+    gap: 8px;
+  }
+  .case-graph-group-detail-section-title {
+    justify-content: space-between;
+    color: var(--color-text-primary);
+    font-size: 13px;
+  }
+  .case-graph-group-detail-section-title span {
+    color: var(--color-text-muted);
+    font-size: 12px;
+  }
+  .case-graph-group-member-list,
+  .case-graph-group-counterpart-list {
+    display: grid;
+    gap: 6px;
+  }
+  .case-graph-group-member-row {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr) minmax(80px, 0.75fr) auto;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 8px;
+    background: var(--color-bg-raised);
+  }
+  .case-graph-group-member-row input[type='checkbox'] {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    accent-color: var(--color-accent);
+  }
+  .case-graph-group-member-row span,
+  .case-graph-group-member-row small,
+  .case-graph-group-counterpart-row span,
+  .case-graph-group-counterpart-row small {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .case-graph-group-member-row span,
+  .case-graph-group-counterpart-row span {
+    color: var(--color-text-primary);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .case-graph-group-member-row small,
+  .case-graph-group-counterpart-row small {
+    color: var(--color-text-muted);
+    font-size: 12px;
+  }
+  .case-graph-group-counterpart-row {
+    display: grid;
+    gap: 3px;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 8px;
+    background: var(--color-bg-raised);
+  }
+  .case-graph-row-link-button {
+    border: 0;
+    background: transparent;
+    color: var(--color-accent);
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .case-graph-row-link-button:disabled {
+    color: var(--color-text-muted);
+    cursor: not-allowed;
+  }
+  .case-graph-group-detail-empty {
+    padding: 8px 10px;
+    border: 1px dashed var(--color-border-subtle);
+    border-radius: 8px;
+    color: var(--color-text-muted);
+    font-size: 12px;
+  }
+  .case-graph-group-detail-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 12px 18px 18px;
+    border-top: 1px solid var(--color-border-subtle);
+    background: var(--color-bg-raised);
+    box-shadow: 0 -10px 24px rgba(15, 23, 42, 0.04);
+  }
+  .case-graph-secondary-button--danger {
+    border-color: color-mix(in srgb, var(--color-danger) 36%, var(--color-border-subtle));
+    color: var(--color-danger);
+  }
+  .case-graph-add-to-group-popover {
+    position: absolute;
+    z-index: 29;
+    width: min(360px, calc(100% - 24px));
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border: 1px solid color-mix(in srgb, var(--color-accent) 26%, var(--color-border-subtle));
+    border-radius: 8px;
+    background: var(--color-bg-raised);
+    box-shadow: 0 16px 36px rgba(17, 24, 39, 0.16);
+  }
+  .case-graph-add-to-group-title {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: baseline;
+    color: var(--color-text-primary);
+    font-size: 13px;
+  }
+  .case-graph-add-to-group-title span {
+    color: var(--color-text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .case-graph-add-to-group-list {
+    display: grid;
+    gap: 6px;
+  }
+  .case-graph-add-to-group-list button {
+    display: grid;
+    gap: 3px;
+    padding: 9px 10px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--color-bg-raised) 92%, var(--color-accent-soft));
+    text-align: left;
+    cursor: pointer;
+  }
+  .case-graph-add-to-group-list button:hover:not(:disabled) {
+    border-color: color-mix(in srgb, var(--color-accent) 36%, var(--color-border-subtle));
+    background: color-mix(in srgb, var(--color-bg-raised) 82%, var(--color-accent-soft));
+  }
+  .case-graph-add-to-group-list button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+  .case-graph-add-to-group-list span,
+  .case-graph-add-to-group-list small {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .case-graph-add-to-group-list span {
+    color: var(--color-text-primary);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .case-graph-add-to-group-list small {
+    color: var(--color-text-muted);
+    font-size: 12px;
   }
   .case-graph-selection-toolbar-action {
     flex: 0 0 auto;

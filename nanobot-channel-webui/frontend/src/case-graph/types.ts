@@ -101,6 +101,17 @@ export interface CaseGraphGroupItem {
 
 export type CaseGraphGroupMap = Record<string, CaseGraphGroupItem>;
 
+export interface CaseGraphInvestigationGroup {
+  id: string;
+  name: string;
+  memberNodeIds: string[];
+  groupType?: string;
+  note?: string;
+  collapsed?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface CaseGraphExcludedNode {
   nodeId: string;
   label: string;
@@ -117,6 +128,7 @@ export interface CaseGraphOriginData {
   money: CaseGraphMoneyEdge[];
   phone: CaseGraphPhoneEdge[];
   groups: CaseGraphGroupMap;
+  investigationGroups?: CaseGraphInvestigationGroup[];
   excludedTrades: string[];
   tradeFacts?: Record<string, CaseGraphTradeFact>;
   excludedAccountId?: string | string[] | null;
@@ -130,6 +142,7 @@ export interface CaseGraphData {
   tradeFacts?: Record<string, CaseGraphTradeFact>;
   excludedNodes?: CaseGraphExcludedNode[];
   realityRelations?: CaseGraphRealityRelation[];
+  investigationGroups?: CaseGraphInvestigationGroup[];
 }
 
 export interface CaseGraphTradeFact {
@@ -221,6 +234,7 @@ export interface CaseGraphTargetDetailItem {
   tradeAmount: number;
   tradeTime: string | null;
   tradeAbstract: string;
+  method?: string;
   payerAccountId: string | number | null;
   payerAccountName: string;
   payerTradeCard: string;
@@ -298,6 +312,7 @@ export interface CaseGraphStateBody {
   };
   tradeCards: CaseGraphTradeCard[];
   groupMap: CaseGraphGroupMap;
+  investigationGroups: CaseGraphInvestigationGroup[];
   sourceSelectId: string[];
   summarySelectedAccountId: string[];
   summarySelectedAccountName: string[];
@@ -306,6 +321,8 @@ export interface CaseGraphStateBody {
   excludedAccountName: string[];
   layout: CaseGraphLayoutState;
   filters: CaseGraphAppliedFilters;
+  drillNums?: number;
+  drillType?: string | number | null;
   excludedNodes: CaseGraphExcludedNode[];
   manualEdges: CaseGraphMoneyEdge[];
   realityRelations?: CaseGraphRealityRelation[];
@@ -386,6 +403,21 @@ export interface QueryCaseGraphRelationPayload {
   drillNums?: number;
   drillType?: string | number | null;
   filters?: Record<string, unknown>;
+  options?: Record<string, unknown>;
+}
+
+export interface ApplyCaseGraphInvestigationGroupPayload {
+  graphId: string;
+  caseId: string;
+  operation: 'create' | 'update' | 'collapse' | 'expand' | 'ungroup' | 'remove_member' | 'add_members';
+  groupId?: string;
+  nodeIds?: string[];
+  memberNodeId?: string;
+  memberNodeIds?: string[];
+  name?: string;
+  groupType?: string;
+  note?: string;
+  collapsed?: boolean;
   options?: Record<string, unknown>;
 }
 

@@ -20,6 +20,19 @@ class GraphStateService:
     def list_steps(self, case_id: str, graph_id: str) -> list[dict[str, Any]]:
         return self._repository.list_steps(case_id, graph_id)
 
+    def update_graph_settings(
+        self,
+        *,
+        case_id: str,
+        graph_id: str,
+        settings: dict[str, Any],
+    ) -> dict[str, Any]:
+        return self._repository.update_graph_settings(
+            case_id=case_id,
+            graph_id=graph_id,
+            settings=settings,
+        )
+
     def update_layout(
         self,
         *,
@@ -167,7 +180,7 @@ class GraphStateService:
     def _available_actions(graph: dict[str, Any]) -> list[str]:
         actions = ["总结整图"]
         if graph.get("nodes"):
-            actions.extend(["上钻", "下钻", "双向钻取", "全图筛选", "取消上图", "交易核查", "线索扩展"])
+            actions.extend(["上钻", "下钻", "双向钻取", "全图筛选", "取消上图", "线索扩展"])
         if graph.get("edges"):
             actions.extend(["查看交易明细", "补全图上关系"])
         if graph.get("excludedNodes"):

@@ -14,6 +14,8 @@ case-graph 事实文档为准。
   - 当前产品目标、用户和定位
 - [../DESIGN.md](../DESIGN.md)
   - 当前长期设计基线
+- [product-capabilities.md](./product-capabilities.md)
+  - 当前已经实现的产品功能说明
 - [case-graph/README.md](./case-graph/README.md)
   - 经侦上图分析器相关事实文档入口
 

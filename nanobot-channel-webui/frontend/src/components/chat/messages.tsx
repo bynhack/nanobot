@@ -27,7 +27,7 @@ import { streamdownZhTranslations } from '../../streamdown-i18n';
 import { File as AssistantUiFile } from '../assistant-ui/file';
 import { Image as AssistantUiImage } from '../assistant-ui/image';
 import { MermaidDiagram } from '../assistant-ui/mermaid-diagram';
-import { CaseGraphActionContext } from './case-graph-action-context';
+import { CaseGraphActionContext, type CaseGraphActionPreview } from './case-graph-action-context';
 import { DetailPreviewContext } from './detail-preview-context';
 import type { MediaItem } from '../../types';
 
@@ -222,12 +222,14 @@ function MessageAttachmentChip() {
 function CaseGraphActionCard({ action }: { action: CaseGraphChatAction }) {
   const actionContext = useContext(CaseGraphActionContext);
   const [submitted, setSubmitted] = useState(false);
+  const [submittedPreview, setSubmittedPreview] = useState<CaseGraphActionPreview | null>(null);
   const [running, setRunning] = useState(false);
-  const preview = actionContext?.preview(action) ?? {
+  const livePreview = actionContext?.preview(action) ?? {
     title: caseGraphActionTitle(action),
     summary: caseGraphActionSummary(action),
     disabledReason: '当前页面没有可执行的图谱上下文',
   };
+  const preview = submittedPreview ?? livePreview;
   const disabled = Boolean(preview.disabledReason || running || submitted);
 
   return (
@@ -243,12 +245,15 @@ function CaseGraphActionCard({ action }: { action: CaseGraphChatAction }) {
         disabled={disabled}
         onClick={() => {
           if (!actionContext || disabled) return;
+          setSubmittedPreview(preview);
           setRunning(true);
           Promise.resolve(actionContext.execute(action))
             .then(() => {
               setSubmitted(true);
             })
-            .catch(() => undefined)
+            .catch(() => {
+              setSubmittedPreview(null);
+            })
             .finally(() => {
               setRunning(false);
             });

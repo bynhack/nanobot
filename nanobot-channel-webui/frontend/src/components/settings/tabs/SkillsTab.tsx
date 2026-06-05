@@ -352,7 +352,7 @@ export function SkillsTab({
                       ) : selectedFile ? (
                         selectedFile.is_markdown ? (
                           <div className="settings-markdown-preview skill-doc">
-                            <MarkdownPreview content={selectedFile.content} />
+                            <MarkdownPreview content={selectedFile.preview_content ?? selectedFile.content} />
                           </div>
                         ) : (
                           <pre className="settings-code-block mt-4">{selectedFile.content || '该文件为空。'}</pre>

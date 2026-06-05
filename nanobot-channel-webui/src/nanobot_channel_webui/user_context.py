@@ -7,7 +7,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Any
 
-from .pocketbase import PocketBaseUser, UserRole
+from .supabase_account import SupabaseProfile, UserRole
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,7 +28,7 @@ class CurrentUser:
         return self.role == "admin"
 
     @classmethod
-    def from_pocketbase_user(cls, user: PocketBaseUser) -> "CurrentUser":
+    def from_supabase_profile(cls, user: SupabaseProfile) -> "CurrentUser":
         return cls(
             id=user.id,
             email=user.email,

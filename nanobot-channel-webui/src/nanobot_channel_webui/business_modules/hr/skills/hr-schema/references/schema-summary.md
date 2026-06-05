@@ -13,7 +13,7 @@
 - 连接配置由技能包自身 `.env` 提供
 - 依赖环境变量：
   - `SUPABASE_URL`
-  - `channels.webui_plugin.hrSupabaseServiceRoleKey` in `~/.nanobot/config.json`
+  - `channels.webui_plugin.supabaseServiceRoleKey` in `~/.nanobot/config.json`
 
 ## 全局规则
 

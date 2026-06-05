@@ -14,6 +14,8 @@ interface GeneralTabProps {
   onUiThemeChange: (value: UiTheme) => void;
   showToolMessages: boolean;
   onShowToolMessagesChange: (value: boolean) => void;
+  showReasoningMessages: boolean;
+  onShowReasoningMessagesChange: (value: boolean) => void;
   currentUser: AuthUser | null;
   authMode: BootstrapConfig['authMode'];
   onLogout: () => void;
@@ -30,6 +32,8 @@ export function GeneralTab({
   onUiThemeChange,
   showToolMessages,
   onShowToolMessagesChange,
+  showReasoningMessages,
+  onShowReasoningMessagesChange,
   currentUser,
   authMode,
   onLogout,
@@ -94,9 +98,23 @@ export function GeneralTab({
             <div className="toggle-thumb" />
           </button>
         </SettingsRow>
+        <SettingsRow
+          label="显示思考过程"
+          hint="默认隐藏模型思考内容；调试或复盘复杂任务时可开启查看。"
+        >
+          <button
+            type="button"
+            className={`settings-modern-toggle${showReasoningMessages ? ' active' : ''}`}
+            role="switch"
+            aria-checked={showReasoningMessages}
+            onClick={() => onShowReasoningMessagesChange(!showReasoningMessages)}
+          >
+            <div className="toggle-thumb" />
+          </button>
+        </SettingsRow>
         {currentUser ? (
           <>
-            <SettingsRow label="当前账号" hint="当前登录的 PocketBase 用户。">
+            <SettingsRow label="当前账号" hint="当前登录的 Supabase 用户。">
               <code className="text-xs text-muted-foreground">{currentUser.email}</code>
             </SettingsRow>
             <SettingsRow label="角色" hint="管理员可查看全局配置与运行数据，普通用户仅查看自己的数据。">
@@ -110,9 +128,9 @@ export function GeneralTab({
         {authRequired && (
           <SettingsRow
             label="安全认证"
-            hint={authMode === 'pocketbase' ? '管理当前登录账号。' : '管理用于访问此实例的令牌。'}
+            hint={authMode === 'supabase' ? '管理当前登录账号。' : '管理用于访问此实例的令牌。'}
           >
-            {authMode === 'pocketbase' ? (
+            {authMode === 'supabase' ? (
               <button className="ghost-button" type="button" onClick={onLogout}>
                 退出登录
               </button>

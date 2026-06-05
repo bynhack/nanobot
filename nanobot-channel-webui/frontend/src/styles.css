@@ -825,8 +825,59 @@
     pointer-events: none;
     border-right-color: transparent;
   }
+  @media (max-width: 860px) {
+    .chat-workspace > .sidebar {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: min(300px, 82vw);
+      max-width: calc(100vw - 48px);
+      z-index: 30;
+      box-shadow: var(--shadow-3);
+      opacity: 1;
+      transform: translateX(0);
+      transition: transform 0.22s ease, opacity 0.18s ease;
+    }
+    .chat-workspace > .sidebar.collapsed {
+      width: min(300px, 82vw);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(-100%);
+      border-right-color: transparent;
+    }
+  }
 
   .sidebar-header   { padding: 16px 12px 10px; display: flex; flex-direction: column; gap: 14px; }
+  .sidebar-close {
+    width: 32px;
+    height: 32px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    color: var(--color-text-muted);
+  }
+  .sidebar-close:hover,
+  .sidebar-close:focus-visible {
+    background: var(--color-bg-hover);
+    color: var(--color-text-primary);
+  }
+  .sidebar-close svg {
+    width: 17px;
+    height: 17px;
+  }
+  @media (max-width: 860px) {
+    .sidebar-header {
+      min-height: 56px;
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 12px 10px 10px 12px;
+    }
+    .sidebar-close {
+      display: inline-flex;
+    }
+  }
   .sidebar-history  { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .sidebar-empty-state { padding: 8px 4px; }
   .sidebar-empty-state p { margin: 6px 0 0; font-size: 13px; color: var(--color-text-muted); line-height: 1.5; }
@@ -4023,6 +4074,22 @@
     z-index: auto;
   }
   @media (max-width: 860px) {
+    .shell.detail-open:not(.detail-immersive) .chat-workspace {
+      flex: 0 0 100%;
+      width: 100%;
+    }
+    .shell.detail-open:not(.detail-immersive) .detail-panel {
+      position: absolute;
+      inset: 0;
+      width: 100% !important;
+      max-width: 100%;
+      z-index: 20;
+      border-left: 0;
+      box-shadow: var(--shadow-3);
+    }
+    .shell.detail-open:not(.detail-immersive) .detail-resize-handle {
+      display: none;
+    }
     .workspace-panel {
       position: absolute;
       inset: 0 0 0 auto;
@@ -4680,8 +4747,11 @@
     transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
   }
   .composer-host.compact .composer-surface {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
     gap: 6px;
-    padding: 8px;
+    padding: 6px 8px;
     border-radius: var(--r-lg);
     min-height: 0;
   }
@@ -4733,10 +4803,15 @@
     color: var(--color-text-primary);
     resize: none;
     overflow-y: auto;
+    scrollbar-width: none;
     min-height: 32px;
     max-height: 240px;
   }
+  .composer-input::-webkit-scrollbar {
+    display: none;
+  }
   .composer-host.compact .composer-input {
+    grid-column: 1;
     padding: 4px 14px;
     min-height: 24px;
     max-height: 120px;
@@ -4746,6 +4821,16 @@
   .composer-input::placeholder { color: var(--color-text-muted); }
   .composer-host.compact .composer-input::placeholder {
     white-space: nowrap;
+  }
+  .composer-host.compact .composer-attachments-row {
+    grid-column: 1 / -1;
+    padding: 0 8px;
+  }
+  .composer-host.compact .composer-action-row {
+    grid-column: 2;
+    width: auto;
+    gap: 4px;
+    justify-content: flex-end;
   }
 
   .composer-cancel,
@@ -5264,6 +5349,28 @@
     text-overflow: ellipsis;
   }
   .detail-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .detail-panel-close {
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    color: var(--color-text-muted);
+  }
+  .detail-panel-close:hover,
+  .detail-panel-close:focus-visible {
+    background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
+    color: var(--color-text-primary);
+  }
+  .detail-panel-close:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--color-accent) 36%, transparent);
+    outline-offset: 2px;
+  }
+  .detail-panel-close svg {
+    width: 16px;
+    height: 16px;
+  }
   .detail-sidebar-toggle {
     height: 30px;
     display: inline-flex;

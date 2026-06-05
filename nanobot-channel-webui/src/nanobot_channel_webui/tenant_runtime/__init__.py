@@ -1,14 +1,10 @@
-"""Tenant runtime framework for the WebUI plugin.
+"""Tenant runtime framework for the WebUI plugin."""
 
-This package is the public generic multi-tenant runtime surface. The older
-`permissions` package contains the current implementation modules and remains
-available as a compatibility import path. New code should prefer imports from
-`nanobot_channel_webui.tenant_runtime` unless it is editing the implementation
-itself.
-"""
+from __future__ import annotations
 
-from .audit import PermissionAuditLogger, TenantAuditLogger
-from .command_gateway import CommandDecision, CommandGateway, CommandPolicyGuard
+from importlib import import_module
+from typing import Any
+
 from .context import (
     PolicyContext,
     TenantContext,
@@ -24,13 +20,28 @@ from .contracts import (
     TenantPolicy,
     TenantSubject,
 )
-from .guard import GuardDecision, TenantAccessDenied, TenantGuard
-from .injector import attach_permission_runtime, attach_tenant_runtime
-from .memory_gateway import AuthorizingMemoryStore, MemoryGateway
-from .resolver import PolicyResolver, TenantPolicyResolver
-from .skill_gateway import AuthorizingSkillsLoader, SkillGateway
 from .skill_contract import SkillContract, SkillResourceRequirement, load_skill_contract
-from .tool_gateway import AuthorizingToolRegistry, ToolGateway
+
+_LAZY_EXPORTS = {
+    "AuthorizingMemoryStore": ".memory_gateway",
+    "AuthorizingSkillsLoader": ".skill_gateway",
+    "AuthorizingToolRegistry": ".tool_gateway",
+    "CommandDecision": ".command_gateway",
+    "CommandGateway": ".command_gateway",
+    "CommandPolicyGuard": ".command_gateway",
+    "GuardDecision": ".guard",
+    "MemoryGateway": ".memory_gateway",
+    "PermissionAuditLogger": ".audit",
+    "PolicyResolver": ".resolver",
+    "SkillGateway": ".skill_gateway",
+    "TenantAccessDenied": ".guard",
+    "TenantAuditLogger": ".audit",
+    "TenantGuard": ".guard",
+    "TenantPolicyResolver": ".resolver",
+    "ToolGateway": ".tool_gateway",
+    "attach_permission_runtime": ".injector",
+    "attach_tenant_runtime": ".injector",
+}
 
 __all__ = [
     "AuthorizingMemoryStore",
@@ -66,3 +77,13 @@ __all__ = [
     "get_tenant_context",
     "load_skill_contract",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    module_name = _LAZY_EXPORTS.get(name)
+    if module_name is None:
+        raise AttributeError(name)
+    module = import_module(module_name, __name__)
+    value = getattr(module, name)
+    globals()[name] = value
+    return value

@@ -9,6 +9,7 @@ export function ChatSidebar({
   sessionsById,
   connectionState,
   onOpenSettings,
+  onCloseSidebar,
 }: {
   title: string;
   sidebarCollapsed: boolean;
@@ -16,6 +17,7 @@ export function ChatSidebar({
   sessionsById: Map<string, SessionSummary>;
   connectionState: ConnectionState;
   onOpenSettings: () => void;
+  onCloseSidebar: () => void;
 }) {
   return (
     <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
@@ -30,10 +32,16 @@ export function ChatSidebar({
           </div>
           <div className="brand-title">{title}</div>
         </div>
+        <button className="sidebar-close" type="button" aria-label="收起侧边栏" onClick={onCloseSidebar}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 6l12 12M18 6L6 18" />
+          </svg>
+        </button>
       </div>
       <div className="sidebar-history">
         <SidebarThreadList
           activeThreadId={activeThreadId}
+          isVisibleThread={(threadId) => sessionsById.has(threadId)}
           canDeleteThread={(threadId) => !sessionsById.get(threadId)?.read_only}
         />
       </div>

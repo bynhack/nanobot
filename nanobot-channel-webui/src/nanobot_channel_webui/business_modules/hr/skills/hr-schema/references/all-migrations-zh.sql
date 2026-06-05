@@ -254,7 +254,7 @@ CREATE TRIGGER personnel_changes_updated_at BEFORE UPDATE ON personnel_changes
 CREATE TABLE disciplinary_records (
     id             uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
     employee_id    uuid        NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
-    incident_date  date,       -- 事件/处罚发生日期
+    incident_dates date[],     -- 事件/处罚发生日期，可记录多次迟到/奖惩事件日期
     penalty_type   text,       -- 处罚类型，如：书面警告 / 记过 / 降薪 / 辞退
     penalty_reason text,       -- 处罚原因/事件描述
     signed_upload  text[],     -- 纸质处分文件 URL 数组（Supabase Storage: hr-documents）

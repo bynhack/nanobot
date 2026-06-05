@@ -99,7 +99,7 @@ business verify <resource>
 - `PolicyResolver` 不会把 `hr.employee` 粗粒度资源自动展开为标准 HR 资源。
 - 数据库必须显式配置账号可访问的标准资源、动作和 scope。
 - 动态技能视图只显示当前账号授权能力，并显示标准资源，而不是隐藏实现命令。
-- HR 主执行链路当前由 `CommandPolicyGuard`、动态技能视图、HR CLI `access_policy.mjs` 和 repository scope 兜底共同完成；`TenantGuard` 是给新业务技能复用的旁路 Guard SDK，不是当前 HR CLI 的唯一 enforcement 点。
+- HR 主执行链路当前由 `CommandPolicyGuard`、动态技能视图、HR Python CLI `runtime/policy.py` 和 `runtime/repository.py` 的 scope 兜底共同完成；`TenantGuard` 是给新业务技能复用的旁路 Guard SDK，不是当前 HR CLI 的唯一 enforcement 点。
 - `TenantGuard` 作为 SDK 要能对标准资源做资源、动作、scope 校验。
 - scoped 用户不能调用未授权技能命令、底层数据库脚本或敏感 shell。
 - 指定未授权公司必须拒绝。

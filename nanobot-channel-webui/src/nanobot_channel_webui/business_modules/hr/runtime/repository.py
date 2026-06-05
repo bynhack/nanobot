@@ -1,0 +1,1855 @@
+"""HR business repository implemented in Python."""
+
+from __future__ import annotations
+
+from collections import defaultdict
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+from typing import Any, Callable
+
+from .policy import allowed_company_names, collect_scope_company_names
+from .supabase_client import SupabaseConnector, execute, execute_one
+
+BUSINESS_TABLES = [
+    {"table": "companies", "label": "公司"},
+    {"table": "departments", "label": "部门"},
+    {"table": "employees", "label": "员工"},
+    {"table": "contracts", "label": "合同"},
+    {"table": "performance_reviews", "label": "绩效"},
+    {"table": "insurance_changes", "label": "社医保"},
+    {"table": "personnel_changes", "label": "人事异动"},
+    {"table": "disciplinary_records", "label": "奖惩"},
+    {"table": "seal_usage", "label": "用章"},
+    {"table": "overtime_records", "label": "加班"},
+    {"table": "work_injuries", "label": "工伤"},
+    {"table": "job_postings", "label": "招聘岗位"},
+    {"table": "interview_records", "label": "面试"},
+    {"table": "training_records", "label": "培训"},
+]
+
+CLEAR_ORDER = [
+    {"table": "interview_records", "label": "面试"},
+    {"table": "job_postings", "label": "招聘岗位"},
+    {"table": "training_records", "label": "培训"},
+    {"table": "seal_usage", "label": "用章"},
+    {"table": "work_injuries", "label": "工伤"},
+    {"table": "overtime_records", "label": "加班"},
+    {"table": "disciplinary_records", "label": "奖惩"},
+    {"table": "personnel_changes", "label": "人事异动"},
+    {"table": "insurance_changes", "label": "社医保"},
+    {"table": "performance_reviews", "label": "绩效"},
+    {"table": "contracts", "label": "合同"},
+    {"table": "employees", "label": "员工"},
+    {"table": "departments", "label": "部门"},
+    {"table": "companies", "label": "公司"},
+]
+
+ZERO_UUID = "00000000-0000-0000-0000-000000000000"
+DISCIPLINARY_DATE_FIELD = "incident_dates"
+
+
+class HrRepository:
+    def __init__(self, connector: SupabaseConnector | None = None) -> None:
+        self.db = connector or SupabaseConnector()
+
+    def assert_plan_company_scope(
+        self,
+        *,
+        plan: Any,
+        company_name: str | None = None,
+        resource: str,
+        action: str = "write",
+    ) -> None:
+        allowed = repository_allowed_company_names(resource, action)
+        if not allowed or "*" in allowed:
+            return
+        companies = collect_scope_company_names(plan, company_name)
+        for company in companies:
+            if company not in allowed:
+                raise RuntimeError(f"当前账号无权写入或验证公司数据: {company}")
+
+    def table(self, name: str) -> Any:
+        return self.db.table(name)
+
+    def count_table(self, table: str) -> int:
+        _data, count = execute(self.table(table).select("*", count="exact", head=True))
+        return int(count or 0)
+
+    def count_all_tables(self) -> list[dict[str, Any]]:
+        return [{**item, "count": self.count_table(item["table"])} for item in BUSINESS_TABLES]
+
+    def list_companies(self) -> list[dict[str, Any]]:
+        data, _count = execute(self.table("companies").select("id,name,short_name").order("name"))
+        return data
+
+    def find_company_by_name(self, name: str | None) -> list[dict[str, Any]]:
+        company = normalize_required(name, "company name")
+        data, _count = execute(
+            self.table("companies").select("id,name,short_name").eq("name", company).limit(2)
+        )
+        return data
+
+    def unique_company(self, company_name: str | None) -> dict[str, Any] | None:
+        matches = self.find_company_by_name(company_name)
+        return matches[0] if len(matches) == 1 else None
+
+    def company_ids_by_names(self, company_names: list[str]) -> list[str]:
+        ids: list[str] = []
+        for name in company_names:
+            company = self.unique_company(name)
+            if company:
+                ids.append(company["id"])
+        return ids
+
+    def scoped_company_ids(
+        self,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> list[str] | None:
+        normalized_company = clean_optional(company_name)
+        normalized_companies = [item for item in map(clean_optional, company_names or []) if item]
+        if not normalized_company and not normalized_companies:
+            return None
+        return self.company_ids_by_names([normalized_company] if normalized_company else normalized_companies)
+
+    def scoped_employee_ids(
+        self,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> list[str] | None:
+        company_ids = self.scoped_company_ids(company_name=company_name, company_names=company_names)
+        if company_ids is None:
+            return None
+        if not company_ids:
+            return []
+        data, _count = execute(self.table("employees").select("id").in_("company_id", company_ids))
+        return [row["id"] for row in data]
+
+    def list_organization_tree(self, *, company_names: list[str] | None = None) -> list[dict[str, Any]]:
+        scoped_names = [item for item in map(clean_optional, company_names or []) if item] or None
+        departments_result = self.list_departments(company_names=scoped_names or [])
+        companies = departments_result["companyMatches"] if scoped_names else self.list_companies()
+        department_map: dict[str, list[str]] = defaultdict(list)
+        for row in departments_result["departments"]:
+            company_name = deep_get(row, "companies.name") or ""
+            if company_name:
+                department_map[company_name].append(row.get("name"))
+        return [
+            {
+                "name": company.get("name"),
+                "short_name": company.get("short_name"),
+                "scoped": scoped_names is not None,
+                "departments": department_map.get(company.get("name"), []),
+            }
+            for company in companies
+        ]
+
+    def list_departments(
+        self,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        company_ids = self.scoped_company_ids(company_name=company_name, company_names=company_names)
+        company_matches: list[dict[str, Any]] = []
+        query = self.table("departments").select("id,name,company_id,companies(name)").order("name")
+        if company_ids is not None:
+            if not company_ids:
+                return {"companyMatches": [], "departments": []}
+            query = query.in_("company_id", company_ids)
+            company_matches, _count = execute(
+                self.table("companies").select("id,name,short_name").in_("id", company_ids)
+            )
+        departments, _count = execute(query)
+        return {"companyMatches": company_matches, "departments": departments}
+
+    def find_department(self, *, company_name: str | None, department_name: str | None) -> dict[str, Any]:
+        department = normalize_required(department_name, "department name")
+        lookup = self.list_departments(company_name=company_name)
+        if len(lookup["companyMatches"]) != 1:
+            return {"companyMatches": lookup["companyMatches"], "departmentMatches": []}
+        return {
+            "companyMatches": lookup["companyMatches"],
+            "departmentMatches": [row for row in lookup["departments"] if row.get("name") == department],
+        }
+
+    def ensure_company(self, *, name: str | None, short_name: str | None = None) -> dict[str, Any]:
+        company_name = normalize_required(name, "company name")
+        matches = self.find_company_by_name(company_name)
+        if len(matches) > 1:
+            raise RuntimeError(f"multiple companies matched: {company_name}")
+        if len(matches) == 1:
+            return {"action": "existing", "record": matches[0]}
+        row = execute_one(
+            self.table("companies")
+            .insert({"name": company_name, "short_name": clean_optional(short_name)})
+            .select("id,name,short_name")
+            .single()
+        )
+        return {"action": "created", "record": row}
+
+    def ensure_department(self, *, company_name: str | None, department_name: str | None) -> dict[str, Any]:
+        department = normalize_required(department_name, "department name")
+        company_result = self.ensure_company(name=company_name)
+        company = company_result["record"]
+        existing, _count = execute(
+            self.table("departments")
+            .select("id,name,company_id")
+            .eq("company_id", company["id"])
+            .eq("name", department)
+            .limit(2)
+        )
+        if len(existing) > 1:
+            raise RuntimeError(f"multiple departments matched: {company['name']} / {department}")
+        if len(existing) == 1:
+            return {"action": "existing", "record": existing[0], "company": company}
+        row = execute_one(
+            self.table("departments")
+            .insert({"company_id": company["id"], "name": department})
+            .select("id,name,company_id")
+            .single()
+        )
+        return {"action": "created", "record": row, "company": company}
+
+    def list_employees(
+        self,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+        status: str | None = None,
+    ) -> dict[str, Any]:
+        query = self.table("employees").select(employee_select()).order("name")
+        company_ids = self.scoped_company_ids(company_name=company_name, company_names=company_names)
+        if company_ids is not None:
+            if not company_ids:
+                return {
+                    "company": scope_label(company_name, company_names),
+                    "match_status": "company_not_found",
+                    "records": [],
+                }
+            query = query.in_("company_id", company_ids)
+        normalized_status = clean_optional(status)
+        if normalized_status:
+            query = query.eq("status", normalized_status)
+        data, _count = execute(query)
+        return {
+            "total": len(data),
+            "company": scope_label(company_name, company_names),
+            "status": normalized_status,
+            "records": [employee_business_row(row) for row in data],
+        }
+
+    def find_employee_by_id_card(
+        self,
+        id_card_number: str | None,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        value = normalize_required(id_card_number, "id card number")
+        query = self.table("employees").select(employee_select()).eq("id_card_number", value)
+        query = self.apply_company_scope(query, company_name=company_name, company_names=company_names)
+        data, _count = execute(query.limit(5))
+        return data
+
+    def find_employee_by_phone(
+        self,
+        phone: str | None,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        value = normalize_required(phone, "phone")
+        query = self.table("employees").select(employee_select()).eq("phone", value)
+        query = self.apply_company_scope(query, company_name=company_name, company_names=company_names)
+        data, _count = execute(query.limit(5))
+        return data
+
+    def apply_company_scope(
+        self,
+        query: Any,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> Any:
+        company_ids = self.scoped_company_ids(company_name=company_name, company_names=company_names)
+        if company_ids is None:
+            return query
+        if not company_ids:
+            return query.in_("company_id", ["__no_company__"])
+        return query.in_("company_id", company_ids)
+
+    def find_employee_candidates(
+        self,
+        *,
+        name: str | None = None,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+        department_name: str | None = None,
+    ) -> dict[str, Any]:
+        employee_name = normalize_required(name, "employee name")
+        query = self.table("employees").select(employee_select()).eq("name", employee_name).order("name")
+        query = self.apply_company_scope(query, company_name=company_name, company_names=company_names)
+        department = clean_optional(department_name)
+        if department:
+            departments = self.list_departments(company_name=company_name, company_names=company_names)[
+                "departments"
+            ]
+            department_ids = [row["id"] for row in departments if row.get("name") == department]
+            if not department_ids:
+                return {"candidates": [], "department_status": "department_not_found"}
+            query = query.in_("department_id", department_ids)
+        data, _count = execute(query.limit(20))
+        return {"candidates": data, "count": len(data)}
+
+    def find_employee_name_like(
+        self,
+        *,
+        name: str | None,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        value = normalize_required(name, "employee name")
+        query = self.table("employees").select(employee_select()).ilike("name", f"%{value}%").order("name")
+        query = self.apply_company_scope(query, company_name=company_name, company_names=company_names)
+        data, _count = execute(query.limit(20))
+        return {"records": [employee_business_row(row) for row in data], "count": len(data)}
+
+    def resolve_employee_lookup(self, **options: Any) -> dict[str, Any]:
+        if clean_optional(options.get("id_card")):
+            rows = self.find_employee_by_id_card(
+                options.get("id_card"),
+                company_name=options.get("company_name"),
+                company_names=options.get("company_names"),
+            )
+            return {"strategy": "id_card", "candidates": rows, "count": len(rows)}
+        if clean_optional(options.get("phone")):
+            rows = self.find_employee_by_phone(
+                options.get("phone"),
+                company_name=options.get("company_name"),
+                company_names=options.get("company_names"),
+            )
+            return {"strategy": "phone", "candidates": rows, "count": len(rows)}
+        result = self.find_employee_candidates(
+            name=options.get("name"),
+            company_name=options.get("company_name"),
+            company_names=options.get("company_names"),
+            department_name=options.get("department_name"),
+        )
+        result["strategy"] = "name"
+        return result
+
+    def require_unique_employee(self, **options: Any) -> dict[str, Any]:
+        result = self.resolve_employee_lookup(**options)
+        candidates = result.get("candidates") or []
+        if len(candidates) != 1:
+            raise RuntimeError(f"employee lookup expected one match, got {len(candidates)}")
+        return candidates[0]
+
+    def employee_detail(self, **options: Any) -> dict[str, Any]:
+        employee = self.require_unique_employee(**options)
+        row = execute_one(
+            self.table("employees").select(employee_detail_select()).eq("id", employee["id"]).single()
+        )
+        return employee_detail_business_row(row or employee)
+
+    def employee_timeline(self, **options: Any) -> dict[str, Any]:
+        employee = self.require_unique_employee(**options)
+        employee_id = employee["id"]
+        return {
+            "employee": employee_detail_business_row(employee),
+            "contracts": self.contracts_by_employee_id(employee_id),
+            "performance_reviews": self.performance_by_employee_id(employee_id),
+            "insurance_changes": self.insurance_changes_by_employee_id(employee_id),
+            "personnel_changes": self.personnel_changes_by_employee_id(employee_id),
+            "disciplinary_records": self.disciplinary_records_by_employee_id(employee_id),
+        }
+
+    def contracts_by_employee(self, **options: Any) -> dict[str, Any]:
+        employee = self.require_unique_employee(**options)
+        return {"employee": employee_business_row(employee), "records": self.contracts_by_employee_id(employee["id"])}
+
+    def performance_by_employee(self, **options: Any) -> dict[str, Any]:
+        employee = self.require_unique_employee(**options)
+        return {
+            "employee": employee_business_row(employee),
+            "records": self.performance_by_employee_id(employee["id"]),
+        }
+
+    def insurance_changes_by_employee(self, **options: Any) -> dict[str, Any]:
+        employee = self.require_unique_employee(**options)
+        return {
+            "employee": employee_business_row(employee),
+            "records": self.insurance_changes_by_employee_id(employee["id"]),
+        }
+
+    def personnel_changes_by_employee(self, **options: Any) -> dict[str, Any]:
+        employee = self.require_unique_employee(**options)
+        return {
+            "employee": employee_business_row(employee),
+            "records": self.personnel_changes_by_employee_id(employee["id"]),
+        }
+
+    def disciplinary_records_by_employee(self, **options: Any) -> dict[str, Any]:
+        employee = self.require_unique_employee(**options)
+        return {
+            "employee": employee_business_row(employee),
+            "records": self.disciplinary_records_by_employee_id(employee["id"]),
+        }
+
+    def contracts_by_employee_id(self, employee_id: str) -> list[dict[str, Any]]:
+        data, _count = execute(
+            self.table("contracts")
+            .select(contract_select())
+            .eq("employee_id", employee_id)
+            .order("start_date", desc=True)
+        )
+        return [contract_business_row(row) for row in data]
+
+    def performance_by_employee_id(self, employee_id: str) -> list[dict[str, Any]]:
+        data, _count = execute(
+            self.table("performance_reviews")
+            .select(performance_review_select())
+            .eq("employee_id", employee_id)
+            .order("review_date", desc=True)
+        )
+        return [performance_business_row(row) for row in data]
+
+    def insurance_changes_by_employee_id(self, employee_id: str) -> list[dict[str, Any]]:
+        data, _count = execute(
+            self.table("insurance_changes")
+            .select(insurance_change_select())
+            .eq("employee_id", employee_id)
+            .order("change_date", desc=True)
+        )
+        return [insurance_change_business_row(row) for row in data]
+
+    def personnel_changes_by_employee_id(self, employee_id: str) -> list[dict[str, Any]]:
+        data, _count = execute(
+            self.table("personnel_changes")
+            .select(personnel_change_select())
+            .eq("employee_id", employee_id)
+            .order("effective_date", desc=True)
+        )
+        return [personnel_change_business_row(row) for row in data]
+
+    def disciplinary_records_by_employee_id(self, employee_id: str) -> list[dict[str, Any]]:
+        data, _count = execute(
+            self.table("disciplinary_records")
+            .select(disciplinary_record_select())
+            .eq("employee_id", employee_id)
+            .order(DISCIPLINARY_DATE_FIELD, desc=True)
+        )
+        return [disciplinary_record_business_row(row) for row in data]
+
+    def performance_by_month(
+        self,
+        *,
+        month: str | None,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        range_ = month_range(month)
+        query = (
+            self.table("performance_reviews")
+            .select(performance_review_select())
+            .gte("review_date", range_["from"])
+            .lte("review_date", range_["to"])
+            .order("review_date", desc=True)
+        )
+        employee_ids = self.scoped_employee_ids(company_name=company_name, company_names=company_names)
+        if employee_ids is not None:
+            if not employee_ids:
+                return {"month": range_["label"], "company": scope_label(company_name, company_names), "records": []}
+            query = query.in_("employee_id", employee_ids)
+        data, _count = execute(query)
+        return {
+            "month": range_["label"],
+            "company": scope_label(company_name, company_names),
+            "records": [performance_business_row(row) for row in data],
+        }
+
+    def insurance_changes_by_month(
+        self,
+        *,
+        month: str | None,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        range_ = month_range(month)
+        query = (
+            self.table("insurance_changes")
+            .select(insurance_change_select())
+            .gte("change_date", range_["from"])
+            .lte("change_date", range_["to"])
+            .order("change_date", desc=True)
+        )
+        employee_ids = self.scoped_employee_ids(company_name=company_name, company_names=company_names)
+        if employee_ids is not None:
+            if not employee_ids:
+                return {"month": range_["label"], "company": scope_label(company_name, company_names), "records": []}
+            query = query.in_("employee_id", employee_ids)
+        data, _count = execute(query)
+        return {
+            "month": range_["label"],
+            "company": scope_label(company_name, company_names),
+            "records": [insurance_change_business_row(row) for row in data],
+        }
+
+    def personnel_changes_list(
+        self,
+        *,
+        year: str | None = None,
+        change_reason: str | None = None,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        range_ = year_range(year)
+        query = (
+            self.table("personnel_changes")
+            .select(personnel_change_select())
+            .gte("effective_date", range_["from"])
+            .lte("effective_date", range_["to"])
+            .order("effective_date", desc=True)
+        )
+        if clean_optional(change_reason):
+            query = query.eq("change_reason", clean_optional(change_reason))
+        employee_ids = self.scoped_employee_ids(company_name=company_name, company_names=company_names)
+        if employee_ids is not None:
+            if not employee_ids:
+                return {"year": range_["label"], "company": scope_label(company_name, company_names), "records": []}
+            query = query.in_("employee_id", employee_ids)
+        data, _count = execute(query)
+        return {
+            "year": range_["label"],
+            "company": scope_label(company_name, company_names),
+            "reason": clean_optional(change_reason),
+            "records": [personnel_change_business_row(row) for row in data],
+        }
+
+    def seal_usage_list(
+        self,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        employee_name: str | None = None,
+    ) -> dict[str, Any]:
+        query = self.table("seal_usage").select(seal_usage_select()).order("usage_date", desc=True)
+        company_ids = self.scoped_company_ids(company_name=company_name, company_names=company_names)
+        if company_ids is not None:
+            if not company_ids:
+                return {"company": scope_label(company_name, company_names), "records": []}
+            query = query.in_("company_id", company_ids)
+        if clean_optional(date_from):
+            query = query.gte("usage_date", clean_optional(date_from))
+        if clean_optional(date_to):
+            query = query.lte("usage_date", clean_optional(date_to))
+        data, _count = execute(query)
+        records = [seal_usage_business_row(row) for row in data]
+        name = clean_optional(employee_name)
+        if name:
+            records = [
+                row
+                for row in records
+                if row.get("applicant") == name or row.get("seal_applicant") == name
+            ]
+        return {"company": scope_label(company_name, company_names), "records": records, "count": len(records)}
+
+    def employee_summary(
+        self,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        query = self.table("employees").select(
+            "id,name,status,id_card_number,phone,companies(name),departments(name)"
+        ).order("name")
+        company_ids = self.scoped_company_ids(company_name=company_name, company_names=company_names)
+        if company_ids is not None:
+            if not company_ids:
+                return empty_employee_summary(company_name, company_names, "no_company_matched")
+            query = query.in_("company_id", company_ids)
+        rows, _count = execute(query)
+        by_company: dict[str, dict[str, Any]] = {}
+        by_department: dict[str, dict[str, Any]] = {}
+        by_id_card: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        by_phone: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        empty_department: list[dict[str, Any]] = []
+        empty_id_card: list[dict[str, Any]] = []
+        for row in rows:
+            company = deep_get(row, "companies.name") or "(未归属公司)"
+            department = deep_get(row, "departments.name")
+            status = row.get("status") or "(空状态)"
+            company_item = summary_item(by_company, company)
+            company_item["total"] += 1
+            company_item["statuses"][status] = company_item["statuses"].get(status, 0) + 1
+            department_key = f"{company} / {department or '(空部门)'}"
+            department_item = summary_item(
+                by_department,
+                department_key,
+                {"company": company, "department": department},
+            )
+            department_item["total"] += 1
+            department_item["statuses"][status] = department_item["statuses"].get(status, 0) + 1
+            business_row = {
+                "name": row.get("name"),
+                "company": company,
+                "department": department,
+                "status": status,
+                "id_card_number": row.get("id_card_number"),
+                "phone": row.get("phone"),
+            }
+            if not department:
+                empty_department.append(business_row)
+            if not clean_optional(row.get("id_card_number")):
+                empty_id_card.append(business_row)
+            if clean_optional(row.get("id_card_number")):
+                by_id_card[clean_optional(row.get("id_card_number"))].append(business_row)
+            if clean_optional(row.get("phone")):
+                by_phone[clean_optional(row.get("phone"))].append(business_row)
+        return {
+            "total": len(rows),
+            "company": clean_optional(company_name),
+            "company_scope": [item for item in map(clean_optional, company_names or []) if item] or None,
+            "byCompany": [
+                {"company": company, "total": item["total"], "statuses": sort_object(item["statuses"])}
+                for company, item in by_company.items()
+            ],
+            "byDepartment": [
+                {
+                    "company": item["company"],
+                    "department": item["department"],
+                    "total": item["total"],
+                    "statuses": sort_object(item["statuses"]),
+                }
+                for item in by_department.values()
+            ],
+            "checks": {
+                "emptyDepartment": empty_department,
+                "emptyIdCard": empty_id_card,
+                "duplicateIdCards": duplicate_groups(by_id_card),
+                "duplicatePhones": duplicate_groups(by_phone),
+            },
+        }
+
+    def analyze_headcount(
+        self,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        summary = self.employee_summary(company_name=company_name, company_names=company_names)
+        active_statuses = {"正式", "试用", "合作协议", "实习"}
+        by_company = []
+        for item in summary["byCompany"]:
+            active = sum(count for status, count in item["statuses"].items() if status in active_statuses)
+            resigned = item["statuses"].get("离职", 0)
+            by_company.append({**item, "active": active, "resigned": resigned})
+        return {
+            "total": summary["total"],
+            "company": summary.get("company"),
+            "active": sum(row["active"] for row in by_company),
+            "resigned": sum(row["resigned"] for row in by_company),
+            "by_company": by_company,
+            "by_department": summary["byDepartment"],
+            "quality_flags": {
+                "empty_department_count": len(summary["checks"]["emptyDepartment"]),
+                "empty_id_card_count": len(summary["checks"]["emptyIdCard"]),
+                "duplicate_id_card_groups": len(summary["checks"]["duplicateIdCards"]),
+                "duplicate_phone_groups": len(summary["checks"]["duplicatePhones"]),
+            },
+        }
+
+    def analyze_contract_coverage(
+        self,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        employee_ids = self.scoped_employee_ids(company_name=company_name, company_names=company_names)
+        employee_query = self.table("employees").select(
+            "id,name,status,phone,id_card_number,companies(name),departments(name)"
+        ).order("name")
+        if employee_ids is not None:
+            if not employee_ids:
+                return {
+                    "employees_total": 0,
+                    "active_employees": 0,
+                    "contract_records": 0,
+                    "active_with_contracts": 0,
+                    "active_without_contracts": 0,
+                    "active_contract_coverage_rate": None,
+                    "contract_type_distribution": {},
+                    "active_without_contract_records": [],
+                }
+            employee_query = employee_query.in_("id", employee_ids)
+        employees, _count = execute(employee_query)
+        contract_query = self.table("contracts").select("employee_id,type,expiry_date,is_permanent")
+        if employee_ids is not None:
+            contract_query = contract_query.in_("employee_id", employee_ids)
+        contracts, _count = execute(contract_query)
+        employee_ids_with_contracts = {row.get("employee_id") for row in contracts}
+        active_employees = [row for row in employees if row.get("status") != "离职"]
+        active_without_contracts = [
+            employee_business_row(row)
+            for row in active_employees
+            if row.get("id") not in employee_ids_with_contracts
+        ]
+        active_with_contracts = len(active_employees) - len(active_without_contracts)
+        return {
+            "employees_total": len(employees),
+            "active_employees": len(active_employees),
+            "contract_records": len(contracts),
+            "active_with_contracts": active_with_contracts,
+            "active_without_contracts": len(active_without_contracts),
+            "active_contract_coverage_rate": round(active_with_contracts / len(active_employees), 4)
+            if active_employees
+            else None,
+            "contract_type_distribution": count_by(contracts, "type"),
+            "active_without_contract_records": active_without_contracts,
+        }
+
+    def analyze_contract_expiry(
+        self,
+        *,
+        days: str | int | None = None,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        range_days = int(clean_optional(days) or 90)
+        if range_days < 0:
+            raise RuntimeError(f"days must be a positive number: {days}")
+        today = date.today()
+        end = today + timedelta(days=range_days)
+        query = (
+            self.table("contracts")
+            .select(contract_select())
+            .eq("is_permanent", False)
+            .gte("expiry_date", today.isoformat())
+            .lte("expiry_date", end.isoformat())
+            .order("expiry_date")
+        )
+        employee_ids = self.scoped_employee_ids(company_name=company_name, company_names=company_names)
+        if employee_ids is not None:
+            if not employee_ids:
+                return {"days": range_days, "from": today.isoformat(), "to": end.isoformat(), "count": 0, "records": []}
+            query = query.in_("employee_id", employee_ids)
+        data, _count = execute(query)
+        records = [contract_business_row(row) for row in data]
+        return {"days": range_days, "from": today.isoformat(), "to": end.isoformat(), "count": len(records), "records": records}
+
+    def analyze_performance_month(self, **options: Any) -> dict[str, Any]:
+        result = self.performance_by_month(**options)
+        records = result["records"]
+        scores = [float(row["final_score"]) for row in records if is_number(row.get("final_score"))]
+        return {
+            "month": result["month"],
+            "company": result["company"],
+            "count": len(records),
+            "average_final_score": average(scores),
+            "min_final_score": min(scores) if scores else None,
+            "max_final_score": max(scores) if scores else None,
+            "low_score_count_below_60": len([row for row in records if to_float(row.get("final_score")) < 60]),
+            "performance_salary_total": sum_numeric(records, "performance_salary"),
+            "actual_performance_salary_total": sum_numeric(records, "actual_performance_salary"),
+            "performance_adjustment_total": sum_numeric(records, "performance_adjustment"),
+            "by_company": summarize_performance_by(records, "company"),
+            "records": records,
+        }
+
+    def analyze_low_performance(self, *, threshold: str | int | None = None, **options: Any) -> dict[str, Any]:
+        limit = float(clean_optional(threshold) or 60)
+        result = self.performance_by_month(**options)
+        records = sorted(
+            [row for row in result["records"] if to_float(row.get("final_score")) < limit],
+            key=lambda row: to_float(row.get("final_score")),
+        )
+        return {"month": result["month"], "company": result["company"], "threshold": limit, "count": len(records), "records": records}
+
+    def analyze_insurance_month(self, **options: Any) -> dict[str, Any]:
+        result = self.insurance_changes_by_month(**options)
+        records = result["records"]
+        return {
+            "month": result["month"],
+            "company": result["company"],
+            "count": len(records),
+            "by_status": count_by(records, "status"),
+            "by_company": count_by(records, "company"),
+            "add_count": len([row for row in records if clean_optional(row.get("insurance_add_date"))]),
+            "remove_count": len([row for row in records if clean_optional(row.get("insurance_remove_date"))]),
+            "records": records,
+        }
+
+    def analyze_disciplinary(
+        self,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        query = self.table("disciplinary_records").select(disciplinary_record_select()).order(DISCIPLINARY_DATE_FIELD, desc=True)
+        employee_ids = self.scoped_employee_ids(company_name=company_name, company_names=company_names)
+        if employee_ids is not None:
+            if not employee_ids:
+                return {"company": scope_label(company_name, company_names), "count": 0, "records": []}
+            query = query.in_("employee_id", employee_ids)
+        data, _count = execute(query)
+        records = [disciplinary_record_business_row(row) for row in data]
+        return {
+            "company": scope_label(company_name, company_names),
+            "count": len(records),
+            "by_company": count_by(records, "company"),
+            "by_penalty_type": count_by(records, "penalty_type"),
+            "missing_signed_upload_count": len([row for row in records if not row.get("signed_upload")]),
+            "records": records,
+        }
+
+    def pending_review_list(self) -> list[dict[str, Any]]:
+        modules = [
+            ("performance_reviews", "绩效"),
+            ("insurance_changes", "社医保"),
+            ("personnel_changes", "人事异动"),
+            ("disciplinary_records", "奖惩"),
+            ("seal_usage", "用章"),
+        ]
+        results: list[dict[str, Any]] = []
+        for table, label in modules:
+            try:
+                data, _count = execute(self.table(table).select("*").limit(500))
+            except Exception:
+                data = []
+            rows = [pending_review_business_row(row) for row in data if row_needs_review(row)]
+            results.append({"module": label, "source": table, "count": len(rows), "rows": rows})
+        return results
+
+    def data_quality_check(self) -> dict[str, Any]:
+        employee_summary = self.employee_summary()
+        return {
+            "employee_checks": employee_summary["checks"],
+            "employees_without_contracts": self.employees_without_contracts(),
+            "pending_reviews": [
+                {"module": item["module"], "count": item["count"], "source": item["source"]}
+                for item in self.pending_review_list()
+            ],
+        }
+
+    def analyze_hr_risk_dashboard(self) -> dict[str, Any]:
+        headcount = self.analyze_headcount()
+        coverage = self.analyze_contract_coverage()
+        expiry = self.analyze_contract_expiry(days=90)
+        pending = self.pending_review_list()
+        disciplinary = self.analyze_disciplinary()
+        return {
+            "counts": self.count_all_tables(),
+            "headcount_summary": {
+                "total": headcount["total"],
+                "active": headcount["active"],
+                "resigned": headcount["resigned"],
+                "quality_flags": headcount["quality_flags"],
+            },
+            "contract_summary": {
+                "active_contract_coverage_rate": coverage["active_contract_coverage_rate"],
+                "active_without_contracts": coverage["active_without_contracts"],
+                "expiring_in_90_days": expiry["count"],
+            },
+            "disciplinary_summary": {
+                "total": disciplinary["count"],
+                "missing_signed_upload_count": disciplinary["missing_signed_upload_count"],
+                "by_penalty_type": disciplinary["by_penalty_type"],
+            },
+            "pending_reviews": [
+                {"module": item["module"], "count": item["count"], "source": item["source"]}
+                for item in pending
+            ],
+            "recommended_actions": hr_risk_recommended_actions(headcount, coverage, expiry, disciplinary, pending),
+        }
+
+    def employees_without_contracts(self) -> dict[str, Any]:
+        employees, _count = execute(
+            self.table("employees")
+            .select("id,name,status,phone,id_card_number,companies(name),departments(name)")
+            .order("name")
+        )
+        contracts, _count = execute(self.table("contracts").select("employee_id"))
+        with_contracts = {row.get("employee_id") for row in contracts}
+        rows = [
+            {
+                "name": row.get("name"),
+                "company": deep_get(row, "companies.name"),
+                "department": deep_get(row, "departments.name"),
+                "status": row.get("status"),
+                "phone": row.get("phone"),
+                "id_card_number": row.get("id_card_number"),
+            }
+            for row in employees
+            if row.get("id") not in with_contracts
+        ]
+        by_company: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            item = summary_item(by_company, row.get("company") or "(未归属公司)")
+            item["total"] += 1
+            status = row.get("status") or "(空状态)"
+            item["statuses"][status] = item["statuses"].get(status, 0) + 1
+        return {
+            "total": len(rows),
+            "byCompany": [
+                {"company": company, "total": item["total"], "statuses": sort_object(item["statuses"])}
+                for company, item in by_company.items()
+            ],
+            "rows": rows,
+        }
+
+    def preview_org_seeds(self, *, plan: Any, company_name: str | None = None) -> dict[str, Any]:
+        plan = normalize_org_plan(plan, company_name)
+        assert_non_empty_org_plan(plan)
+        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.organization", action="write")
+        companies = []
+        departments = []
+        for company in plan.get("companies", []):
+            name = normalize_required(company.get("name"), "company name")
+            matches = self.find_company_by_name(name)
+            companies.append({"name": name, "action": "would_create" if not matches else "existing" if len(matches) == 1 else "ambiguous"})
+            for department in company.get("departments", []):
+                department_name = department if isinstance(department, str) else department.get("name")
+                if not clean_optional(department_name):
+                    continue
+                lookup = self.find_department(company_name=name, department_name=department_name)
+                departments.append(
+                    {
+                        "company": name,
+                        "name": department_name,
+                        "action": "would_create" if not lookup["departmentMatches"] else "existing",
+                    }
+                )
+        return {"companies": companies, "departments": departments}
+
+    def apply_org_seeds(self, *, plan: Any, confirm: str | None, company_name: str | None = None) -> dict[str, Any]:
+        if confirm != "创建公司和部门":
+            raise RuntimeError("applyOrgSeeds requires confirm: 创建公司和部门")
+        plan = normalize_org_plan(plan, company_name)
+        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.organization", action="write")
+        results = {"companies": [], "departments": []}
+        for company in plan.get("companies", []):
+            company_result = self.ensure_company(name=company.get("name"), short_name=company.get("short_name"))
+            record = company_result["record"]
+            results["companies"].append({"name": record["name"], "action": company_result["action"]})
+            for department in company.get("departments", []):
+                department_name = department if isinstance(department, str) else department.get("name")
+                if not clean_optional(department_name):
+                    continue
+                department_result = self.ensure_department(company_name=record["name"], department_name=department_name)
+                results["departments"].append(
+                    {
+                        "company": record["name"],
+                        "name": department_result["record"]["name"],
+                        "action": department_result["action"],
+                    }
+                )
+        return {"write": results, "verification": self.verify_org_seeds(plan=plan)}
+
+    def verify_org_seeds(self, *, plan: Any, company_name: str | None = None) -> dict[str, Any]:
+        plan = normalize_org_plan(plan, company_name)
+        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.organization", action="read")
+        results = []
+        for company in plan.get("companies", []):
+            company_name_value = normalize_required(company.get("name"), "company name")
+            company_matches = self.find_company_by_name(company_name_value)
+            results.append({"type": "company", "name": company_name_value, "ok": len(company_matches) == 1, "match_count": len(company_matches)})
+            for department in company.get("departments", []):
+                department_name = department if isinstance(department, str) else department.get("name")
+                if not clean_optional(department_name):
+                    continue
+                lookup = self.find_department(company_name=company_name_value, department_name=department_name)
+                results.append(
+                    {
+                        "type": "department",
+                        "company": company_name_value,
+                        "name": department_name,
+                        "ok": len(lookup["departmentMatches"]) == 1,
+                        "match_count": len(lookup["departmentMatches"]),
+                    }
+                )
+        return {"ok": all(item["ok"] for item in results), "results": results}
+
+    def delete_empty_departments(self, *, plan: Any, confirm: str | None) -> list[dict[str, Any]]:
+        self.assert_plan_company_scope(plan=plan, resource="hr.department", action="write")
+        if confirm != "删除空部门":
+            raise RuntimeError("deleteEmptyDepartments requires confirm: 删除空部门")
+        results = []
+        for record in normalize_records_plan(plan).get("records", []):
+            lookup = self.find_department(company_name=record.get("company"), department_name=record.get("department") or record.get("name"))
+            if len(lookup["departmentMatches"]) != 1:
+                results.append({"department": record.get("department") or record.get("name"), "action": "skipped", "reason": "department not uniquely matched"})
+                continue
+            department = lookup["departmentMatches"][0]
+            employees, count = execute(self.table("employees").select("*", count="exact", head=True).eq("department_id", department["id"]))
+            if count:
+                results.append({"department": department["name"], "action": "skipped", "reason": "department has employees", "employee_count": count})
+                continue
+            execute(self.table("departments").delete().eq("id", department["id"]))
+            results.append({"department": department["name"], "action": "deleted"})
+        return results
+
+    def preview_employee_seeds(self, *, plan: Any) -> dict[str, Any]:
+        self.assert_plan_company_scope(plan=plan, resource="hr.employee", action="write")
+        plan = normalize_records_plan(plan, normalize_employee_seed_record)
+        records = []
+        for record in plan["records"]:
+            preview = dict(record)
+            preview["match"] = {
+                "company": self.find_company_by_name(record.get("company")),
+                "department": self.find_department(company_name=record.get("company"), department_name=record.get("department")) if record.get("department") else None,
+                "existing_employee_count": len(self.find_existing_employee(record)),
+            }
+            records.append(preview)
+        return {"summary": {"records": len(records), "with_existing_employee": len([row for row in records if row["match"]["existing_employee_count"] > 0]), "by_company": count_by(records, "company")}, "records": records}
+
+    def apply_employee_seeds(self, *, plan: Any, confirm: str | None) -> dict[str, Any]:
+        self.assert_plan_company_scope(plan=plan, resource="hr.employee", action="write")
+        if confirm != "导入员工主档":
+            raise RuntimeError("applyEmployeeSeeds requires confirm: 导入员工主档")
+        plan = normalize_records_plan(plan, normalize_employee_seed_record)
+        results = []
+        for record in plan["records"]:
+            company_matches = self.find_company_by_name(record.get("company"))
+            if len(company_matches) != 1:
+                results.append({"name": record.get("name"), "action": "skipped", "reason": "company not uniquely matched"})
+                continue
+            department = None
+            if clean_optional(record.get("department")):
+                department_lookup = self.find_department(company_name=record.get("company"), department_name=record.get("department"))
+                if len(department_lookup["departmentMatches"]) != 1:
+                    results.append({"name": record.get("name"), "action": "skipped", "reason": "department not uniquely matched", "department": record.get("department")})
+                    continue
+                department = department_lookup["departmentMatches"][0]
+            existing = self.find_existing_employee(record)
+            if existing:
+                results.append({"name": record.get("name"), "action": "existing", "reason": "employee already exists"})
+                continue
+            payload = employee_payload(record, company_matches[0]["id"], department.get("id") if department else None)
+            data = execute_one(self.table("employees").insert(payload).select(employee_select()).single())
+            results.append({"name": data.get("name"), "action": "created", "status": data.get("status"), "department": department.get("name") if department else None})
+        return {"write": results, "verification": self.verify_employee_seeds(plan=plan)}
+
+    def verify_employee_seeds(self, *, plan: Any) -> dict[str, Any]:
+        self.assert_plan_company_scope(plan=plan, resource="hr.employee", action="read")
+        plan = normalize_records_plan(plan, normalize_employee_seed_record)
+        fields = ["name", "gender", "birth_date", "position", "hire_date", "probation_end_date", "status", "phone", "id_card_number", "id_card_expiry", "education", "school", "graduation_date", "major", "current_address", "hukou_address", "bank_account", "bank_name", "resignation_date", "resignation_reason", "notes"]
+        results = []
+        for record in plan["records"]:
+            matches = self.find_existing_employee(record)
+            if len(matches) != 1:
+                results.append({"name": record.get("name"), "id_card_number": clean_optional(record.get("id_card_number")), "ok": False, "diffs": [{"field": "employee", "expected": "unique match", "actual": f"{len(matches)} matches"}]})
+                continue
+            data = execute_one(self.table("employees").select("*,companies(name),departments(name)").eq("id", matches[0]["id"]).single())
+            diffs: list[dict[str, Any]] = []
+            compare_field(diffs, "company", record.get("company"), deep_get(data, "companies.name"))
+            compare_field(diffs, "department", record.get("department"), deep_get(data, "departments.name"))
+            for field in fields:
+                compare_field(diffs, field, record.get(field), data.get(field))
+            results.append({"name": record.get("name"), "id_card_number": clean_optional(record.get("id_card_number")), "ok": not diffs, "diffs": diffs})
+        return {"ok": all(item["ok"] for item in results), "results": results}
+
+    def find_existing_employee(self, record: dict[str, Any]) -> list[dict[str, Any]]:
+        if record.get("allow_duplicate_identity") is True:
+            return self.find_employee_candidates(name=record.get("name"), company_name=record.get("company"), department_name=record.get("department")).get("candidates", [])
+        if clean_optional(record.get("id_card_number")):
+            return self.find_employee_by_id_card(record.get("id_card_number"))
+        if clean_optional(record.get("phone")):
+            return self.find_employee_by_phone(record.get("phone"))
+        return self.find_employee_candidates(name=record.get("name"), company_name=record.get("company"), department_name=record.get("department")).get("candidates", [])
+
+    def delete_employee_records(self, *, plan: Any, confirm: str | None) -> list[dict[str, Any]]:
+        self.assert_plan_company_scope(plan=plan, resource="hr.employee", action="delete")
+        if confirm != "删除员工记录":
+            raise RuntimeError("deleteEmployeeRecords requires confirm: 删除员工记录")
+        results = []
+        for record in normalize_records_plan(plan).get("records", []):
+            matches = [row for row in self.find_existing_employee(record) if employee_matches_expected(row, record)]
+            if len(matches) != 1:
+                results.append({"name": record.get("name"), "action": "skipped", "reason": f"expected one exact employee match, found {len(matches)}"})
+                continue
+            employee = matches[0]
+            child_counts = self.employee_child_record_counts(employee["id"])
+            non_zero = {key: value for key, value in child_counts.items() if value > 0}
+            if non_zero and record.get("allow_child_delete") is not True:
+                results.append({"name": employee.get("name"), "action": "skipped", "reason": "employee has child records", "child_counts": non_zero})
+                continue
+            execute(self.table("employees").delete().eq("id", employee["id"]))
+            results.append({"name": employee.get("name"), "action": "deleted", "company": deep_get(employee, "companies.name"), "department": deep_get(employee, "departments.name"), "child_counts": child_counts})
+        return results
+
+    def verify_employee_deletions(self, *, plan: Any) -> dict[str, Any]:
+        self.assert_plan_company_scope(plan=plan, resource="hr.employee", action="read")
+        results = []
+        for record in normalize_records_plan(plan).get("records", []):
+            matches = [row for row in self.find_existing_employee(record) if employee_matches_expected(row, record)]
+            results.append({"name": record.get("name"), "ok": len(matches) == 0, "remaining_matches": [employee_business_row(row) for row in matches]})
+        return {"ok": all(item["ok"] for item in results), "results": results}
+
+    def employee_child_record_counts(self, employee_id: str) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for table in ["contracts", "performance_reviews", "insurance_changes", "personnel_changes", "disciplinary_records", "overtime_records", "work_injuries"]:
+            _rows, count = execute(self.table(table).select("*", count="exact", head=True).eq("employee_id", employee_id))
+            counts[table] = int(count or 0)
+        for label, column in {"seal_usage_applicant": "applicant_id", "seal_usage_user": "seal_applicant_id"}.items():
+            _rows, count = execute(self.table("seal_usage").select("*", count="exact", head=True).eq(column, employee_id))
+            counts[label] = int(count or 0)
+        return counts
+
+    def clear_business_data(self, *, confirm: str | None) -> list[dict[str, Any]]:
+        if confirm != "清空人事业务数据":
+            raise RuntimeError("clearBusinessData requires confirm: 清空人事业务数据")
+        results = []
+        for item in CLEAR_ORDER:
+            before = self.count_table(item["table"])
+            execute(self.table(item["table"]).delete().neq("id", ZERO_UUID))
+            after = self.count_table(item["table"])
+            results.append({**item, "before": before, "after": after})
+        return results
+
+    def apply_employee_nickname_cleanup(self, *, plan: Any, confirm: str | None) -> list[dict[str, Any]]:
+        self.assert_plan_company_scope(plan=plan, resource="hr.employee", action="write")
+        if confirm != "清理员工姓名花名":
+            raise RuntimeError("applyEmployeeNicknameCleanup requires confirm: 清理员工姓名花名")
+        results = []
+        for record in normalize_records_plan(plan).get("records", []):
+            employee_id = normalize_required(record.get("id"), "employee id")
+            new_name = normalize_required(record.get("new_name"), "new employee name")
+            new_notes = clean_optional(record.get("new_notes"))
+            current = execute_one(
+                self.table("employees")
+                .select("id,name,notes,companies(name),departments(name)")
+                .eq("id", employee_id)
+                .single()
+            )
+            if current and current.get("name") == new_name and normalize_comparable(current.get("notes")) == normalize_comparable(new_notes):
+                results.append({"name": new_name, "action": "unchanged"})
+                continue
+            data = execute_one(
+                self.table("employees")
+                .update({"name": new_name, "notes": new_notes})
+                .eq("id", employee_id)
+                .select("id,name,notes,companies(name),departments(name)")
+                .single()
+            )
+            results.append(
+                {
+                    "old_name": record.get("old_name"),
+                    "name": data.get("name"),
+                    "action": "updated",
+                    "company": deep_get(data, "companies.name"),
+                    "department": deep_get(data, "departments.name"),
+                }
+            )
+        return results
+
+    def verify_employee_nickname_cleanup(self, *, plan: Any) -> dict[str, Any]:
+        self.assert_plan_company_scope(plan=plan, resource="hr.employee", action="read")
+        results = []
+        for record in normalize_records_plan(plan).get("records", []):
+            employee_id = normalize_required(record.get("id"), "employee id")
+            data = execute_one(
+                self.table("employees")
+                .select("id,name,notes,companies(name),departments(name)")
+                .eq("id", employee_id)
+                .single()
+            )
+            diffs: list[dict[str, Any]] = []
+            compare_field(diffs, "name", record.get("new_name"), data.get("name") if data else None)
+            compare_field(diffs, "notes", record.get("new_notes"), data.get("notes") if data else None)
+            results.append(
+                {
+                    "old_name": record.get("old_name"),
+                    "name": record.get("new_name"),
+                    "ok": not diffs,
+                    "diffs": diffs,
+                }
+            )
+        return {"ok": all(item["ok"] for item in results), "results": results}
+
+    def preview_generic_seeds(self, *, plan: Any, resource: str, normalizer: Callable[[dict[str, Any]], dict[str, Any]], name_field: str = "employee_name") -> dict[str, Any]:
+        self.assert_plan_company_scope(plan=plan, resource=resource, action="write")
+        plan = self.prepare_generic_employee_plan(plan, normalizer)
+        return {"summary": preview_summary(plan["records"], name_field), "records": plan["records"]}
+
+    def apply_generic_seeds(self, *, plan: Any, confirm: str | None, expected_confirm: str, resource: str, table: str, normalizer: Callable[[dict[str, Any]], dict[str, Any]], payload_builder: Callable[[dict[str, Any], str], dict[str, Any]], select: str, existing_finder: Callable[[dict[str, Any]], list[dict[str, Any]]], label: str, name_field: str = "employee_name") -> dict[str, Any]:
+        self.assert_plan_company_scope(plan=plan, resource=resource, action="write")
+        if confirm != expected_confirm:
+            raise RuntimeError(f"{label} requires confirm: {expected_confirm}")
+        plan = self.prepare_generic_employee_plan(plan, normalizer)
+        results = []
+        for record in plan["records"]:
+            employee = deep_get(record, "match.employee")
+            if not employee:
+                results.append({"name": record.get(name_field), "action": "skipped", "reason": "employee not matched"})
+                continue
+            existing = existing_finder(record)
+            if existing:
+                results.append({"name": record.get(name_field), "action": "existing", "reason": f"{table} already exists"})
+                continue
+            data = execute_one(self.table(table).insert(payload_builder(record, employee["id"])).select(select).single())
+            results.append({"name": deep_get(data, "employees.name") or record.get(name_field), "action": "created"})
+        return {"write": results, "verification": self.verify_generic_seeds(plan=plan, resource=resource, normalizer=normalizer, fields=[], existing_finder=existing_finder, label=label)}
+
+    def verify_generic_seeds(self, *, plan: Any, resource: str, normalizer: Callable[[dict[str, Any]], dict[str, Any]], fields: list[str], existing_finder: Callable[[dict[str, Any]], list[dict[str, Any]]], label: str) -> dict[str, Any]:
+        self.assert_plan_company_scope(plan=plan, resource=resource, action="read")
+        plan = self.prepare_generic_employee_plan(plan, normalizer)
+        results = []
+        for record in plan["records"]:
+            matches = existing_finder(record)
+            diffs: list[dict[str, Any]] = []
+            if len(matches) != 1:
+                diffs.append({"field": label, "expected": "unique match", "actual": f"{len(matches)} matches"})
+            else:
+                compare_field(diffs, "employee", deep_get(record, "match.employee.name"), deep_get(matches[0], "employees.name"))
+                for field in fields:
+                    compare_field(diffs, field, record.get(field), matches[0].get(field))
+            results.append({"name": record.get("employee_name"), "ok": not diffs, "diffs": diffs})
+        return {"ok": all(item["ok"] for item in results), "results": results}
+
+    def prepare_generic_employee_plan(self, plan: Any, normalizer: Callable[[dict[str, Any]], dict[str, Any]]) -> dict[str, Any]:
+        plan = normalize_records_plan(plan, normalizer)
+        records = []
+        for record in plan["records"]:
+            prepared = dict(record)
+            prepared.setdefault("match", {})
+            prepared["match"].setdefault("employee", self.match_employee_by_name_and_company(prepared.get("employee_name"), prepared.get("company")))
+            records.append(prepared)
+        return {**plan, "records": records}
+
+    def match_employee_by_name_and_company(self, name: str | None, company: str | None) -> dict[str, Any] | None:
+        if not clean_optional(name):
+            return None
+        result = self.find_employee_candidates(name=name, company_name=company)
+        candidates = result.get("candidates") or []
+        return insurance_employee(candidates[0]) if len(candidates) == 1 else None
+
+    def find_existing_contract(self, record: dict[str, Any]) -> list[dict[str, Any]]:
+        employee = deep_get(record, "match.employee")
+        if not employee:
+            return []
+        query = self.table("contracts").select(contract_select()).eq("employee_id", employee["id"]).eq("type", normalize_required(record.get("type"), "contract type"))
+        for field in ["start_date", "expiry_date", "sequence"]:
+            value = clean_optional(record_field_value(record, field))
+            query = query.eq(field, int(value) if field == "sequence" and value else value) if value else query.is_(field, None)
+        data, _count = execute(query.limit(5))
+        return data
+
+    def find_existing_by_employee_fields(self, table: str, select: str, record: dict[str, Any], required_fields: list[str], nullable_fields: list[str]) -> list[dict[str, Any]]:
+        employee = deep_get(record, "match.employee")
+        if not employee:
+            return []
+        query = self.table(table).select(select).eq("employee_id", employee["id"])
+        for field in required_fields:
+            query = query.eq(field, normalize_required(record.get(field), field))
+        for field in nullable_fields:
+            value = clean_optional(record.get(field))
+            query = query.eq(field, value) if value else query.is_(field, None)
+        data, _count = execute(query.limit(5))
+        return data
+
+    def apply_disciplinary_attachments(self, *, plan: Any, confirm: str | None) -> list[dict[str, Any]]:
+        self.assert_plan_company_scope(plan=plan, resource="hr.disciplinary", action="write")
+        if confirm != "回填奖惩附件":
+            raise RuntimeError("applyDisciplinaryAttachments requires confirm: 回填奖惩附件")
+        storage = getattr(getattr(self.db, "client", None), "storage", None)
+        if storage is None:
+            raise RuntimeError("当前 Python PostgREST adapter 不支持 Storage 上传，请改用已公开 URL 写入 signed_upload")
+        bucket = "hr-documents"
+        results = []
+        for record in normalize_records_plan(plan, normalize_named_employee_record).get("records", []):
+            local_file = normalize_required(record.get("local_file"), "local attachment file")
+            storage_path = normalize_required(record.get("storage_path"), "storage path")
+            prepared = self.prepare_generic_employee_plan([record], normalize_named_employee_record)["records"][0]
+            matches = self.find_existing_by_employee_fields(
+                "disciplinary_records",
+                disciplinary_record_select(),
+                prepared,
+                ["penalty_type", "penalty_reason"],
+                [DISCIPLINARY_DATE_FIELD],
+            )
+            if len(matches) != 1:
+                results.append({"name": record.get("employee_name"), "action": "skipped", "reason": f"{len(matches)} matching disciplinary records"})
+                continue
+            content = Path(local_file).read_bytes()
+            upload = storage.from_(bucket).upload(storage_path, content, {"upsert": True})
+            error = getattr(upload, "error", None) or (upload.get("error") if isinstance(upload, dict) else None)
+            if error:
+                raise RuntimeError(f"upload disciplinary attachment failed ({record.get('employee_name')}): {error}")
+            public = storage.from_(bucket).get_public_url(storage_path)
+            public_url = deep_get(public, "data.publicUrl") if isinstance(public, dict) else getattr(getattr(public, "data", None), "publicUrl", None)
+            execute(self.table("disciplinary_records").update({"signed_upload": [public_url]}).eq("id", matches[0]["id"]))
+            results.append(
+                {
+                    "name": record.get("employee_name"),
+                    "action": "uploaded",
+                    "incident_date": record.get("incident_date"),
+                    "penalty_type": record.get("penalty_type"),
+                    "storage_path": storage_path,
+                    "public_url": public_url,
+                }
+            )
+        return results
+
+    def verify_disciplinary_attachments(self, *, plan: Any) -> dict[str, Any]:
+        self.assert_plan_company_scope(plan=plan, resource="hr.disciplinary", action="read")
+        results = []
+        for record in normalize_records_plan(plan, normalize_named_employee_record).get("records", []):
+            prepared = self.prepare_generic_employee_plan([record], normalize_named_employee_record)["records"][0]
+            matches = self.find_existing_by_employee_fields(
+                "disciplinary_records",
+                disciplinary_record_select(),
+                prepared,
+                ["penalty_type", "penalty_reason"],
+                [DISCIPLINARY_DATE_FIELD],
+            )
+            diffs: list[dict[str, Any]] = []
+            if len(matches) != 1:
+                diffs.append({"field": "disciplinary_record", "expected": "unique match", "actual": f"{len(matches)} matches"})
+            elif record.get("public_url"):
+                compare_field(diffs, "signed_upload", [record.get("public_url")], matches[0].get("signed_upload"))
+            results.append(
+                {
+                    "name": record.get("employee_name"),
+                    "incident_date": record.get("incident_date"),
+                    "penalty_type": record.get("penalty_type"),
+                    "ok": not diffs,
+                    "diffs": diffs,
+                }
+            )
+        return {"ok": all(item["ok"] for item in results), "results": results}
+
+    def preview_seal_usage_seeds(self, *, plan: Any) -> dict[str, Any]:
+        self.assert_plan_company_scope(plan=plan, resource="hr.seal_usage", action="write")
+        plan = self.prepare_seal_usage_plan(plan)
+        return {
+            "summary": {
+                "records": len(plan["records"]),
+                "matched_companies": len([row for row in plan["records"] if deep_get(row, "match.company.company")]),
+            },
+            "records": plan["records"],
+        }
+
+    def apply_seal_usage_seeds(self, *, plan: Any, confirm: str | None) -> dict[str, Any]:
+        self.assert_plan_company_scope(plan=plan, resource="hr.seal_usage", action="write")
+        if confirm != "导入用章记录":
+            raise RuntimeError("applySealUsageSeeds requires confirm: 导入用章记录")
+        plan = self.prepare_seal_usage_plan(plan)
+        results = []
+        for record in plan["records"]:
+            company = deep_get(record, "match.company.company")
+            if not company:
+                results.append({"reason": record.get("reason"), "action": "skipped", "detail": "company not matched"})
+                continue
+            existing = self.find_existing_seal_usage(record)
+            if existing:
+                results.append({"reason": record.get("reason"), "action": "existing", "usage_date": record.get("usage_date")})
+                continue
+            data = execute_one(self.table("seal_usage").insert(seal_usage_payload(record, company["id"])).select(seal_usage_select()).single())
+            results.append(
+                {
+                    "reason": data.get("reason"),
+                    "action": "created",
+                    "usage_date": data.get("usage_date"),
+                    "seal_applicant": deep_get(data, "seal_applicant.name"),
+                }
+            )
+        return {"write": results, "verification": self.verify_seal_usage_seeds(plan=plan)}
+
+    def verify_seal_usage_seeds(self, *, plan: Any) -> dict[str, Any]:
+        self.assert_plan_company_scope(plan=plan, resource="hr.seal_usage", action="read")
+        plan = self.prepare_seal_usage_plan(plan)
+        results = []
+        for record in plan["records"]:
+            matches = self.find_existing_seal_usage(record)
+            diffs: list[dict[str, Any]] = []
+            if len(matches) != 1:
+                diffs.append({"field": "seal_usage", "expected": "unique match", "actual": f"{len(matches)} matches"})
+            else:
+                data = matches[0]
+                compare_field(diffs, "company", record.get("company"), deep_get(data, "companies.name"))
+                compare_field(diffs, "applicant", deep_get(record, "match.applicant.employee.name"), deep_get(data, "applicant.name"))
+                compare_field(diffs, "seal_applicant", deep_get(record, "match.seal_applicant.employee.name"), deep_get(data, "seal_applicant.name"))
+                for field in ["usage_date", "reason", "attachments", "notes"]:
+                    compare_field(diffs, field, record.get(field), data.get(field))
+            results.append({"reason": record.get("reason"), "usage_date": record.get("usage_date"), "ok": not diffs, "diffs": diffs})
+        return {"ok": all(item["ok"] for item in results), "results": results}
+
+    def prepare_seal_usage_plan(self, plan: Any) -> dict[str, Any]:
+        plan = normalize_records_plan(plan, normalize_seal_usage_seed_record)
+        records = []
+        for record in plan["records"]:
+            prepared = dict(record)
+            company_matches = self.find_company_by_name(prepared.get("company"))
+            prepared.setdefault("match", {})
+            prepared["match"].setdefault(
+                "company",
+                {
+                    "status": "matched" if len(company_matches) == 1 else "ambiguous" if len(company_matches) > 1 else "unmatched",
+                    "company": company_matches[0] if len(company_matches) == 1 else None,
+                },
+            )
+            if prepared.get("applicant"):
+                prepared["match"].setdefault(
+                    "applicant",
+                    {"employee": self.match_employee_by_name_and_company(prepared.get("applicant"), prepared.get("company"))},
+                )
+            if prepared.get("seal_applicant"):
+                prepared["match"].setdefault(
+                    "seal_applicant",
+                    {"employee": self.match_employee_by_name_and_company(prepared.get("seal_applicant"), prepared.get("company"))},
+                )
+            records.append(prepared)
+        return {**plan, "records": records}
+
+    def find_existing_seal_usage(self, record: dict[str, Any]) -> list[dict[str, Any]]:
+        company = deep_get(record, "match.company.company")
+        if not company:
+            return []
+        query = self.table("seal_usage").select(seal_usage_select()).eq("company_id", company["id"]).eq("reason", normalize_required(record.get("reason"), "seal usage reason"))
+        usage_date = clean_optional(record.get("usage_date"))
+        query = query.eq("usage_date", usage_date) if usage_date else query.is_("usage_date", None)
+        applicant = deep_get(record, "match.applicant.employee")
+        query = query.eq("applicant_id", applicant["id"]) if applicant else query.is_("applicant_id", None)
+        seal_applicant = deep_get(record, "match.seal_applicant.employee")
+        query = query.eq("seal_applicant_id", seal_applicant["id"]) if seal_applicant else query.is_("seal_applicant_id", None)
+        data, _count = execute(query.limit(5))
+        return data
+
+
+def employee_select() -> str:
+    return "id,name,gender,phone,id_card_number,position,hire_date,status,companies(name,short_name),departments(name)"
+
+
+def employee_detail_select() -> str:
+    return "id,name,gender,birth_date,phone,id_card_number,id_card_expiry,position,hire_date,probation_end_date,status,education,school,graduation_date,major,current_address,hukou_address,bank_account,bank_name,resignation_date,resignation_reason,notes,companies(name,short_name),departments(name)"
+
+
+def contract_select() -> str:
+    return "id,type,sequence,sign_date,duration_years,start_date,expiry_date,is_permanent,scan_file_url,notes,employees(id,name,phone,id_card_number,companies(name))"
+
+
+def performance_review_select() -> str:
+    return "id,review_date,self_score,supervisor_score,final_score,performance_ratio,performance_salary,actual_performance_salary,performance_adjustment,notes,employees(id,name,phone,id_card_number,companies(name))"
+
+
+def insurance_change_select() -> str:
+    return "id,change_date,hire_date,probation_end_date,resignation_date,insurance_add_date,insurance_remove_date,status,signed_upload,hr_clerk,notes,employees(id,name,phone,id_card_number,companies(name))"
+
+
+def personnel_change_select() -> str:
+    return "id,current_department,current_position,probation_salary,regular_salary,new_department,new_position,change_reason,salary_before,salary_after,effective_date,procedures_complete,signed_upload,hr_clerk,notes,employees(id,name,phone,id_card_number,companies(name))"
+
+
+def disciplinary_record_select() -> str:
+    return "id,incident_dates,penalty_type,penalty_reason,signed_upload,hr_clerk,employees(id,name,phone,id_card_number,companies(name))"
+
+
+def seal_usage_select() -> str:
+    return "id,usage_date,reason,attachments,notes,companies(id,name),applicant:employees!seal_usage_applicant_id_fkey(id,name,phone,id_card_number,companies(name)),seal_applicant:employees!seal_usage_seal_applicant_id_fkey(id,name,phone,id_card_number,companies(name))"
+
+
+def clean_optional(value: Any) -> str | None:
+    normalized = str(value).strip() if value is not None else ""
+    return normalized or None
+
+
+def normalize_required(value: Any, label: str) -> str:
+    normalized = clean_optional(value)
+    if not normalized:
+        raise RuntimeError(f"{label} is required")
+    return normalized
+
+
+def deep_get(value: Any, path: str) -> Any:
+    current = value
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def scope_label(company_name: str | None, company_names: list[str] | None) -> str | list[str] | None:
+    company = clean_optional(company_name)
+    if company:
+        return company
+    companies = [item for item in map(clean_optional, company_names or []) if item]
+    return companies or None
+
+
+def employee_business_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "name": row.get("name"),
+        "company": deep_get(row, "companies.name"),
+        "department": deep_get(row, "departments.name"),
+        "status": row.get("status"),
+        "position": row.get("position"),
+        "hire_date": row.get("hire_date"),
+        "phone": row.get("phone"),
+        "id_card_number": row.get("id_card_number"),
+    }
+
+
+def employee_detail_business_row(row: dict[str, Any]) -> dict[str, Any]:
+    base = employee_business_row(row)
+    for field in [
+        "gender",
+        "birth_date",
+        "id_card_expiry",
+        "probation_end_date",
+        "education",
+        "school",
+        "graduation_date",
+        "major",
+        "current_address",
+        "hukou_address",
+        "bank_account",
+        "bank_name",
+        "resignation_date",
+        "resignation_reason",
+        "notes",
+    ]:
+        base[field] = row.get(field)
+    return base
+
+
+def contract_business_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {field: row.get(field) for field in ["type", "sequence", "sign_date", "duration_years", "start_date", "expiry_date", "is_permanent", "scan_file_url", "notes"]} | {"employee": deep_get(row, "employees.name")}
+
+
+def performance_business_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {field: row.get(field) for field in ["review_date", "self_score", "supervisor_score", "final_score", "performance_ratio", "performance_salary", "actual_performance_salary", "performance_adjustment", "notes"]} | {"employee": deep_get(row, "employees.name"), "company": deep_get(row, "employees.companies.name")}
+
+
+def insurance_change_business_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {field: row.get(field) for field in ["change_date", "hire_date", "probation_end_date", "resignation_date", "insurance_add_date", "insurance_remove_date", "status", "signed_upload", "hr_clerk", "notes"]} | {"employee": deep_get(row, "employees.name"), "company": deep_get(row, "employees.companies.name")}
+
+
+def personnel_change_business_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {field: row.get(field) for field in ["current_department", "current_position", "probation_salary", "regular_salary", "new_department", "new_position", "change_reason", "salary_before", "salary_after", "effective_date", "procedures_complete", "signed_upload", "hr_clerk", "notes"]} | {"employee": deep_get(row, "employees.name"), "company": deep_get(row, "employees.companies.name")}
+
+
+def disciplinary_record_business_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "incident_date": row.get(DISCIPLINARY_DATE_FIELD) or row.get("incident_date"),
+        **{field: row.get(field) for field in ["penalty_type", "penalty_reason", "signed_upload", "hr_clerk"]},
+    } | {"employee": deep_get(row, "employees.name"), "company": deep_get(row, "employees.companies.name")}
+
+
+def seal_usage_business_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "company": deep_get(row, "companies.name"),
+        "usage_date": row.get("usage_date"),
+        "applicant": deep_get(row, "applicant.name"),
+        "seal_applicant": deep_get(row, "seal_applicant.name"),
+        "reason": row.get("reason"),
+        "attachments": row.get("attachments"),
+        "notes": row.get("notes"),
+    }
+
+
+def pending_review_business_row(row: dict[str, Any]) -> dict[str, Any]:
+    preview_reason = "；".join(row.get("preview_issues") or [])
+    return {
+        "company": row.get("company"),
+        "department": row.get("department") or row.get("current_department"),
+        "name": row.get("name") or row.get("employee_name"),
+        "date": row.get("review_date") or row.get("change_date") or row.get("effective_date") or row.get("incident_date") or row.get(DISCIPLINARY_DATE_FIELD) or row.get("source_incident_date"),
+        "type": row.get("status") or row.get("change_reason") or row.get("penalty_type"),
+        "reason": row.get("reason") or preview_reason or "需人事确认",
+        "source_file": row.get("source_file"),
+        "source_sheet": row.get("source_sheet"),
+        "source_row": row.get("source_row"),
+    }
+
+
+def row_needs_review(row: dict[str, Any]) -> bool:
+    return bool(row.get("preview_issues") or row.get("needs_review") or row.get("pending_review"))
+
+
+def month_range(value: str | None) -> dict[str, str]:
+    normalized = normalize_required(value, "month")
+    if len(normalized) == 10:
+        from_date = normalized
+        label = normalized[:7]
+    elif len(normalized) == 7:
+        from_date = f"{normalized}-01"
+        label = normalized
+    else:
+        raise RuntimeError(f"month expected as YYYY-MM: {value}")
+    parsed = datetime.strptime(from_date, "%Y-%m-%d").replace(tzinfo=UTC).date()
+    if parsed.month == 12:
+        next_month = date(parsed.year + 1, 1, 1)
+    else:
+        next_month = date(parsed.year, parsed.month + 1, 1)
+    to_date = next_month - timedelta(days=1)
+    return {"label": label, "from": from_date, "to": to_date.isoformat()}
+
+
+def year_range(value: str | None) -> dict[str, str]:
+    label = clean_optional(value) or str(date.today().year)
+    if len(label) != 4 or not label.isdigit():
+        raise RuntimeError(f"year expected as YYYY: {value}")
+    return {"label": label, "from": f"{label}-01-01", "to": f"{label}-12-31"}
+
+
+def normalize_records_plan(plan: Any, normalizer: Callable[[dict[str, Any]], dict[str, Any]] | None = None) -> dict[str, Any]:
+    if isinstance(plan, list):
+        raw = plan
+        base = {}
+    elif isinstance(plan, dict) and isinstance(plan.get("records"), list):
+        raw = plan["records"]
+        base = dict(plan)
+    elif isinstance(plan, dict):
+        raw = [plan]
+        base = dict(plan)
+    else:
+        raw = []
+        base = {}
+    records = [normalizer(record) if normalizer else dict(record) for record in raw if isinstance(record, dict)]
+    if not records:
+        raise RuntimeError("录入计划未包含 records 数据，请先根据用户自然语言生成 JSON 对象或 records 数组")
+    return {**base, "records": records}
+
+
+def normalize_org_plan(plan: Any, fallback_company_name: str | None = None) -> dict[str, Any]:
+    if isinstance(plan, list):
+        company = clean_optional(fallback_company_name)
+        return {"companies": [{"name": company, "departments": plan}]} if company else {"companies": []}
+    if not isinstance(plan, dict):
+        return {"companies": []}
+    if isinstance(plan.get("companies"), list):
+        companies = [{**company, "departments": list(company.get("departments") or [])} for company in plan["companies"]]
+        for department in plan.get("departments") or []:
+            company_name = clean_optional(department.get("company") or department.get("companyName") or department.get("company_name") or fallback_company_name)
+            if not company_name:
+                continue
+            company = next((item for item in companies if clean_optional(item.get("name")) == company_name), None)
+            if not company:
+                company = {"name": company_name, "departments": []}
+                companies.append(company)
+            company["departments"].append(department)
+        return {**plan, "companies": companies}
+    company_name = clean_optional(plan.get("company") or plan.get("companyName") or plan.get("company_name") or fallback_company_name)
+    if not company_name:
+        return {"companies": []}
+    departments = plan.get("departments") if isinstance(plan.get("departments"), list) else ([plan.get("department")] if isinstance(plan.get("department"), dict) else ([{"name": plan.get("name"), "remark": plan.get("remark"), "notes": plan.get("notes")}] if clean_optional(plan.get("name")) else []))
+    return {**plan, "companies": [{"name": company_name, "departments": departments}]}
+
+
+def assert_non_empty_org_plan(plan: dict[str, Any]) -> None:
+    count = len(plan.get("companies") or []) + sum(len(company.get("departments") or []) for company in plan.get("companies") or [])
+    if count == 0:
+        raise RuntimeError("录入计划未包含公司或部门数据，请先根据用户自然语言生成包含 company/departments 的 JSON")
+
+
+def normalize_employee_seed_record(record: dict[str, Any]) -> dict[str, Any]:
+    return {**record, "id_card_number": clean_optional(record.get("id_card_number")) or clean_optional(record.get("id_card")), "notes": clean_optional(record.get("notes")) or clean_optional(record.get("remark"))}
+
+
+def normalize_contract_seed_record(record: dict[str, Any]) -> dict[str, Any]:
+    contract_type = clean_optional(record.get("type")) or clean_optional(record.get("contract_type"))
+    return {**record, "employee_name": clean_optional(record.get("employee_name")) or clean_optional(record.get("name")), "type": contract_type, "start_date": clean_optional(record.get("start_date")) or clean_optional(record.get("contract_start")), "expiry_date": clean_optional(record.get("expiry_date")) or clean_optional(record.get("contract_end")) or clean_optional(record.get("end_date")), "is_permanent": record.get("is_permanent") if "is_permanent" in record else bool(contract_type and "无固定期限" in contract_type), "notes": clean_optional(record.get("notes")) or clean_optional(record.get("remark"))}
+
+
+def normalize_named_employee_record(record: dict[str, Any]) -> dict[str, Any]:
+    return {**record, "employee_name": clean_optional(record.get("employee_name")) or clean_optional(record.get("name")), "notes": clean_optional(record.get("notes")) or clean_optional(record.get("remark"))}
+
+
+def normalize_seal_usage_seed_record(record: dict[str, Any]) -> dict[str, Any]:
+    return {**record, "notes": clean_optional(record.get("notes")) or clean_optional(record.get("remark"))}
+
+
+def normalize_performance_review_seed_record(record: dict[str, Any]) -> dict[str, Any]:
+    return {**normalize_named_employee_record(record), "review_date": clean_optional(record.get("review_date")) or clean_optional(record.get("month")), "final_score": clean_optional(record.get("final_score")) or clean_optional(record.get("score"))}
+
+
+def employee_payload(record: dict[str, Any], company_id: str, department_id: str | None) -> dict[str, Any]:
+    fields = ["gender", "birth_date", "position", "hire_date", "probation_end_date", "id_card_number", "id_card_expiry", "phone", "education", "school", "graduation_date", "major", "current_address", "hukou_address", "bank_account", "bank_name", "resignation_date", "resignation_reason", "notes"]
+    payload = {"company_id": company_id, "department_id": department_id, "name": normalize_required(record.get("name"), "employee name"), "status": clean_optional(record.get("status")) or "正式"}
+    payload.update({field: clean_optional(record.get(field)) for field in fields})
+    return {key: value for key, value in payload.items() if value is not None}
+
+
+def contract_payload(record: dict[str, Any], employee_id: str) -> dict[str, Any]:
+    return strip_none({"employee_id": employee_id, "type": normalize_required(record.get("type"), "contract type"), "sequence": clean_integer(record.get("sequence")), "sign_date": clean_optional(record.get("sign_date")), "duration_years": clean_integer(record.get("duration_years")), "start_date": clean_optional(record.get("start_date")), "expiry_date": clean_optional(record.get("expiry_date")), "is_permanent": bool(record.get("is_permanent")), "notes": clean_optional(record.get("notes"))})
+
+
+def generic_payload(record: dict[str, Any], employee_id: str) -> dict[str, Any]:
+    payload = {key: value for key, value in record.items() if key not in {"match", "employee_name", "name", "company"}}
+    payload["employee_id"] = employee_id
+    return strip_none(payload)
+
+
+def disciplinary_record_payload(record: dict[str, Any], employee_id: str) -> dict[str, Any]:
+    payload = generic_payload(record, employee_id)
+    incident_date = payload.pop("incident_date", None)
+    if incident_date is not None and DISCIPLINARY_DATE_FIELD not in payload:
+        payload[DISCIPLINARY_DATE_FIELD] = incident_date
+    return payload
+
+
+def record_field_value(record: dict[str, Any], field: str) -> Any:
+    if field == DISCIPLINARY_DATE_FIELD:
+        return record.get(DISCIPLINARY_DATE_FIELD) or record.get("incident_date")
+    return record.get(field)
+
+
+def seal_usage_payload(record: dict[str, Any], company_id: str) -> dict[str, Any]:
+    applicant = deep_get(record, "match.applicant.employee")
+    seal_applicant = deep_get(record, "match.seal_applicant.employee")
+    return strip_none(
+        {
+            "company_id": company_id,
+            "usage_date": clean_optional(record.get("usage_date")),
+            "applicant_id": applicant.get("id") if applicant else None,
+            "seal_applicant_id": seal_applicant.get("id") if seal_applicant else None,
+            "reason": normalize_required(record.get("reason"), "seal usage reason"),
+            "attachments": clean_text_array(record.get("attachments")),
+            "notes": clean_optional(record.get("notes")),
+        }
+    )
+
+
+def strip_none(value: dict[str, Any]) -> dict[str, Any]:
+    return {key: item for key, item in value.items() if item is not None}
+
+
+def clean_integer(value: Any) -> int | None:
+    normalized = clean_optional(value)
+    if normalized is None:
+        return None
+    number = int(normalized)
+    return number
+
+
+def clean_numeric(value: Any) -> float | None:
+    normalized = clean_optional(value)
+    return float(normalized) if normalized is not None else None
+
+
+def clean_text_array(value: Any) -> list[str] | None:
+    if not isinstance(value, list):
+        return None
+    items = [item for item in map(clean_optional, value) if item]
+    return items or None
+
+
+def employee_matches_expected(row: dict[str, Any], record: dict[str, Any]) -> bool:
+    checks = [("name", row.get("name"), record.get("name")), ("company", deep_get(row, "companies.name"), record.get("company")), ("department", deep_get(row, "departments.name"), record.get("department")), ("phone", row.get("phone"), record.get("phone")), ("id_card_number", row.get("id_card_number"), record.get("id_card_number"))]
+    return all(clean_optional(expected) is None or normalize_comparable(actual) == clean_optional(expected) for _field, actual, expected in checks)
+
+
+def compare_field(diffs: list[dict[str, Any]], field: str, expected: Any, actual: Any) -> None:
+    if normalize_comparable(expected) != normalize_comparable(actual):
+        diffs.append({"field": field, "expected": normalize_comparable(expected), "actual": normalize_comparable(actual)})
+
+
+def normalize_comparable(value: Any) -> str | None:
+    if value in {None, ""}:
+        return None
+    if isinstance(value, list):
+        return None if not value else str(value)
+    return str(value).strip()
+
+
+def summary_item(mapping: dict[str, dict[str, Any]], key: str, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+    if key not in mapping:
+        mapping[key] = {**(extra or {}), "total": 0, "statuses": {}}
+    return mapping[key]
+
+
+def duplicate_groups(mapping: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    return [{"value": key, "rows": rows} for key, rows in mapping.items() if len(rows) > 1]
+
+
+def count_by(rows: list[dict[str, Any]], field: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in rows:
+        key = clean_optional(row.get(field)) or "(空)"
+        counts[key] = counts.get(key, 0) + 1
+    return sort_object(counts)
+
+
+def sort_object(value: dict[str, Any]) -> dict[str, Any]:
+    return dict(sorted(value.items(), key=lambda item: item[0]))
+
+
+def empty_employee_summary(company_name: str | None, company_names: list[str] | None, status: str) -> dict[str, Any]:
+    return {"total": 0, "company": clean_optional(company_name), "company_scope": company_names, "match_status": status, "byCompany": [], "byDepartment": [], "checks": {"emptyDepartment": [], "emptyIdCard": [], "duplicateIdCards": [], "duplicatePhones": []}}
+
+
+def is_number(value: Any) -> bool:
+    try:
+        float(value)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+def to_float(value: Any) -> float:
+    return float(value) if is_number(value) else 0.0
+
+
+def sum_numeric(rows: list[dict[str, Any]], field: str) -> float:
+    return round(sum(to_float(row.get(field)) for row in rows), 2)
+
+
+def average(values: list[float]) -> float | None:
+    return round(sum(values) / len(values), 2) if values else None
+
+
+def summarize_performance_by(records: list[dict[str, Any]], field: str) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for record in records:
+        groups[clean_optional(record.get(field)) or "(空)"].append(record)
+    return [
+        {
+            field: key,
+            "count": len(rows),
+            "average_final_score": average([to_float(row.get("final_score")) for row in rows if is_number(row.get("final_score"))]),
+            "low_score_count_below_60": len([row for row in rows if to_float(row.get("final_score")) < 60]),
+            "performance_salary_total": sum_numeric(rows, "performance_salary"),
+            "actual_performance_salary_total": sum_numeric(rows, "actual_performance_salary"),
+            "performance_adjustment_total": sum_numeric(rows, "performance_adjustment"),
+        }
+        for key, rows in sorted(groups.items())
+    ]
+
+
+def insurance_employee(row: dict[str, Any]) -> dict[str, Any]:
+    return {"id": row.get("id"), "name": row.get("name"), "company": deep_get(row, "companies.name"), "department": deep_get(row, "departments.name"), "status": row.get("status"), "phone": row.get("phone"), "id_card_number": row.get("id_card_number")}
+
+
+def preview_summary(records: list[dict[str, Any]], name_field: str = "name") -> dict[str, Any]:
+    return {"records": len(records), "matched": len([row for row in records if deep_get(row, "match.employee")]), "unmatched": len([row for row in records if not deep_get(row, "match.employee")]), "by_company": count_by(records, "company"), "by_name": count_by(records, name_field)}
+
+
+def hr_risk_recommended_actions(headcount: dict[str, Any], coverage: dict[str, Any], expiry: dict[str, Any], disciplinary: dict[str, Any], pending: list[dict[str, Any]]) -> list[str]:
+    actions = []
+    if headcount["quality_flags"]["empty_department_count"] > 0:
+        actions.append(f"核对 {headcount['quality_flags']['empty_department_count']} 名空部门员工")
+    if coverage["active_without_contracts"] > 0:
+        actions.append(f"补齐 {coverage['active_without_contracts']} 名在职员工合同")
+    if expiry["count"] > 0:
+        actions.append(f"跟进未来 90 天内到期的 {expiry['count']} 条合同")
+    if disciplinary["missing_signed_upload_count"] > 0:
+        actions.append(f"补齐 {disciplinary['missing_signed_upload_count']} 条奖惩记录签字附件")
+    pending_total = sum(item["count"] for item in pending)
+    if pending_total > 0:
+        actions.append(f"处理 {pending_total} 条待人事确认记录")
+    return actions
+
+
+def repository_allowed_company_names(resource: str, action: str) -> list[str] | None:
+    try:
+        return allowed_company_names(resource=resource, action=action)
+    except RuntimeError as exc:
+        if "缺少 WebUI 权限文件" in str(exc):
+            return None
+        raise

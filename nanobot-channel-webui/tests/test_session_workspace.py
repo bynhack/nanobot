@@ -23,6 +23,25 @@ SessionWorkspaceService = MODULE.SessionWorkspaceService
 
 def _load_channel_module() -> types.ModuleType:
     package_name = "nanobot_channel_webui"
+    patched_modules = [
+        package_name,
+        f"{package_name}.session_workspace",
+        "loguru",
+        "nanobot.agent.hook",
+        "nanobot.bus.events",
+        "nanobot.bus.queue",
+        "nanobot.channels.base",
+        f"{package_name}.auth",
+        f"{package_name}.config",
+        f"{package_name}.instances",
+        f"{package_name}.management",
+        f"{package_name}.media",
+        f"{package_name}.supabase_account",
+        f"{package_name}.user_context",
+        f"{package_name}.uploads",
+        f"{package_name}.channel",
+    ]
+    originals = {name: sys.modules.get(name) for name in patched_modules}
     package = types.ModuleType(package_name)
     package.__path__ = [str(MODULE_PATH.parent)]
     sys.modules[package_name] = package
@@ -53,23 +72,19 @@ def _load_channel_module() -> types.ModuleType:
     auth_module.WebUIAccessControl = type("WebUIAccessControl", (), {})
     sys.modules[f"{package_name}.auth"] = auth_module
 
-    compat_runtime_module = types.ModuleType(f"{package_name}.compat.runtime")
-    compat_runtime_module.attach_webui_runtime = lambda *args, **kwargs: False
-    compat_runtime_module.current_route_context = lambda: None
-    compat_runtime_module.runtime_snapshot = lambda *args, **kwargs: {}
-    sys.modules[f"{package_name}.compat.runtime"] = compat_runtime_module
-    compat_package = types.ModuleType(f"{package_name}.compat")
-    compat_package.__path__ = []
-    sys.modules[f"{package_name}.compat"] = compat_package
-
     config_module = types.ModuleType(f"{package_name}.config")
     config_module.CHANNEL_NAME = "webui"
     config_module.WebUIConfig = type("WebUIConfig", (), {"model_validate": classmethod(lambda cls, value: value)})
     sys.modules[f"{package_name}.config"] = config_module
 
-    connections_module = types.ModuleType(f"{package_name}.connections")
-    connections_module.ConnectionRegistry = type("ConnectionRegistry", (), {})
-    sys.modules[f"{package_name}.connections"] = connections_module
+    instances_module = types.ModuleType(f"{package_name}.instances")
+    instances_module.InstanceSpecBuilder = type("InstanceSpecBuilder", (), {})
+    instances_module.InstanceSpecBuilderOptions = type("InstanceSpecBuilderOptions", (), {})
+    instances_module.ManagedInstanceBootstrapService = type("ManagedInstanceBootstrapService", (), {})
+    instances_module.ManagedInstanceManager = type("ManagedInstanceManager", (), {})
+    instances_module.discover_packaged_skill_catalog = lambda *args, **kwargs: []
+    instances_module.refresh_managed_skill_links = lambda *args, **kwargs: []
+    sys.modules[f"{package_name}.instances"] = instances_module
 
     management_module = types.ModuleType(f"{package_name}.management")
     management_module.WebUIManagementService = type("WebUIManagementService", (), {})
@@ -79,37 +94,9 @@ def _load_channel_module() -> types.ModuleType:
     media_module.MediaService = type("MediaService", (), {})
     sys.modules[f"{package_name}.media"] = media_module
 
-    pocketbase_module = types.ModuleType(f"{package_name}.pocketbase")
-    pocketbase_module.PocketBaseAuthError = type("PocketBaseAuthError", (Exception,), {})
-    pocketbase_module.PocketBaseClient = type("PocketBaseClient", (), {})
-    sys.modules[f"{package_name}.pocketbase"] = pocketbase_module
-
-    protocol_module = types.ModuleType(f"{package_name}.protocol")
-    protocol_module.error_event = lambda *args, **kwargs: {}
-    protocol_module.parse_client_command = lambda *args, **kwargs: None
-    protocol_module.session_deleted_event = lambda *args, **kwargs: {}
-    protocol_module.session_history_event = lambda *args, **kwargs: {}
-    protocol_module.session_init_event = lambda *args, **kwargs: {}
-    protocol_module.tools_finished_event = lambda *args, **kwargs: {}
-    protocol_module.tools_started_event = lambda *args, **kwargs: {}
-    protocol_module.turn_completed_event = lambda *args, **kwargs: {}
-    protocol_module.turn_delta_event = lambda *args, **kwargs: {}
-    protocol_module.turn_phase_event = lambda *args, **kwargs: {}
-    sys.modules[f"{package_name}.protocol"] = protocol_module
-
-    session_index_module = types.ModuleType(f"{package_name}.session_index")
-    session_index_module.SessionIndexService = type("SessionIndexService", (), {})
-    sys.modules[f"{package_name}.session_index"] = session_index_module
-
-    sessions_module = types.ModuleType(f"{package_name}.sessions")
-    sessions_module.SessionQueryService = type("SessionQueryService", (), {})
-    sessions_module.is_valid_chat_id = lambda chat_id: chat_id == "chat-1"
-    sessions_module.parse_session_ref = lambda value: ("webui", value)
-    sys.modules[f"{package_name}.sessions"] = sessions_module
-
-    turns_module = types.ModuleType(f"{package_name}.turns")
-    turns_module.TurnAccumulator = type("TurnAccumulator", (), {})
-    sys.modules[f"{package_name}.turns"] = turns_module
+    supabase_module = types.ModuleType(f"{package_name}.supabase_account")
+    supabase_module.SupabaseAccountClient = type("SupabaseAccountClient", (), {})
+    sys.modules[f"{package_name}.supabase_account"] = supabase_module
 
     user_context_module = types.ModuleType(f"{package_name}.user_context")
     user_context_module.CurrentUser = type("CurrentUser", (), {})
@@ -128,6 +115,11 @@ def _load_channel_module() -> types.ModuleType:
     channel_module = importlib.util.module_from_spec(channel_spec)
     sys.modules[f"{package_name}.channel"] = channel_module
     channel_spec.loader.exec_module(channel_module)
+    for name, original in originals.items():
+        if original is None:
+            sys.modules.pop(name, None)
+        else:
+            sys.modules[name] = original
     return channel_module
 
 
@@ -289,8 +281,9 @@ def test_workspace_record_helper_skips_persist_when_no_valid_media(tmp_path: Pat
 def test_workspace_route_returns_chat_payload(monkeypatch, tmp_path: Path) -> None:
     channel_module = _load_channel_module()
     service = SessionWorkspaceService(tmp_path)
+    chat_id = "f1f2a35e-7dfa-4c87-afc2-7b1ef49224be"
     service.record_deliveries(
-        "chat-1",
+        chat_id,
         [{"name": "report.docx", "url": "/media/token-1", "mime": "application/docx"}],
     )
 
@@ -316,12 +309,12 @@ def test_workspace_route_returns_chat_payload(monkeypatch, tmp_path: Path) -> No
     channel._authorize_request = authorize
     channel._can_access_session = can_access
 
-    request = types.SimpleNamespace(match_info={"chat_id": "chat-1"})
+    request = types.SimpleNamespace(match_info={"chat_id": chat_id})
     response = asyncio.run(channel._handle_workspace(request))
 
-    assert access_checks == [(None, "chat-1")]
+    assert access_checks == [(None, chat_id)]
     assert response.status == 200
-    assert response.payload["chat_id"] == "chat-1"
+    assert response.payload["chat_id"] == chat_id
     assert response.payload["file_count"] == 1
     assert response.payload["updated_at"] is not None
     assert response.payload["files"][0]["name"] == "report.docx"
@@ -330,8 +323,9 @@ def test_workspace_route_returns_chat_payload(monkeypatch, tmp_path: Path) -> No
 def test_workspace_route_rejects_forbidden_session(monkeypatch, tmp_path: Path) -> None:
     channel_module = _load_channel_module()
     service = SessionWorkspaceService(tmp_path)
+    chat_id = "f1f2a35e-7dfa-4c87-afc2-7b1ef49224be"
     service.record_deliveries(
-        "chat-1",
+        chat_id,
         [{"name": "secret.txt", "url": "/media/secret", "mime": "text/plain"}],
     )
 
@@ -352,13 +346,13 @@ def test_workspace_route_rejects_forbidden_session(monkeypatch, tmp_path: Path) 
 
     async def can_access(current_user: object, chat_id: str) -> bool:
         assert current_user is user
-        assert chat_id == "chat-1"
+        assert chat_id == "f1f2a35e-7dfa-4c87-afc2-7b1ef49224be"
         return False
 
     channel._authorize_request = authorize
     channel._can_access_session = can_access
 
-    request = types.SimpleNamespace(match_info={"chat_id": "chat-1"})
+    request = types.SimpleNamespace(match_info={"chat_id": chat_id})
     response = asyncio.run(channel._handle_workspace(request))
 
     assert response.status == 404
@@ -366,81 +360,14 @@ def test_workspace_route_rejects_forbidden_session(monkeypatch, tmp_path: Path) 
     assert "files" not in response.payload
 
 
-def test_send_records_workspace_only_after_successful_emit(tmp_path: Path) -> None:
+def test_send_records_workspace_without_local_emit(tmp_path: Path) -> None:
     channel_module = _load_channel_module()
     service = SessionWorkspaceService(tmp_path)
     channel = channel_module.WebUIChannel.__new__(channel_module.WebUIChannel)
     channel._workspace = service
-    channel._sessions = types.SimpleNamespace(pending_ask_user_prompt=lambda chat_id: None)
     channel._media = types.SimpleNamespace(
         build_media_items=lambda media: [{"name": "kept.txt", "url": "/media/good", "mime": "text/plain"}]
     )
-    channel._turns = types.SimpleNamespace(
-        finish=lambda chat_id: types.SimpleNamespace(should_emit_completion=True, stream_id="stream-1"),
-        clear=lambda chat_id: None,
-    )
-
-    events: list[tuple[str, object]] = []
-
-    class FailingRegistry:
-        @staticmethod
-        def is_blocked(chat_id: str) -> bool:
-            return False
-
-        @staticmethod
-        async def emit_to_chat(chat_id: str, payload: object) -> None:
-            events.append((chat_id, payload))
-            raise RuntimeError("boom")
-
-    channel._registry = FailingRegistry()
-
-    msg = types.SimpleNamespace(
-        chat_id="chat-1",
-        content="hello",
-        buttons=None,
-        media=["/tmp/kept.txt"],
-    )
-
-    try:
-        asyncio.run(channel.send(msg))
-    except RuntimeError as exc:
-        assert str(exc) == "boom"
-    else:
-        raise AssertionError("send() should propagate emit failure")
-
-    assert events == [("chat-1", {})]
-    assert service.load_workspace("chat-1")["files"] == []
-
-
-def test_send_records_workspace_after_successful_emit(tmp_path: Path) -> None:
-    channel_module = _load_channel_module()
-    service = SessionWorkspaceService(tmp_path)
-    channel = channel_module.WebUIChannel.__new__(channel_module.WebUIChannel)
-    channel._workspace = service
-    channel._sessions = types.SimpleNamespace(pending_ask_user_prompt=lambda chat_id: None)
-    channel._media = types.SimpleNamespace(
-        build_media_items=lambda media: [{"name": "kept.txt", "url": "/media/good", "mime": "text/plain"}]
-    )
-
-    cleared: list[str] = []
-    channel._turns = types.SimpleNamespace(
-        finish=lambda chat_id: types.SimpleNamespace(should_emit_completion=True, stream_id="stream-1"),
-        clear=lambda chat_id: cleared.append(chat_id),
-    )
-
-    events: list[tuple[str, object]] = []
-
-    class SuccessfulRegistry:
-        @staticmethod
-        def is_blocked(chat_id: str) -> bool:
-            return False
-
-        @staticmethod
-        async def emit_to_chat(chat_id: str, payload: object) -> None:
-            assert service.load_workspace(chat_id)["files"] == []
-            events.append((chat_id, payload))
-
-    channel._registry = SuccessfulRegistry()
 
     msg = types.SimpleNamespace(
         chat_id="chat-1",
@@ -452,6 +379,23 @@ def test_send_records_workspace_after_successful_emit(tmp_path: Path) -> None:
     asyncio.run(channel.send(msg))
 
     workspace = service.load_workspace("chat-1")
-    assert events == [("chat-1", {})]
     assert [item["name"] for item in workspace["files"]] == ["kept.txt"]
-    assert cleared == ["chat-1"]
+
+
+def test_send_skips_workspace_when_no_media_items(tmp_path: Path) -> None:
+    channel_module = _load_channel_module()
+    service = SessionWorkspaceService(tmp_path)
+    channel = channel_module.WebUIChannel.__new__(channel_module.WebUIChannel)
+    channel._workspace = service
+    channel._media = types.SimpleNamespace(build_media_items=lambda media: [])
+
+    msg = types.SimpleNamespace(
+        chat_id="chat-1",
+        content="hello",
+        buttons=None,
+        media=["/tmp/kept.txt"],
+    )
+
+    asyncio.run(channel.send(msg))
+
+    assert service._path_for_chat("chat-1").exists() is False

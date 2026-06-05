@@ -32,12 +32,38 @@ def _frontmatter_map(text: str) -> dict[str, str]:
     if not match:
         return {}
     metadata: dict[str, str] = {}
-    for line in match.group(1).splitlines():
+    lines = match.group(1).splitlines()
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if line.startswith((" ", "\t")):
+            index += 1
+            continue
         key, sep, value = line.partition(":")
         if not sep:
+            index += 1
             continue
-        metadata[key.strip()] = value.strip().strip('"')
+        name = key.strip()
+        raw_value = value.strip()
+        if raw_value in {">", ">-", ">+", "|", "|-", "|+"}:
+            block: list[str] = []
+            index += 1
+            while index < len(lines):
+                continuation = lines[index]
+                if continuation and not continuation.startswith((" ", "\t")):
+                    break
+                block.append(continuation.strip())
+                index += 1
+            separator = "\n" if raw_value.startswith("|") else " "
+            metadata[name] = separator.join(part for part in block if part).strip()
+            continue
+        metadata[name] = raw_value.strip().strip('"').strip("'")
+        index += 1
     return metadata
+
+
+def _strip_frontmatter(text: str) -> str:
+    return _FRONTMATTER_RE.sub("", text, count=1).lstrip("\n")
 
 
 def _description_from_markdown(text: str) -> str:
@@ -45,7 +71,7 @@ def _description_from_markdown(text: str) -> str:
     if metadata.get("description"):
         return metadata["description"]
 
-    body = _FRONTMATTER_RE.sub("", text, count=1).strip()
+    body = _strip_frontmatter(text).strip()
     for line in body.splitlines():
         stripped = line.strip().lstrip("#").strip()
         if stripped:
@@ -60,7 +86,9 @@ class WebUIManagementService:
         self.workspace = workspace
         self.instance_dir = workspace.parent
         self.config_path = self.instance_dir / "config.json"
-        self.cron_dir = self.instance_dir / "cron"
+        self.cron_dir = workspace / "cron"
+        self.legacy_cron_dir = self.instance_dir / "cron"
+        self.logs_dir = self.instance_dir / "logs"
         self.media_dir = self.instance_dir / "media"
         self.plugins_dir = self.instance_dir / "plugins"
         self.traces_path = self.instance_dir / "traces.jsonl"
@@ -155,11 +183,14 @@ class WebUIManagementService:
             return None
         if not requested.exists() or not requested.is_file():
             return None
+        content = _read_text(requested, limit=500_000)
+        is_markdown = requested.suffix.lower() in {".md", ".markdown"}
         return {
             "name": requested.name,
             "path": str(requested),
-            "content": _read_text(requested, limit=500_000),
-            "is_markdown": requested.suffix.lower() in {".md", ".markdown"},
+            "content": content,
+            "preview_content": _strip_frontmatter(content) if is_markdown else content,
+            "is_markdown": is_markdown,
         }
 
     def config_snapshot(self) -> dict[str, Any]:
@@ -172,7 +203,13 @@ class WebUIManagementService:
                 parsed = {}
 
         runtime_files = []
-        for directory in (self.cron_dir, self.media_dir, self.plugins_dir, self.workspace_memory_dir):
+        for directory in (
+            self.cron_dir,
+            self.legacy_cron_dir,
+            self.media_dir,
+            self.plugins_dir,
+            self.workspace_memory_dir,
+        ):
             if not directory.exists():
                 continue
             for child in sorted(directory.iterdir()):
@@ -224,7 +261,10 @@ class WebUIManagementService:
             except json.JSONDecodeError:
                 config_summary = {}
 
-        recent_logs = collect(self.instance_dir, "*.jsonl")[:8]
+        recent_logs = [
+            *collect(self.logs_dir, "*.log"),
+            *collect(self.instance_dir, "*.jsonl"),
+        ][:8]
         recent_state = collect(self.workspace_sessions_dir, "*.jsonl")[:12]
         recent_plans = collect(self.workspace_memory_dir, "*.md")[:12]
 

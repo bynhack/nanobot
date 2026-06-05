@@ -18,7 +18,7 @@ product
 
 ## Product Purpose
 
-这个插件把 nanobot 的 gateway 能力包装成一个可独立安装、可随主工具环境启动的 WebUI channel。它保持上游 `nanobot-ai` 的安装和启动方式不变，通过 `nanobot.channels` entry point 提供浏览器聊天入口、HTTP / WebSocket 后端、上传签名、会话索引、设置页和可选的 PocketBase 账号体系。
+这个插件把 nanobot 的 gateway 能力包装成一个可独立安装、可随主工具环境启动的 WebUI channel。它保持上游 `nanobot-ai` 的安装和启动方式不变，通过 `nanobot.channels` entry point 提供浏览器聊天入口、HTTP / WebSocket 后端、上传签名、设置页和 Supabase 账号体系。
 
 成功标准是：
 
@@ -33,7 +33,7 @@ product
 
 界面应该像一个内部专家工作台：不抢戏，不堆装饰，状态表达明确，信息密度足够高。它要让用户相信每一次点击、发送、下载、删除和配置变更都有清晰反馈；同时保持足够轻，避免把聊天体验做成沉重的后台系统。
 
-文案语气默认使用中文，短句、直接、可执行。技术名词可以保留英文，例如 WebSocket、PocketBase、runtime、wheel，但按钮、提示、工具提示和状态应优先中文化。
+文案语气默认使用中文，短句、直接、可执行。技术名词可以保留英文，例如 WebSocket、Supabase、runtime、wheel，但按钮、提示、工具提示和状态应优先中文化。
 
 ## Anti-references
 

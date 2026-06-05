@@ -19,27 +19,6 @@ export function authHeaders(token: string): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-export async function login(identity: string, password: string): Promise<AuthResponse> {
-  const response = await fetch('/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ identity, password }),
-  });
-  if (!response.ok) {
-    let detail = `登录失败（${response.status}）`;
-    try {
-      const payload = (await response.json()) as { error?: string };
-      if (payload.error) {
-        detail = payload.error;
-      }
-    } catch {
-      // ignore
-    }
-    throw new Error(detail);
-  }
-  return response.json() as Promise<AuthResponse>;
-}
-
 export async function loadCurrentUser(token: string): Promise<AuthResponse> {
   const response = await fetch('/api/auth/me', {
     headers: authHeaders(token),
@@ -57,13 +36,6 @@ export async function loadCurrentUser(token: string): Promise<AuthResponse> {
     throw new Error(detail);
   }
   return response.json() as Promise<AuthResponse>;
-}
-
-export async function logout(token: string): Promise<void> {
-  await fetch('/api/auth/logout', {
-    method: 'POST',
-    headers: authHeaders(token),
-  });
 }
 
 export function withAuthQuery(url: string, token: string): string {
@@ -84,43 +56,17 @@ export function withAuthQuery(url: string, token: string): string {
 }
 
 export async function loadSessions(token: string): Promise<SessionSummary[]> {
-  if (isUpstreamGatewayEnabled()) {
-    return loadUpstreamSessions(token);
-  }
-  const response = await fetch('/sessions', {
-    headers: authHeaders(token),
-  });
-  if (!response.ok) {
-    throw new Error(`加载会话失败（${response.status}）`);
-  }
-  return response.json() as Promise<SessionSummary[]>;
+  return loadUpstreamSessions(token);
 }
 
 export async function deleteSession(chatId: string, token: string): Promise<void> {
-  if (isUpstreamGatewayEnabled()) {
-    const response = await fetch(`/api/upstream/sessions/${encodeURIComponent(chatId)}`, {
-      method: 'DELETE',
-      headers: authHeaders(token),
-    });
-    if (!response.ok) {
-      throw new Error(`删除会话失败（${response.status}）`);
-    }
-    return;
-  }
-  const response = await fetch(`/sessions/${encodeURIComponent(chatId)}`, {
+  const response = await fetch(`/api/upstream/sessions/${encodeURIComponent(chatId)}`, {
     method: 'DELETE',
     headers: authHeaders(token),
   });
   if (!response.ok) {
     throw new Error(`删除会话失败（${response.status}）`);
   }
-}
-
-function isUpstreamGatewayEnabled(): boolean {
-  return Boolean(window.__NANOBOT_WEBUI_BOOTSTRAP__ && (
-    typeof window.__NANOBOT_WEBUI_BOOTSTRAP__ === 'object'
-    && window.__NANOBOT_WEBUI_BOOTSTRAP__.upstreamGateway?.enabled
-  ));
 }
 
 function upstreamSessionToSummary(row: {

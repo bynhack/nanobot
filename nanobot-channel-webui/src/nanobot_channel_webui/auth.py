@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .pocketbase import PocketBaseAuthError, PocketBaseClient, PocketBaseError
+from .supabase_account import SupabaseAccountClient, SupabaseAccountError, SupabaseAuthError
 from .user_context import CurrentUser
 
 
@@ -16,20 +16,20 @@ class WebUIAccessControl:
         *,
         allowed_origins: list[str],
         auth_token: str,
-        pocketbase: PocketBaseClient | None = None,
+        supabase: SupabaseAccountClient | None = None,
     ) -> None:
         self._allowed_origins = [origin.rstrip("/") for origin in allowed_origins if origin]
         self._auth_token = auth_token.strip()
-        self._pocketbase = pocketbase
+        self._supabase = supabase
 
     @property
     def auth_required(self) -> bool:
-        return bool(self._auth_token or (self._pocketbase and self._pocketbase.enabled))
+        return bool(self._auth_token or (self._supabase and self._supabase.enabled))
 
     @property
     def auth_mode(self) -> str:
-        if self._pocketbase and self._pocketbase.enabled:
-            return "pocketbase"
+        if self._supabase and self._supabase.enabled:
+            return "supabase"
         if self._auth_token:
             return "token"
         return "none"
@@ -59,16 +59,16 @@ class WebUIAccessControl:
             return False, 403, "当前来源未被允许访问", None
 
         token = self.extract_token(request)
-        if self._pocketbase and self._pocketbase.enabled:
+        if self._supabase and self._supabase.enabled:
             if not token:
                 return False, 401, "未登录或登录已失效", None
             try:
-                user = await self._pocketbase.get_current_user(token)
-            except PocketBaseAuthError as exc:
+                user = await self._supabase.get_current_user(token)
+            except SupabaseAuthError as exc:
                 return False, 401, str(exc) or "登录已失效", None
-            except PocketBaseError as exc:
-                return False, 502, str(exc) or "PocketBase 服务不可用", None
-            return True, 200, "", CurrentUser.from_pocketbase_user(user)
+            except SupabaseAccountError as exc:
+                return False, 502, str(exc) or "Supabase 服务不可用", None
+            return True, 200, "", CurrentUser.from_supabase_profile(user)
 
         if self._auth_token and token != self._auth_token:
             return False, 401, "认证令牌无效", None

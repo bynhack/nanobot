@@ -84,6 +84,11 @@
   "commands": [
     "nanobot-webui-business hr"
   ],
+  "denied_commands": [
+    "clear-business-data",
+    "delete-employee-records",
+    "count-all"
+  ],
   "requires_confirmation": false,
   "capabilities": [
     {
@@ -161,6 +166,10 @@
         "人数",
         "员工概况",
         "员工统计",
+        "花名册汇总",
+        "人员结构",
+        "在职状态汇总",
+        "按公司部门汇总",
         "headcount",
         "summary"
       ]

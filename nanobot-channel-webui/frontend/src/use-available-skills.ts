@@ -19,10 +19,10 @@ export function useAvailableSkills({
   useEffect(() => {
     let active = true;
     void (async () => {
-      if (bootstrap.authMode === 'pocketbase' && !authResolved) {
+      if (bootstrap.authMode === 'supabase' && !authResolved) {
         return;
       }
-      if (bootstrap.authMode === 'pocketbase' && currentUser?.role !== 'admin') {
+      if (bootstrap.authMode === 'supabase' && currentUser?.role !== 'admin') {
         setAvailableSkills([]);
         return;
       }

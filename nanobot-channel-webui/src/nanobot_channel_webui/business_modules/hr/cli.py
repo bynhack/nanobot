@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import os
-import shutil
-import subprocess
 import sys
-from importlib import resources
 from pathlib import Path
+
+from .runtime import commands
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -23,46 +22,32 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def run_hr(args: list[str]) -> int:
-    node = _find_node()
-    if not node:
-        print("Unable to find node. Install node or configure PATH/NVM_DIR.", file=sys.stderr)
-        return 127
-
-    script = Path(str(resources.files("nanobot_channel_webui.business_modules.hr") / "skills" / "hr-db-ops" / "scripts" / "hr_cli.mjs"))
     env = os.environ.copy()
-    env.setdefault("NANOBOT_WEBUI_SUPABASE_CONNECTOR", _packaged_supabase_connector().as_uri())
+    _set_default_policy_file(env, Path.cwd())
     env.setdefault("NANOBOT_CONFIG", str(Path.home() / ".nanobot" / "config.json"))
-    completed = subprocess.run([node, str(script), *args], env=env)
-    return int(completed.returncode)
+    previous_policy = os.environ.get("NANOBOT_WEBUI_POLICY_FILE")
+    previous_config = os.environ.get("NANOBOT_CONFIG")
+    try:
+        os.environ.update(env)
+        return commands.main(args)
+    finally:
+        _restore_env("NANOBOT_WEBUI_POLICY_FILE", previous_policy)
+        _restore_env("NANOBOT_CONFIG", previous_config)
 
 
-def _packaged_supabase_connector() -> Path:
-    connector = Path(
-        str(resources.files("nanobot_channel_webui.business_modules.hr") / "supabase_connector.mjs")
-    )
-    dependency = connector.parent / "node_modules" / "@supabase" / "supabase-js" / "package.json"
-    if not dependency.exists():
-        print(
-            "Packaged HR Supabase runtime is incomplete: "
-            f"missing {dependency}. Rebuild the plugin with scripts/publish-local.sh.",
-            file=sys.stderr,
-        )
-    return connector
+def _set_default_policy_file(env: dict[str, str], cwd: Path) -> None:
+    if env.get("NANOBOT_WEBUI_POLICY_FILE"):
+        return
+    policy_file = cwd / ".nanobot_channel_webui" / "policies" / "policy.json"
+    if policy_file.exists():
+        env["NANOBOT_WEBUI_POLICY_FILE"] = str(policy_file)
 
 
-def _find_node() -> str:
-    found = shutil.which("node")
-    if found:
-        return found
-    nvm_dir = os.environ.get("NVM_DIR")
-    candidates: list[Path] = []
-    if nvm_dir:
-        candidates.extend(Path(nvm_dir).glob("versions/node/*/bin/node"))
-    candidates.extend((Path.home() / ".nvm" / "versions" / "node").glob("*/bin/node"))
-    for candidate in candidates:
-        if candidate.exists() and os.access(candidate, os.X_OK):
-            return str(candidate)
-    return ""
+def _restore_env(key: str, previous: str | None) -> None:
+    if previous is None:
+        os.environ.pop(key, None)
+    else:
+        os.environ[key] = previous
 
 
 if __name__ == "__main__":

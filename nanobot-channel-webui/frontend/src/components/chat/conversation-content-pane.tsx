@@ -22,6 +22,7 @@ export function ConversationContentPane({
   onCloseWorkspace,
   onOpenWorkspaceFile,
   onCloseDetail,
+  onClosePanel,
   onResizeStart,
 }: {
   detailView: DetailView | null;
@@ -39,6 +40,7 @@ export function ConversationContentPane({
   onCloseWorkspace: () => void;
   onOpenWorkspaceFile: (file: SessionWorkspaceFile) => void;
   onCloseDetail: () => void;
+  onClosePanel: () => void;
   onResizeStart: () => void;
 }) {
   const [activeTab, setActiveTab] = useState<ContentTab>('launcher');
@@ -200,6 +202,13 @@ export function ConversationContentPane({
       width={width}
       token={token}
       headerTabs={tabs}
+      headerActions={
+        <button className="detail-panel-close" type="button" aria-label="关闭内容区" onClick={onClosePanel}>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
+          </svg>
+        </button>
+      }
       mainContent={mainContent ?? undefined}
       emptyTitle="内容区"
       emptyMessage="从上方加号选择要打开的内容。"

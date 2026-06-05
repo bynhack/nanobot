@@ -4,7 +4,7 @@
 
 当前 WebUI 插件已经在 HR 场景中验证了一套可行的权限链路：
 
-- 登录用户从 PocketBase 解析出 `tenant_id`、业务角色、技能列表、通用 scopes 和资源权限。
+- 登录用户从 Supabase 权限画像表解析出 `tenant_id`、业务角色、技能列表、通用 scopes 和资源权限。
 - 插件运行时注入工具权限、技能权限和命令权限。
 - 业务技能脚本读取权限文件，将 `resources[].scopes` 落实到查询、汇总和写入前校验。
 - scoped 用户隔离全局 `MEMORY.md` 和 `history.jsonl`，避免跨用户、跨公司上下文污染。
@@ -177,7 +177,7 @@ scoped 用户不能自动获得：
 
 输入可以来自：
 
-- PocketBase 用户字段。
+- Supabase 权限画像字段。
 - 外部 IAM。
 - 本地配置文件。
 - 租户权限表。

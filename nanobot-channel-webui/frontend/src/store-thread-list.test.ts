@@ -63,6 +63,41 @@ describe('thread list session lifecycle', () => {
     expect(next.messagesByChat).toEqual(state.messagesByChat);
   });
 
+  it('clears an empty restored current thread when it is missing from upstream sessions', () => {
+    const session = {
+      chat_id: 'chat-existing',
+      created_at: '2026-05-10T00:00:00.000Z',
+      last_ts: '2026-05-10T00:00:00.000Z',
+      preview: '已有会话',
+      message_count: 2,
+    };
+    const state = createInitialState({ title: 'Nanobot', authRequired: false }, '', 'stale-chat');
+
+    const next = reducer(state, {
+      type: 'sessions.loaded',
+      sessions: [session],
+    });
+
+    expect(next.currentChatId).toBeNull();
+    expect(next.sessions).toEqual([session]);
+  });
+
+  it('keeps a current thread with local messages while sessions are catching up', () => {
+    const state = reducer(createInitialState({ title: 'Nanobot', authRequired: false }, '', 'chat-new'), {
+      type: 'local.user_message',
+      chatId: 'chat-new',
+      content: '刚发送的消息',
+    });
+
+    const next = reducer(state, {
+      type: 'sessions.loaded',
+      sessions: [],
+    });
+
+    expect(next.currentChatId).toBe('chat-new');
+    expect(next.sessions[0]?.chat_id).toBe('chat-new');
+  });
+
   it('keeps existing session order when switching to a session with history', () => {
     const first = {
       chat_id: 'chat-first',

@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { loadCurrentUser, login, logout } from './api';
+import { loadCurrentUser } from './api';
 import { bootstrap, appStore } from './app-state';
 import { STORAGE_KEYS } from './store';
+import { getSupabaseAccessToken, signInWithSupabase, signOutSupabase } from './supabase-client';
 import type { AuthUser } from './types';
+
+export function shouldSkipSupabaseSessionRestore(authToken: string, logoutRequested: boolean): boolean {
+  return !authToken && logoutRequested;
+}
 
 export function useAuthSession(authToken: string) {
   const [authModalOpen, setAuthModalOpen] = useState<boolean>(
@@ -14,9 +19,10 @@ export function useAuthSession(authToken: string) {
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [authResolved, setAuthResolved] = useState(
-    bootstrap.authMode !== 'pocketbase' || !authToken,
+    bootstrap.authMode !== 'supabase' || !authToken,
   );
   const resolvedAuthTokenRef = useRef<string | null>(null);
+  const suppressSupabaseRestoreRef = useRef(false);
 
   useEffect(() => {
     setDraftToken(authToken);
@@ -26,7 +32,7 @@ export function useAuthSession(authToken: string) {
     if (bootstrap.authMode === 'token' && bootstrap.authRequired && !authToken) {
       setAuthModalOpen(true);
     }
-    if (!authToken) {
+    if (!authToken && bootstrap.authMode !== 'supabase') {
       setCurrentUser(null);
       resolvedAuthTokenRef.current = null;
       setAuthResolved(true);
@@ -34,15 +40,17 @@ export function useAuthSession(authToken: string) {
   }, [authToken]);
 
   useEffect(() => {
-    if (bootstrap.authMode !== 'pocketbase') {
+    if (bootstrap.authMode !== 'supabase') {
       setAuthResolved(true);
       return;
     }
-    if (!authToken) {
+    if (shouldSkipSupabaseSessionRestore(authToken, suppressSupabaseRestoreRef.current)) {
+      window.localStorage.removeItem(STORAGE_KEYS.authToken);
       setCurrentUser(null);
       setAuthError(null);
-      setAuthResolved(true);
       resolvedAuthTokenRef.current = null;
+      setAuthResolved(true);
+      setAuthBusy(false);
       return;
     }
     if (resolvedAuthTokenRef.current === authToken) {
@@ -55,9 +63,23 @@ export function useAuthSession(authToken: string) {
     setAuthResolved(false);
     void (async () => {
       try {
-        const result = await loadCurrentUser(authToken);
+        let sessionToken = authToken;
+        if (!sessionToken) {
+          sessionToken = await getSupabaseAccessToken();
+        }
+        if (!sessionToken) {
+          if (!active) return;
+          window.localStorage.removeItem(STORAGE_KEYS.authToken);
+          appStore.dispatch({ type: 'auth.set', token: '' });
+          setCurrentUser(null);
+          setAuthError(null);
+          resolvedAuthTokenRef.current = null;
+          setAuthResolved(true);
+          return;
+        }
+        const result = await loadCurrentUser(sessionToken);
         if (!active) return;
-        const nextToken = result.token || authToken;
+        const nextToken = result.token || sessionToken;
         resolvedAuthTokenRef.current = nextToken;
         window.localStorage.setItem(STORAGE_KEYS.authToken, nextToken);
         setCurrentUser(result.user);
@@ -85,17 +107,21 @@ export function useAuthSession(authToken: string) {
     };
   }, [authToken]);
 
-  const handlePocketBaseLogin = useCallback(async (identity: string, password: string) => {
+  const handleSupabaseLogin = useCallback(async (identity: string, password: string) => {
     if (!identity || !password) {
       setAuthError('邮箱和密码不能为空');
       return;
     }
     setAuthBusy(true);
     setAuthError(null);
+    suppressSupabaseRestoreRef.current = false;
     try {
-      const result = await login(identity, password);
-      window.localStorage.setItem(STORAGE_KEYS.authToken, result.token);
-      appStore.dispatch({ type: 'auth.set', token: result.token });
+      const token = await signInWithSupabase(identity, password);
+      const result = await loadCurrentUser(token);
+      const nextToken = result.token || token;
+      window.localStorage.setItem(STORAGE_KEYS.authToken, nextToken);
+      resolvedAuthTokenRef.current = nextToken;
+      appStore.dispatch({ type: 'auth.set', token: nextToken });
       setCurrentUser(result.user);
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : '登录失败');
@@ -105,16 +131,17 @@ export function useAuthSession(authToken: string) {
   }, []);
 
   const handleLogout = useCallback(async () => {
-    const token = authToken;
+    suppressSupabaseRestoreRef.current = bootstrap.authMode === 'supabase';
     window.localStorage.removeItem(STORAGE_KEYS.authToken);
     window.localStorage.removeItem(STORAGE_KEYS.chatId);
     appStore.dispatch({ type: 'auth.set', token: '' });
     appStore.dispatch({ type: 'sessions.loaded', sessions: [] });
     setCurrentUser(null);
     setAuthError(null);
-    if (bootstrap.authMode === 'pocketbase' && token) {
+    resolvedAuthTokenRef.current = null;
+    if (bootstrap.authMode === 'supabase') {
       try {
-        await logout(token);
+        await signOutSupabase();
       } catch {
         // ignore logout transport failure
       }
@@ -132,7 +159,7 @@ export function useAuthSession(authToken: string) {
     authBusy,
     authError,
     authResolved,
-    handlePocketBaseLogin,
+    handleSupabaseLogin,
     handleLogout,
   };
 }

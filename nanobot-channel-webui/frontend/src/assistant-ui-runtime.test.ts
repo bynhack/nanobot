@@ -4,6 +4,7 @@ import {
   DEFAULT_THREAD_SUGGESTIONS,
   buildExternalThreadListAdapter,
   buildThreadSuggestions,
+  threadRenderKey,
 } from './assistant-ui-runtime';
 import type { SessionSummary } from './types';
 
@@ -81,7 +82,7 @@ describe('assistant-ui runtime helpers', () => {
     expect(onDeleteThread).toHaveBeenCalledWith('chat-1');
   });
 
-  it('keeps the active thread available to assistant-ui before sessions load', () => {
+  it('keeps a missing restored current thread available to assistant-ui', () => {
     const adapter = buildExternalThreadListAdapter([], 'restored-chat', {
       onSwitchToThread: vi.fn(),
       onSwitchToNewThread: vi.fn(),
@@ -104,5 +105,11 @@ describe('assistant-ui runtime helpers', () => {
     expect(adapter.threadId).toBe('__nanobot_draft_thread__');
     const threads = adapter.threads ?? [];
     expect(threads.map((thread) => thread.id)).toEqual(['__nanobot_draft_thread__', 'chat-1', 'chat-2']);
+  });
+
+  it('uses thread id as render key so message part runtimes remount on thread switch', () => {
+    expect(threadRenderKey(null)).toBe('__nanobot_draft_thread__');
+    expect(threadRenderKey('chat-1')).toBe('chat-1');
+    expect(threadRenderKey('chat-2')).toBe('chat-2');
   });
 });

@@ -20,6 +20,7 @@ export const STORAGE_KEYS = {
   appearanceMode: 'nanobot_channel_webui_appearance_mode',
   uiTheme: 'nanobot_channel_webui_ui_theme',
   showToolMessages: 'nanobot_channel_webui_show_tool_messages',
+  showReasoningMessages: 'nanobot_channel_webui_show_reasoning_messages',
 } as const;
 
 let localMessageCounter = 0;
@@ -380,8 +381,26 @@ export function reducer(state: AppState, action: Action): AppState {
       };
     case 'connection.set':
       return { ...state, connectionState: action.connectionState };
-    case 'sessions.loaded':
-      return { ...state, sessions: action.sessions };
+    case 'sessions.loaded': {
+      const currentChatId = state.currentChatId;
+      const currentExists = currentChatId
+        ? action.sessions.some((session) => session.chat_id === currentChatId)
+        : false;
+      const currentHasLocalMessages = currentChatId
+        ? Boolean(state.messagesByChat[currentChatId]?.length)
+        : false;
+      const currentLocalSession = currentChatId
+        ? state.sessions.find((session) => session.chat_id === currentChatId)
+        : undefined;
+      const sessions = currentChatId && !currentExists && currentHasLocalMessages && currentLocalSession
+        ? [currentLocalSession, ...action.sessions]
+        : action.sessions;
+      return {
+        ...state,
+        currentChatId: currentChatId && !currentExists && !currentHasLocalMessages ? null : currentChatId,
+        sessions,
+      };
+    }
     case 'local.new_draft':
       return {
         ...state,

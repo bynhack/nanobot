@@ -134,6 +134,10 @@ export function readShowToolMessages(): boolean {
   return window.localStorage.getItem(STORAGE_KEYS.showToolMessages) === 'true';
 }
 
+export function readShowReasoningMessages(): boolean {
+  return window.localStorage.getItem(STORAGE_KEYS.showReasoningMessages) === 'true';
+}
+
 export function mediaToParts(media: MediaItem[]): Array<ThreadMessageLike['content'][number]> {
   return media.map((item) => {
     const mime = detectMime(item);
@@ -204,12 +208,36 @@ export function pendingToolsToItems(pendingTools: PendingToolBlock): ToolHistory
   }));
 }
 
+function ensureUniqueToolCallIds(
+  content: ThreadMessageLike['content'],
+): ThreadMessageLike['content'] {
+  const seen = new Map<string, number>();
+  return content.map((part) => {
+    if (part.type !== 'tool-call') {
+      return part;
+    }
+    const rawId = String(part.toolCallId || '').trim();
+    if (!rawId) {
+      return part;
+    }
+    const count = (seen.get(rawId) ?? 0) + 1;
+    seen.set(rawId, count);
+    if (count === 1) {
+      return part;
+    }
+    return {
+      ...part,
+      toolCallId: `${rawId}-${count}`,
+    } as ThreadMessageLike['content'][number];
+  }) as ThreadMessageLike['content'];
+}
+
 export function historyMessageToThreadMessage(
   message: HistoryMessage,
   chatId: string,
   index: number,
   activeTurn: AppState['activeTurns'][string] | null,
-  options: { showToolMessages?: boolean } = {},
+  options: { showToolMessages?: boolean; showReasoningMessages?: boolean } = {},
 ): ThreadMessageLike {
   const id = message.id ?? `${chatId}-history-${index}`;
   const isRunningAssistant =
@@ -241,7 +269,7 @@ export function historyMessageToThreadMessage(
               : [];
           }
           if (part.type === 'reasoning') {
-            return part.text
+            return options.showReasoningMessages && part.text
               ? [{
                   type: 'reasoning',
                   text: part.text,
@@ -269,7 +297,9 @@ export function historyMessageToThreadMessage(
       id,
       role: 'assistant',
       status: isRunningAssistant ? { type: 'running' as const } : { type: 'complete' as const, reason: 'stop' as const },
-      content: [...baseParts, ...toolParts] as ThreadMessageLike['content'],
+      content: ensureUniqueToolCallIds(
+        [...baseParts, ...toolParts] as ThreadMessageLike['content'],
+      ),
     };
   }
 
@@ -298,14 +328,19 @@ export function historyMessageToThreadMessage(
 
 export function buildRuntimeMessages(
   state: AppState,
-  options: { showToolMessages?: boolean } = {},
+  options: { showToolMessages?: boolean; showReasoningMessages?: boolean } = {},
 ): readonly RuntimeMessageSource[] {
   const chatId = state.currentChatId;
   if (!chatId) {
     return [];
   }
   const messages = state.messagesByChat[chatId] ?? [];
-  return options.showToolMessages ? messages : messages.filter((message) => message.type !== 'tools');
+  return messages.filter((message) => {
+    if (message.type === 'tools' && !options.showToolMessages) {
+      return false;
+    }
+    return true;
+  });
 }
 
 export function extractTextInput(message: AppendMessage): string {

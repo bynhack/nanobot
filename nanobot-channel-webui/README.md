@@ -29,10 +29,10 @@ Nanobot 原本更接近个人使用的智能体框架：用户、工作区、记
 
 ### 登录与用户隔离
 
-- 支持 PocketBase 账号体系。
+- 支持 Supabase Auth 账号体系。
 - 普通用户只能看到自己的会话、上传和运行时数据。
 - 管理员可以访问完整插件数据面。
-- 会话列表由账号维度驱动，避免不同用户会话互相污染。
+- 每个账号对应独立 Nanobot gateway 实例；会话列表来自用户实例内的上游 websocket channel。
 
 ### Tenant Runtime 权限层
 
@@ -138,13 +138,15 @@ nanobot-webui-business hr business delete <resource>
 
 ### 1. 不修改上游核心
 
-上游 Nanobot 仍然按原来的方式安装和启动：
+Nanobot 是本项目使用的 SDK/agent runtime。产品控制面由本插件自己的命令启动：
 
 ```bash
-nanobot gateway --config ~/.nanobot/config.json
+nanobot-webui gateway --config ~/.nanobot/config.json
 ```
 
-本项目通过插件、包装器和兼容层增强运行时，不把企业业务逻辑塞进上游核心。这样上游继续演进时，本插件可以独立适配。
+控制面负责登录、静态资源、设置页、实例调度和 upstream websocket 代理；每个登录用户的
+Nanobot runtime 由控制面通过 SDK 程序化启动。本项目不把企业业务逻辑塞进上游核心，
+这样上游继续演进时，本插件可以独立适配。
 
 ### 2. 权限不是提示词
 
@@ -221,14 +223,13 @@ uv tool install nanobot-ai --with nanobot-channel-webui --force
 
 1. 本地验证。
 2. 同步前端静态资源到 Python 包。
-3. 安装 HR Node runtime 依赖。
-4. 构建 wheel。
-5. 安装到本机 `nanobot-ai` tool env。
+3. 构建 wheel。
+4. 安装到本机 `nanobot-ai` tool env。
 
-如果修改涉及 Python 后端、插件运行时、权限注入、会话服务、API 或其他服务端逻辑，发布后需要重启 gateway：
+如果修改涉及 Python 后端、插件运行时、权限注入、会话服务、API 或其他服务端逻辑，发布后需要重启 WebUI 控制面：
 
 ```bash
-nanobot gateway --config ~/.nanobot/config.json
+nanobot-webui gateway --config ~/.nanobot/config.json
 ```
 
 本项目协作规则要求由 Agent 使用 `tmux` 完成重启，不让用户手动重启。
@@ -275,7 +276,9 @@ nanobot gateway --config ~/.nanobot/config.json
 }
 ```
 
-### PocketBase 登录配置
+### Supabase 登录配置
+
+浏览器使用 Supabase JS SDK 登录。后端只校验 Supabase Auth JWT，并用 service role key 从权限画像表读取当前账号的角色、租户、资源 scope 和技能列表。
 
 ```json
 {
@@ -286,30 +289,33 @@ nanobot gateway --config ~/.nanobot/config.json
       "port": 8081,
       "mediaSigningSecret": "replace-with-a-stable-random-secret",
       "streaming": true,
-      "pocketbaseUrl": "http://127.0.0.1:8090",
-      "pocketbaseUsersCollection": "users",
-      "pocketbaseSessionsCollection": "chat_sessions"
+      "supabaseUrl": "https://example.supabase.co",
+      "supabaseAnonKey": "replace-with-supabase-anon-key",
+      "supabaseServiceRoleKey": "replace-with-service-role-key",
+      "supabaseProfilesTable": "webui_user_profiles"
     }
   }
 }
 ```
 
-推荐 `chat_sessions` 字段：
+权限画像表需要能表达：
 
-- `owner`：关联到 `users`。
-- `chat_id`：文本。
-- `session_key`：文本。
-- `title`：文本。
-- `preview`：文本。
-- `last_activity_at`：日期。
-
-用户表需要能表达：
-
+- `auth_user_id`：Supabase Auth 用户 ID。
+- `email`：登录邮箱。
 - `role`：`admin` 或 `user`。
 - `tenant_id`：租户 ID。
 - `business_role`：业务角色。
 - `resources`：资源、动作和 scope 权限配置。
+- `scopes`：通用 scope 配置。
 - `skills`：可使用技能列表。
+- `tenant_policy`：可选的完整租户策略 JSON。
+
+账号创建分两步：
+
+1. 在 Supabase Dashboard 的 Authentication / Users 里手动创建登录账号和密码。
+2. 打开 [`scripts/supabase-webui-account-setup.sql`](scripts/supabase-webui-account-setup.sql)，复制其中的 SQL 到 Supabase SQL Editor 执行，创建权限画像表并为对应邮箱写入权限画像。
+
+SQL 文件里包含管理员账号和 HR scoped 普通账号两种模板；执行前替换邮箱、租户 ID 和公司范围。
 
 ## 代码结构
 
@@ -333,6 +339,7 @@ nanobot-channel-webui/
 - [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md)：产品能力、架构目标和明确需求清单。
 - [`docs/FIXME.md`](docs/FIXME.md)：Bug、安全风险和技术债修复清单。
 - [`docs/2026-05-29-tenant-runtime-permission-hardening.md`](docs/2026-05-29-tenant-runtime-permission-hardening.md)：当前权限硬化基线。
+- [`docs/2026-06-05-supabase-auth-permission-profile.md`](docs/2026-06-05-supabase-auth-permission-profile.md)：Supabase Auth 与 WebUI 权限画像接入约定。
 - [`docs/2026-05-28-tenant-runtime-plugin-design.md`](docs/2026-05-28-tenant-runtime-plugin-design.md)：Tenant Runtime Plugin 设计。
 - [`docs/2026-05-28-tenant-runtime-skill-integration.md`](docs/2026-05-28-tenant-runtime-skill-integration.md)：业务技能接入规范。
 

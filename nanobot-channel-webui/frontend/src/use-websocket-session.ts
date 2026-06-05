@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'r
 import { deleteSession, loadSessions, loadUpstreamThread } from './api';
 import { appStore, bootstrap } from './app-state';
 import { STORAGE_KEYS } from './store';
+import { createThreadSwitchGuard } from './thread-switch';
 import { WebSocketClient } from './ws-client';
 
 type MessageAttachmentPayload = {
@@ -21,6 +22,7 @@ export function useWebsocketSession({
   const wsClientRef = useRef<WebSocketClient | null>(null);
   const pendingThreadResolversRef = useRef<Array<(chatId: string | null) => void>>([]);
   const pendingThreadPromiseRef = useRef<Promise<string | null> | null>(null);
+  const threadSwitchGuardRef = useRef(createThreadSwitchGuard());
   const authToken = useSyncExternalStore(
     appStore.subscribe,
     () => appStore.getState().authToken,
@@ -35,13 +37,19 @@ export function useWebsocketSession({
     }
     try {
       const sessions = await loadSessions(authToken);
+      const currentChatId = appStore.getState().currentChatId;
+      if (
+        currentChatId
+        && !sessions.some((session) => session.chat_id === currentChatId)
+        && !(appStore.getState().messagesByChat[currentChatId]?.length)
+      ) {
+        window.localStorage.removeItem(STORAGE_KEYS.chatId);
+      }
       appStore.dispatch({ type: 'sessions.loaded', sessions });
     } catch (error) {
       showFlash(error instanceof Error ? error.message : '加载会话失败');
     }
   }, [showFlash]);
-
-  const upstreamEnabled = Boolean(bootstrap.upstreamGateway?.enabled);
 
   const resolvePendingThreads = useCallback((chatId: string | null) => {
     const resolvers = pendingThreadResolversRef.current.splice(0);
@@ -77,7 +85,7 @@ export function useWebsocketSession({
       pendingThreadResolversRef.current.push(settleThread);
     });
     pendingThreadPromiseRef.current = promise;
-    const sent = wsClientRef.current?.send(upstreamEnabled ? { type: 'new_chat', webui: true } : { type: 'session.new' }) ?? false;
+    const sent = wsClientRef.current?.send({ type: 'new_chat', webui: true }) ?? false;
     if (!sent) {
       settleThread(null);
     }
@@ -87,8 +95,7 @@ export function useWebsocketSession({
   useEffect(() => {
     const client = new WebSocketClient({
       getAuthToken: () => appStore.getState().authToken,
-      getChatId: () => appStore.getState().currentChatId,
-      upstreamBootstrapUrl: upstreamEnabled ? bootstrap.upstreamGateway?.bootstrapUrl || '/api/upstream/bootstrap' : undefined,
+      upstreamBootstrapUrl: bootstrap.upstreamGateway?.bootstrapUrl || '/api/upstream/bootstrap',
       onConnectionState: (connectionState) => {
         appStore.dispatch({ type: 'connection.set', connectionState });
         if (connectionState === 'disconnected') {
@@ -126,13 +133,13 @@ export function useWebsocketSession({
       resolvePendingThreads(null);
       wsClientRef.current = null;
     };
-  }, [refreshSessions, resolvePendingThreads, showFlash, upstreamEnabled]);
+  }, [refreshSessions, resolvePendingThreads, showFlash]);
 
   useEffect(() => {
     const client = wsClientRef.current;
     if (!client) return;
 
-    if (bootstrap.authMode === 'pocketbase' && !authResolved) {
+    if (bootstrap.authMode === 'supabase' && !authResolved) {
       client.close();
       appStore.dispatch({ type: 'connection.set', connectionState: 'connecting' });
       return;
@@ -153,35 +160,33 @@ export function useWebsocketSession({
     attachments: MessageAttachmentPayload[];
   }) => {
     const chatId = appStore.getState().currentChatId;
-    wsClientRef.current?.send(upstreamEnabled
-      ? {
-          type: 'message',
-          chat_id: chatId,
-          content: payload.content,
-          webui: true,
-        }
-      : {
-          type: 'message.send',
-          content: payload.content,
-          attachments: payload.attachments,
-        });
-  }, [upstreamEnabled]);
+    wsClientRef.current?.send({
+      type: 'message',
+      chat_id: chatId,
+      content: payload.content,
+      webui: true,
+    });
+  }, []);
 
   const switchThread = useCallback((threadId: string) => {
     if (threadId && threadId !== appStore.getState().currentChatId) {
-      wsClientRef.current?.send(upstreamEnabled ? { type: 'attach', chat_id: threadId } : { type: 'session.switch', chatId: threadId });
-      if (upstreamEnabled) {
-        void loadUpstreamThread(threadId, appStore.getState().authToken).then((messages) => {
-          appStore.dispatch({ type: 'server.event', event: { type: 'session.history', chatId: threadId, messages } });
-        }).catch((error) => showFlash(error instanceof Error ? error.message : '加载会话历史失败'));
-      }
+      const switchRequestId = threadSwitchGuardRef.current.begin();
+      void loadUpstreamThread(threadId, appStore.getState().authToken).then((messages) => {
+        if (!threadSwitchGuardRef.current.isCurrent(switchRequestId)) {
+          return;
+        }
+        appStore.dispatch({ type: 'server.event', event: { type: 'session.history', chatId: threadId, messages } });
+        window.localStorage.setItem(STORAGE_KEYS.chatId, threadId);
+        wsClientRef.current?.send({ type: 'attach', chat_id: threadId });
+      }).catch((error) => showFlash(error instanceof Error ? error.message : '加载会话历史失败'));
     }
-  }, [showFlash, upstreamEnabled]);
+  }, [showFlash]);
 
   const createThread = useCallback(() => {
+    threadSwitchGuardRef.current.begin();
     window.localStorage.removeItem(STORAGE_KEYS.chatId);
     appStore.dispatch({ type: 'local.new_draft' });
-  }, [upstreamEnabled]);
+  }, []);
 
   const deleteThreadById = useCallback(async (threadId: string) => {
     try {
@@ -199,10 +204,8 @@ export function useWebsocketSession({
 
   const cancelTurn = useCallback(() => {
     const chatId = appStore.getState().currentChatId;
-    wsClientRef.current?.send(upstreamEnabled
-      ? { type: 'message', chat_id: chatId, content: '/stop', webui: true }
-      : { type: 'message.cancel' });
-  }, [upstreamEnabled]);
+    wsClientRef.current?.send({ type: 'message', chat_id: chatId, content: '/stop', webui: true });
+  }, []);
 
   return useMemo(
     () => ({

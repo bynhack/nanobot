@@ -1,17 +1,12 @@
 ---
-name: hr-schema
-description: >
-  Human-resources database schema skill. Use when the task needs understanding of
-  HR tables, fields, Excel column mapping, required fields, foreign-key
-  relationships, uniqueness, cascade risk, or Supabase Storage buckets before
-  querying, importing, or writing HR data.
+name: "hr-schema"
+description: "HR 数据结构解释技能。Use only for 字段映射、Excel 导入规划、必填字段、外键关系、唯一性、级联风险、约束、触发器、索引或 Supabase Storage bucket 解释；不是普通 HR 信息请求入口。"
 ---
 
 # HR Schema
 
-This skill is the source of truth for HR database meaning. It explains what the
-data is, where it belongs, and how tables relate. It does not execute database
-writes.
+本技能只负责解释 HR 数据含义、字段归属和表关系。它不是查询入口，也不是权限入口；
+查询和分析使用 `hr-query-analysis-router`，写入、导入和删除使用 `hr-db-ops`。
 
 ## Read Order
 
@@ -23,6 +18,13 @@ Load only what the task needs:
    business notes, and Storage bucket mapping.
 3. `references/all-migrations-zh.sql` only for exact constraints, triggers, RLS,
    defaults, indexes, or cascade behavior.
+
+## Boundaries
+
+- 不运行 CLI，不执行 SQL，不直接访问 Supabase 或数据库。
+- 不要读取 runtime、scripts、tenant-runtime、policy、会话、audit 或 private 文件。
+- 不根据 schema 推断用户能看哪些公司；公司范围由标准业务 CLI 和 policy 自动过滤。
+- 只有在做字段映射、导入规划、约束解释或技术排查时，才展示表名和字段名。
 
 ## Schema Responsibilities
 

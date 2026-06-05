@@ -70,18 +70,28 @@ class WebUIConfig(Base):
     streaming: bool = True
     title: str = "Nanobot"
     ui: WebUIUIConfig = Field(default_factory=WebUIUIConfig)
-    pocketbase_url: str = ""
-    pocketbase_users_collection: str = "users"
-    pocketbase_sessions_collection: str = "chat_sessions"
+    supabase_url: str = ""
+    supabase_anon_key: str = ""
+    supabase_service_role_key: str = ""
+    supabase_profiles_table: str = "webui_user_profiles"
     upstream_gateway_url: str = ""
+    runtime_root: str = "~/.nanobot-channel-webui"
 
-    @field_validator("pocketbase_url")
+    @field_validator("supabase_url")
     @classmethod
-    def _normalize_pocketbase_url(cls, value: str) -> str:
+    def _normalize_supabase_url(cls, value: str) -> str:
         raw = value.strip()
         if not raw:
             return ""
         return raw if raw.endswith("/") else raw + "/"
+
+    @property
+    def account_supabase_url(self) -> str:
+        return self.supabase_url
+
+    @property
+    def account_supabase_service_role_key(self) -> str:
+        return self.supabase_service_role_key
 
     @field_validator("upstream_gateway_url")
     @classmethod
@@ -90,3 +100,8 @@ class WebUIConfig(Base):
         if not raw:
             return ""
         return raw.rstrip("/")
+
+    @field_validator("runtime_root")
+    @classmethod
+    def _normalize_runtime_root(cls, value: str) -> str:
+        return value.strip() or "~/.nanobot-channel-webui"

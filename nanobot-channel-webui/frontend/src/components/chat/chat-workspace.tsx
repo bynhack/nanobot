@@ -3,9 +3,16 @@ import { memo, useCallback, useEffect, useMemo, type ReactNode } from 'react';
 
 import { buildTextAppendMessage } from '../../app-helpers';
 import { appStore, bootstrap, useAppSelector } from '../../app-state';
-import { buildThreadSuggestions } from '../../assistant-ui-runtime';
+import { buildThreadSuggestions, threadRenderKey } from '../../assistant-ui-runtime';
 import type { SkillCandidate } from '../../skill-quick-select';
-import type { AuthUser, MediaItem, SessionWorkspaceFile } from '../../types';
+import type {
+  AuthUser,
+  ConnectionState,
+  MediaItem,
+  SessionWorkspace,
+  SessionWorkspaceFile,
+  WorkspacePanelState,
+} from '../../types';
 import { useAvailableSkills } from '../../use-available-skills';
 import { useWebsocketSession } from '../../use-websocket-session';
 import { useWebuiRuntime } from '../../use-webui-runtime';
@@ -30,6 +37,7 @@ export type ChatWorkspaceProps = {
   title: string;
   showFlash: (message: string) => void;
   showToolMessages: boolean;
+  showReasoningMessages: boolean;
   previewActions: DetailActions;
   flashMessage?: string | null;
   className?: string;
@@ -74,6 +82,7 @@ export const ChatWorkspace = memo(function ChatWorkspace({
   title,
   showFlash,
   showToolMessages,
+  showReasoningMessages,
   previewActions,
   flashMessage = null,
   className = 'chat-workspace',
@@ -126,6 +135,119 @@ export const ChatWorkspace = memo(function ChatWorkspace({
     (message: AppendMessage) => prepareOutgoingMessage?.(message, { availableSkills }) ?? message,
     [availableSkills, prepareOutgoingMessage],
   );
+  const localWorkspaceFileCount = currentWorkspace?.files.length ?? 0;
+  const localWorkspaceLoading = Boolean(
+    currentChatId && workspacePanel.loading && workspacePanel.chatId === currentChatId,
+  );
+  const workspaceFileCount = workspaceFileCountProp ?? localWorkspaceFileCount;
+  const workspaceLoading = workspaceLoadingProp ?? localWorkspaceLoading;
+
+  return (
+    <ChatRuntimeWorkspace
+      key={threadRenderKey(currentChatId)}
+      authResolved={authResolved}
+      authToken={authToken}
+      currentUser={currentUser}
+      title={title}
+      showFlash={showFlash}
+      showToolMessages={showToolMessages}
+      showReasoningMessages={showReasoningMessages}
+      previewActions={previewActions}
+      flashMessage={flashMessage}
+      className={className}
+      threadWrapperClassName={threadWrapperClassName}
+      previewOpen={previewOpen}
+      immersivePreview={immersivePreview}
+      compact={compact}
+      showSidebar={showSidebar}
+      sidebarCollapsed={sidebarCollapsed}
+      showSidebarToggle={showSidebarToggle}
+      onToggleSidebar={onToggleSidebar}
+      onOpenSettings={onOpenSettings}
+      showWorkspacePanel={showWorkspacePanel}
+      contentPanelOpen={contentPanelOpen}
+      onToggleContentPanel={onToggleContentPanel}
+      showContentHeader={showContentHeader}
+      showContentPanelToggle={showContentPanelToggle}
+      onOpenMedia={onOpenMedia}
+      onSessionReady={onSessionReady}
+      headerSlot={headerSlot}
+      contextSlot={contextSlot}
+      topControlsSlot={topControlsSlot}
+      composerTopSlot={composerTopSlot}
+      useDefaultSuggestions={useDefaultSuggestions}
+      showThreadWelcome={showThreadWelcome}
+      welcomeTitle={welcomeTitle}
+      welcomeSubtitle={welcomeSubtitle}
+      composerPlaceholder={composerPlaceholder}
+      compactComposerPlaceholder={compactComposerPlaceholder}
+      currentChatId={currentChatId}
+      connectionState={connectionState}
+      workspacePanel={workspacePanel}
+      panelWorkspace={panelWorkspace}
+      workspaceFileCount={workspaceFileCount}
+      workspaceLoading={workspaceLoading}
+      websocketSession={websocketSession}
+      availableSkills={availableSkills}
+      prepareRuntimeMessage={prepareRuntimeMessage}
+    />
+  );
+});
+
+type ChatRuntimeWorkspaceProps = ChatWorkspaceProps & {
+  currentChatId: string | null;
+  connectionState: ConnectionState;
+  workspacePanel: WorkspacePanelState;
+  panelWorkspace: SessionWorkspace | null;
+  websocketSession: ReturnType<typeof useWebsocketSession>;
+  availableSkills: SkillCandidate[];
+  prepareRuntimeMessage: (message: AppendMessage) => AppendMessage;
+};
+
+function ChatRuntimeWorkspace({
+  currentChatId,
+  connectionState,
+  workspacePanel,
+  panelWorkspace,
+  websocketSession,
+  availableSkills,
+  prepareRuntimeMessage,
+  title,
+  showFlash,
+  showToolMessages,
+  showReasoningMessages,
+  previewActions,
+  flashMessage = null,
+  className = 'chat-workspace',
+  threadWrapperClassName,
+  previewOpen = false,
+  immersivePreview = false,
+  compact = false,
+  showSidebar = true,
+  sidebarCollapsed = false,
+  showSidebarToggle = false,
+  onToggleSidebar = noop,
+  onOpenSettings = noop,
+  showWorkspacePanel = true,
+  workspaceFileCount: workspaceFileCountProp,
+  workspaceLoading: workspaceLoadingProp,
+  contentPanelOpen = false,
+  onToggleContentPanel = noop,
+  showContentHeader = true,
+  showContentPanelToggle = true,
+  onOpenMedia,
+  onSessionReady,
+  headerSlot,
+  contextSlot,
+  topControlsSlot,
+  composerTopSlot,
+  useDefaultSuggestions = true,
+  showThreadWelcome = true,
+  welcomeTitle,
+  welcomeSubtitle,
+  composerPlaceholder,
+  compactComposerPlaceholder,
+}: ChatRuntimeWorkspaceProps) {
   const {
     runtime,
     sessionsById,
@@ -138,20 +260,17 @@ export const ChatWorkspace = memo(function ChatWorkspace({
     actions: websocketSession,
     prepareOutgoingMessage: prepareRuntimeMessage,
     showToolMessages,
+    showReasoningMessages,
   });
   const threadSuggestions = useMemo(
     () => (useDefaultSuggestions ? buildThreadSuggestions(bootstrap.ui?.conversationStarters) : []),
     [useDefaultSuggestions],
   );
   const aui = useAui({
-    suggestions: Suggestions(threadSuggestions),
+    suggestions: Suggestions([...threadSuggestions]),
   });
-  const localWorkspaceFileCount = currentWorkspace?.files.length ?? 0;
-  const localWorkspaceLoading = Boolean(
-    currentChatId && workspacePanel.loading && workspacePanel.chatId === currentChatId,
-  );
-  const workspaceFileCount = workspaceFileCountProp ?? localWorkspaceFileCount;
-  const workspaceLoading = workspaceLoadingProp ?? localWorkspaceLoading;
+  const workspaceFileCount = workspaceFileCountProp ?? 0;
+  const workspaceLoading = workspaceLoadingProp ?? false;
   const conversationTitle = currentChatId
     ? sessionsById.get(currentChatId)?.preview?.trim() || title
     : title;
@@ -175,6 +294,7 @@ export const ChatWorkspace = memo(function ChatWorkspace({
 
   const threadContent = (
     <ChatThreadContent
+      key={threadRenderKey(currentChatId)}
       title={title}
       conversationTitle={conversationTitle}
       flashMessage={flashMessage}
@@ -219,6 +339,7 @@ export const ChatWorkspace = memo(function ChatWorkspace({
               sessionsById={sessionsById}
               connectionState={connectionState}
               onOpenSettings={onOpenSettings}
+              onCloseSidebar={onToggleSidebar}
             />
           ) : null}
 
@@ -243,6 +364,6 @@ export const ChatWorkspace = memo(function ChatWorkspace({
       </AssistantRuntimeProvider>
     </DetailPreviewContext.Provider>
   );
-});
+}
 
 function noop() {}

@@ -24,6 +24,8 @@ export function SettingsScreen({
   onUiThemeChange,
   showToolMessages,
   onShowToolMessagesChange,
+  showReasoningMessages,
+  onShowReasoningMessagesChange,
   token,
   currentUser,
   authMode,
@@ -40,6 +42,8 @@ export function SettingsScreen({
   onUiThemeChange: (value: UiTheme) => void;
   showToolMessages: boolean;
   onShowToolMessagesChange: (value: boolean) => void;
+  showReasoningMessages: boolean;
+  onShowReasoningMessagesChange: (value: boolean) => void;
   token: string;
   currentUser: AuthUser | null;
   authMode: BootstrapConfig['authMode'];
@@ -108,6 +112,8 @@ export function SettingsScreen({
                     onUiThemeChange={onUiThemeChange}
                     showToolMessages={showToolMessages}
                     onShowToolMessagesChange={onShowToolMessagesChange}
+                    showReasoningMessages={showReasoningMessages}
+                    onShowReasoningMessagesChange={onShowReasoningMessagesChange}
                     currentUser={currentUser}
                     authMode={authMode}
                     onLogout={onLogout}

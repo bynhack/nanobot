@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shlex
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,34 @@ def _command_path(workspace: Path, skill_dir: Path, command: str) -> Path:
     if value.startswith("skills/"):
         return workspace / value
     return skill_dir / value
+
+
+def _command_parts(command: str) -> list[str]:
+    value = command.strip()
+    if not value:
+        return []
+    try:
+        return shlex.split(value)
+    except ValueError:
+        return value.split()
+
+
+def _is_path_command(command: str) -> bool:
+    parts = _command_parts(command)
+    if not parts:
+        return False
+    executable = parts[0]
+    return executable.startswith(("/", "./", "../", "skills/")) or "/" in executable
+
+
+def _command_exists(workspace: Path, skill_dir: Path, command: str) -> bool:
+    parts = _command_parts(command)
+    if not parts:
+        return True
+    executable = parts[0]
+    if _is_path_command(command):
+        return _command_path(workspace, skill_dir, executable).exists()
+    return shutil.which(executable) is not None
 
 
 def _issue(code: str, severity: str, message: str) -> dict[str, str]:
@@ -60,8 +90,7 @@ def validate_skill_contract(skill_dir: Path, *, workspace: Path) -> dict[str, An
     if not contract.commands and not support_only:
         issues.append(_issue("missing_commands", "warning", "契约没有声明 commands；如果这是纯文档或公共辅助技能，可以接受。"))
     for command in contract.commands:
-        path = _command_path(workspace, skill_dir, command)
-        if not path.exists():
+        if not _command_exists(workspace, skill_dir, command):
             issues.append(_issue("command_not_found", "error", f"命令入口不存在：{command}"))
 
     if not contract.resources and not support_only:

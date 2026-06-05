@@ -325,6 +325,34 @@ def write_capability_skill_contract(workspace: Path) -> None:
     )
 
 
+def write_organization_tree_skill_contract(workspace: Path) -> None:
+    skill_dir = workspace / "skills" / "hr-db-ops"
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "tenant-runtime.json").write_text(
+        """{
+  "name": "hr-db-ops",
+  "resources": [
+    { "resource": "hr.organization", "actions": ["read", "query"], "scope_key": "company" },
+    { "resource": "hr.department", "actions": ["read", "query"], "scope_key": "company" }
+  ],
+  "commands": ["nanobot-webui-business hr"],
+  "capabilities": [
+    {
+      "id": "hr.organization.tree",
+      "kind": "query",
+      "commands": ["organization-tree", "business query organization-tree"],
+      "resources": [
+        { "resource": "hr.organization", "actions": ["query"], "scope_key": "company" },
+        { "resource": "hr.department", "actions": ["query"], "scope_key": "company" }
+      ]
+    }
+  ]
+}
+""",
+        encoding="utf-8",
+    )
+
+
 def write_split_resource_skill_contract(workspace: Path) -> None:
     skill_dir = workspace / "skills" / "hr-db-ops"
     skill_dir.mkdir(parents=True)
@@ -553,6 +581,46 @@ def test_hr_exec_command_allows_safe_cd_workspace_prefix(tmp_path: Path) -> None
     assert "&& NANOBOT_WEBUI_POLICY_FILE=" in params["command"]
 
 
+def test_organization_tree_business_command_gets_policy_env(tmp_path: Path) -> None:
+    write_organization_tree_skill_contract(tmp_path)
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text("{}", encoding="utf-8")
+    policy = PolicyContext(
+        user_id="u1",
+        email="hr@example.com",
+        role="user",
+        business_role="hr_specialist",
+        scopes={"company": ("乐潮里科技有限公司",)},
+        resources=(
+            {
+                "resource": "hr.organization",
+                "actions": ["read", "query"],
+                "scopes": [{"key": "company", "values": ["乐潮里科技有限公司"]}],
+            },
+            {
+                "resource": "hr.department",
+                "actions": ["read", "query"],
+                "scopes": [{"key": "company", "values": ["乐潮里科技有限公司"]}],
+            },
+        ),
+        skill_allowlist=frozenset({"hr-db-ops"}),
+        exec_mode="deny_by_default",
+        chat_id="chat-1",
+        policy_file=str(policy_file),
+    )
+    registry = ToolGateway(FakeRegistry(), audit=TenantAuditLogger(tmp_path), workspace=tmp_path)
+
+    with bind_policy_context(policy):
+        _tool, params, error = registry.prepare_call(
+            "exec",
+            {"command": "nanobot-webui-business hr business query organization-tree"},
+        )
+
+    assert error is None
+    assert params["command"].startswith("NANOBOT_WEBUI_POLICY_FILE=")
+    assert "business query organization-tree" in params["command"]
+
+
 def test_scoped_user_can_write_json_runtime_input_file(tmp_path: Path) -> None:
     registry = ToolGateway(FakeRegistry(), audit=TenantAuditLogger(tmp_path), workspace=tmp_path)
     target = tmp_path / ".nanobot_channel_webui" / "runtime-inputs" / "chat-1" / "employee-plan.json"
@@ -612,7 +680,9 @@ def test_hr_count_all_is_denied_for_scoped_user(tmp_path: Path) -> None:
     assert "tenant_contract_command_denied" in error
 
 
-def test_hr_cli_count_all_is_denied_by_js_policy_for_scoped_user(tmp_path: Path) -> None:
+def test_hr_cli_count_all_is_denied_by_python_policy_for_scoped_user(tmp_path: Path) -> None:
+    from nanobot_channel_webui.business_modules.hr.runtime import commands
+
     policy_file = tmp_path / "policy.json"
     policy_file.write_text(
         json.dumps(
@@ -635,38 +705,22 @@ def test_hr_cli_count_all_is_denied_by_js_policy_for_scoped_user(tmp_path: Path)
         ),
         encoding="utf-8",
     )
-    connector_file = tmp_path / "fake_connector.mjs"
-    connector_file.write_text(
-        "export class SupabaseConnector { from() { throw new Error('database should not be reached'); } }\n",
-        encoding="utf-8",
-    )
-    script = (
-        Path(__file__).resolve().parents[1]
-        / "src"
-        / "nanobot_channel_webui"
-        / "business_modules"
-        / "hr"
-        / "skills"
-        / "hr-db-ops"
-        / "scripts"
-        / "hr_cli.mjs"
-    )
 
-    result = subprocess.run(
-        ["node", str(script), "count-all"],
-        check=False,
-        capture_output=True,
-        text=True,
-        env={
-            **os.environ,
-            "NANOBOT_WEBUI_POLICY_FILE": str(policy_file),
-            "NANOBOT_WEBUI_SUPABASE_CONNECTOR": str(connector_file),
-        },
-    )
+    class FailingRepository:
+        def count_all_tables(self):
+            raise AssertionError("database should not be reached")
 
-    assert result.returncode == 1
-    assert "当前账号无权执行全局 HR 命令: count-all" in result.stderr
-    assert "database should not be reached" not in result.stderr
+    previous = os.environ.get("NANOBOT_WEBUI_POLICY_FILE")
+    os.environ["NANOBOT_WEBUI_POLICY_FILE"] = str(policy_file)
+    try:
+        result = commands.main(["count-all"], repo=FailingRepository())
+    finally:
+        if previous is None:
+            os.environ.pop("NANOBOT_WEBUI_POLICY_FILE", None)
+        else:
+            os.environ["NANOBOT_WEBUI_POLICY_FILE"] = previous
+
+    assert result == 1
 
 
 def test_capability_contract_limits_scoped_user_to_declared_business_actions(tmp_path: Path) -> None:
@@ -1202,6 +1256,26 @@ def test_workspace_skill_contract_validator_reports_errors_and_warnings(tmp_path
     assert by_name["broken-ops"]["issues"][0]["code"] == "command_not_found"
 
 
+def test_workspace_skill_contract_validator_accepts_cli_command_prefix(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    write_skill_contract(tmp_path, command="nanobot-webui-business hr")
+    (tmp_path / "skills" / "hr-db-ops" / "SKILL.md").write_text("# HR DB Ops\n", encoding="utf-8")
+
+    def fake_which(command: str) -> str | None:
+        if command == "nanobot-webui-business":
+            return "/usr/local/bin/nanobot-webui-business"
+        return None
+
+    monkeypatch.setattr("shutil.which", fake_which)
+
+    snapshot = validate_workspace_skill_contracts(tmp_path)
+
+    assert snapshot["summary"]["ok"] == 1
+    assert snapshot["contracts"][0]["issues"] == []
+
+
 def test_dynamic_skill_view_renders_contract_declared_recipe(tmp_path: Path) -> None:
     skill_dir = tmp_path / "skills" / "hr-db-ops"
     skill_dir.mkdir(parents=True)
@@ -1216,7 +1290,7 @@ def test_dynamic_skill_view_renders_contract_declared_recipe(tmp_path: Path) -> 
     {
       "id": "hr.employee.create",
       "kind": "create",
-      "commands": ["business create employee", "business verify employee"],
+      "commands": ["business create employee"],
       "requires_confirmation": true,
       "triggers": ["入职", "录入员工", "create employee"],
       "related_capabilities": ["hr.employee.roster"],
@@ -1224,7 +1298,7 @@ def test_dynamic_skill_view_renders_contract_declared_recipe(tmp_path: Path) -> 
         "Preview first, wait for explicit user confirmation, then write exactly one JSON plan with the write_file tool.",
         "Required JSON shape contains top-level records with plan_status direct_import.",
         "After confirmation run business create employee --input <plan.json> --confirm 导入员工主档.",
-        "Then run business verify employee --input <same-plan.json>."
+        "Use the create result verification as the final evidence."
       ],
       "resources": [{ "resource": "hr.employee", "actions": ["write"], "scope_key": "company" }]
     }
@@ -1310,9 +1384,9 @@ def test_dynamic_recipe_is_before_capability_catalog(tmp_path: Path) -> None:
     {
       "id": "hr.employee.create",
       "kind": "create",
-      "commands": ["business create employee", "business verify employee"],
+      "commands": ["business create employee"],
       "requires_confirmation": true,
-      "recipe": ["Preview first, then create and verify."],
+      "recipe": ["Preview first, then create; create returns verification."],
       "resources": [{ "resource": "hr.employee", "actions": ["write"], "scope_key": "company" }]
     },
     {
@@ -1420,7 +1494,7 @@ def test_hr_db_ops_dynamic_view_focuses_employee_create_capabilities(tmp_path: P
     { "id": "hr.company.list", "kind": "query", "commands": ["business query companies"], "resources": [{ "resource": "hr.company", "actions": ["read"], "scope_key": "company" }] },
     { "id": "hr.department.query", "kind": "query", "commands": ["business query departments"], "resources": [{ "resource": "hr.department", "actions": ["query"], "scope_key": "company" }] },
     { "id": "hr.employee.roster", "kind": "query", "commands": ["business query employee"], "resources": [{ "resource": "hr.employee", "actions": ["query"], "scope_key": "company" }] },
-    { "id": "hr.employee.create", "kind": "create", "commands": ["business create employee", "business verify employee"], "requires_confirmation": true, "triggers": ["入职", "新员工", "录入员工"], "related_capabilities": ["hr.company.list", "hr.department.query", "hr.employee.roster"], "resources": [{ "resource": "hr.employee", "actions": ["write"], "scope_key": "company" }] },
+    { "id": "hr.employee.create", "kind": "create", "commands": ["business create employee"], "requires_confirmation": true, "triggers": ["入职", "新员工", "录入员工"], "related_capabilities": ["hr.company.list", "hr.department.query", "hr.employee.roster"], "resources": [{ "resource": "hr.employee", "actions": ["write"], "scope_key": "company" }] },
     { "id": "hr.contract.analysis", "kind": "analysis", "commands": ["business analyze contract-coverage"], "resources": [{ "resource": "hr.contract", "actions": ["analyze"], "scope_key": "company" }] },
     { "id": "hr.performance.analysis", "kind": "analysis", "commands": ["business analyze performance"], "resources": [{ "resource": "hr.performance", "actions": ["analyze"], "scope_key": "company" }] }
   ]

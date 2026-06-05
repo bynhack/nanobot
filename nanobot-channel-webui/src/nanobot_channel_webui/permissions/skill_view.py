@@ -154,9 +154,7 @@ class DynamicSkillViewRenderer:
 
 
 def _current_route_context():
-    from ..compat.runtime import current_route_context
-
-    return current_route_context()
+    return None
 
 
 def _resolve_command(command: str) -> str:

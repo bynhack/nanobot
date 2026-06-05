@@ -50,9 +50,11 @@ function ThreadSuggestionCard() {
 
 export function SidebarThreadList({
   canDeleteThread,
+  isVisibleThread,
   activeThreadId,
 }: {
   canDeleteThread: (threadId: string) => boolean;
+  isVisibleThread: (threadId: string) => boolean;
   activeThreadId: string | null;
 }) {
   return (
@@ -71,7 +73,7 @@ export function SidebarThreadList({
       <div className="thread-list-body">
         <ThreadListPrimitive.Items>
           {({ threadListItem }) => {
-            if (threadListItem.id === DRAFT_THREAD_ID) {
+            if (threadListItem.id === DRAFT_THREAD_ID || !isVisibleThread(threadListItem.id)) {
               return null;
             }
             return (

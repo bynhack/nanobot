@@ -120,7 +120,7 @@ visible_rows = guard.scope_rows(
 
 ## 用户策略字段
 
-PocketBase 用户记录可以使用通用字段，不再要求业务都伪装成 HR：
+Supabase 权限画像记录可以使用通用字段，不再要求业务都伪装成 HR：
 
 ```json
 {

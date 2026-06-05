@@ -12,6 +12,7 @@
     "@assistant-ui/react-streamdown": "^0.3.0",
     "@mertdeveci55/univer-import-export": "^0.2.1",
     "@streamdown/cjk": "^1.0.0",
+    "@supabase/supabase-js": "^2.107.0",
     "@tailwindcss/vite": "^4.2.2",
     "@univerjs/presets": "^0.22.0",
     "class-variance-authority": "^0.7.1",

@@ -85,6 +85,49 @@ describe('tool message visibility helpers', () => {
     expect(buildRuntimeMessages(state as any, { showToolMessages: true })).toHaveLength(2);
   });
 
+  it('hides assistant reasoning parts by default', () => {
+    const message = {
+      id: 'assistant-1',
+      type: 'assistant',
+      content: '最终答案',
+      parts: [
+        { type: 'reasoning', text: '内部思考' },
+        { type: 'text', text: '最终答案' },
+      ],
+    };
+
+    const converted = historyMessageToThreadMessage(message as any, 'chat-1', 0, null);
+
+    expect(converted.content).toEqual([
+      { type: 'text', text: '最终答案', status: { type: 'complete' } },
+    ]);
+  });
+
+  it('keeps assistant reasoning parts when enabled', () => {
+    const message = {
+      id: 'assistant-1',
+      type: 'assistant',
+      content: '最终答案',
+      parts: [
+        { type: 'reasoning', text: '内部思考' },
+        { type: 'text', text: '最终答案' },
+      ],
+    };
+
+    const converted = historyMessageToThreadMessage(
+      message as any,
+      'chat-1',
+      0,
+      null,
+      { showReasoningMessages: true },
+    );
+
+    expect(converted.content).toEqual([
+      { type: 'reasoning', text: '内部思考', status: { type: 'complete' } },
+      { type: 'text', text: '最终答案', status: { type: 'complete' } },
+    ]);
+  });
+
   it('hides pending tool parts from running assistant messages by default', () => {
     const message = {
       id: 'assistant-1',
@@ -103,6 +146,42 @@ describe('tool message visibility helpers', () => {
     expect(
       historyMessageToThreadMessage(message as any, 'chat-1', 0, activeTurn as any).content,
     ).toEqual([{ type: 'text', text: '处理中', status: { type: 'running' } }]);
+  });
+
+  it('deduplicates assistant-ui toolCallId values within one assistant message', () => {
+    const message = {
+      id: 'assistant-1',
+      type: 'assistant',
+      content: '',
+      parts: [
+        {
+          type: 'tool-call',
+          tool: { callId: 'call_same', name: 'exec', args: { command: 'pwd' }, result: '/workspace', status: 'ok' },
+        },
+      ],
+    };
+    const activeTurn = {
+      waiting: true,
+      requestStatus: 'processing',
+      messageId: 'assistant-1',
+      pendingTools: {
+        tools: [{ callId: 'call_same', name: 'exec', args: { command: 'date' } }],
+        results: [{ callId: 'call_same', name: 'exec', args: { command: 'date' }, status: 'ok', detail: 'today' }],
+      },
+    };
+
+    const content = historyMessageToThreadMessage(
+      message as any,
+      'chat-1',
+      0,
+      activeTurn as any,
+      { showToolMessages: true },
+    ).content;
+
+    expect(content).toMatchObject([
+      { type: 'tool-call', toolCallId: 'call_same' },
+      { type: 'tool-call', toolCallId: 'call_same-2' },
+    ]);
   });
 
 });

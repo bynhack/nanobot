@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 
 import { AuthTokenModal } from './auth-token-modal';
-import { readAppearanceMode, readShowToolMessages, readUiTheme } from './app-helpers';
+import {
+  readAppearanceMode,
+  readShowReasoningMessages,
+  readShowToolMessages,
+  readUiTheme,
+} from './app-helpers';
 import { bootstrap, DETAIL_PANEL_WIDTH_KEY, appStore, useAppSelector } from './app-state';
 import { loadSessionWorkspace } from './api';
 import { ChatWorkspace } from './components/chat/chat-workspace';
@@ -18,27 +23,16 @@ import { useAuthSession } from './use-auth-session';
 import {
   DETAIL_PANEL_MAX_WIDTH,
   DETAIL_PANEL_MIN_WIDTH,
-  IMMERSIVE_DETAIL_PANEL_MIN_WIDTH,
   IMMERSIVE_CHAT_CONTENT_MAX,
   IMMERSIVE_CHAT_CONTENT_MIN,
   MOBILE_SIDEBAR_BREAKPOINT,
   SIDEBAR_EXPANDED_WIDTH,
+  clampDetailWidth,
   getPreferredDetailPanelWidth,
   shouldUseImmersivePreview,
 } from './preview-layout';
 
 type AppView = 'chat' | 'settings';
-
-function clampDetailWidth(width: number, viewportWidth: number, immersive: boolean, sidebarOpen: boolean): number {
-  if (!immersive) {
-    return Math.min(DETAIL_PANEL_MAX_WIDTH, Math.max(DETAIL_PANEL_MIN_WIDTH, width));
-  }
-
-  const sidebarWidth = sidebarOpen ? SIDEBAR_EXPANDED_WIDTH : 0;
-  const minWidth = Math.max(IMMERSIVE_DETAIL_PANEL_MIN_WIDTH, viewportWidth - sidebarWidth - IMMERSIVE_CHAT_CONTENT_MAX);
-  const maxWidth = Math.min(DETAIL_PANEL_MAX_WIDTH, viewportWidth - sidebarWidth - IMMERSIVE_CHAT_CONTENT_MIN);
-  return Math.min(maxWidth, Math.max(minWidth, width));
-}
 
 export function App() {
   const authToken = useAppSelector((state) => state.authToken);
@@ -64,6 +58,7 @@ export function App() {
   const [appearanceMode, setAppearanceMode] = useState<AppearanceMode>(() => readAppearanceMode());
   const [uiTheme, setUiTheme] = useState<UiTheme>(() => readUiTheme(DEFAULT_UI_THEME));
   const [showToolMessages, setShowToolMessages] = useState(() => readShowToolMessages());
+  const [showReasoningMessages, setShowReasoningMessages] = useState(() => readShowReasoningMessages());
 
   const flashTimerRef = useRef<number | null>(null);
   const workspaceRequestCounterRef = useRef(0);
@@ -87,7 +82,7 @@ export function App() {
     authBusy,
     authError,
     authResolved,
-    handlePocketBaseLogin,
+    handleSupabaseLogin,
     handleLogout,
   } = useAuthSession(authToken);
 
@@ -228,6 +223,10 @@ export function App() {
   }, [showToolMessages]);
 
   useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.showReasoningMessages, String(showReasoningMessages));
+  }, [showReasoningMessages]);
+
+  useEffect(() => {
     window.localStorage.setItem(DETAIL_PANEL_WIDTH_KEY, String(detailPanelWidth));
   }, [detailPanelWidth]);
 
@@ -332,12 +331,15 @@ export function App() {
           title={bootstrap.title}
           flashMessage={flashMessage}
           onOpenSettings={handleOpenSettings}
+          compact={viewportWidth <= MOBILE_SIDEBAR_BREAKPOINT}
           sidebarCollapsed={effectiveSidebarCollapsed}
+          showSidebarToggle={true}
           onToggleSidebar={handleToggleSidebar}
           previewOpen={previewOpen}
           immersivePreview={immersivePreview}
           showFlash={showFlash}
           showToolMessages={showToolMessages}
+          showReasoningMessages={showReasoningMessages}
           previewActions={previewActions}
           onOpenMedia={openMedia}
           welcomeTitle={bootstrap.ui?.welcomeTitle}
@@ -368,6 +370,7 @@ export function App() {
           onCloseWorkspace={closeWorkspacePanel}
           onOpenWorkspaceFile={openWorkspaceFile}
           onCloseDetail={closeContentDetail}
+          onClosePanel={closeContentPanel}
           onResizeStart={() => setResizingDetailPanel(true)}
         />
 
@@ -384,6 +387,8 @@ export function App() {
             onUiThemeChange={setUiTheme}
             showToolMessages={showToolMessages}
             onShowToolMessagesChange={setShowToolMessages}
+            showReasoningMessages={showReasoningMessages}
+            onShowReasoningMessagesChange={setShowReasoningMessages}
             token={authToken}
             currentUser={currentUser}
             authMode={bootstrap.authMode}
@@ -391,11 +396,11 @@ export function App() {
           />
         ) : null}
 
-        {bootstrap.authMode === 'pocketbase' && (!authToken || !currentUser) ? (
-          <LoginPage busy={authBusy} error={authError} onSubmit={handlePocketBaseLogin} />
+        {bootstrap.authMode === 'supabase' && (!authToken || !currentUser) ? (
+          <LoginPage busy={authBusy} error={authError} onSubmit={handleSupabaseLogin} />
         ) : null}
 
-        {bootstrap.authMode !== 'pocketbase' ? (
+        {bootstrap.authMode === 'token' ? (
           <AuthTokenModal
             open={authModalOpen}
             draftToken={draftToken}

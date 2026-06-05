@@ -263,7 +263,7 @@ companies（公司）
 | 字段 | 类型 | 对应 Excel | 说明 |
 |------|------|-----------|------|
 | `employee_id` | uuid FK → employees | 员工姓名 | 级联删除 |
-| `incident_date` | date | 事件日期 | 处罚发生日期 |
+| `incident_dates` | date[] | 事件日期 | 处罚发生日期，可记录多个日期。标准业务 CLI 对外仍以 `incident_date` 返回和接收。 |
 | `penalty_type` | text | 处罚类型 | 书面警告 / 记过 / 降薪 / 辞退 |
 | `penalty_reason` | text | 处罚原因 | 事件描述 |
 | `signed_upload` | text[] | 上传纸质签字版 | Storage bucket: `hr-documents` |

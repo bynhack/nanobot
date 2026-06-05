@@ -137,6 +137,41 @@
       ]
     },
     {
+      "id": "hr.organization.tree",
+      "title": "当前账号可见公司及部门树",
+      "kind": "query",
+      "commands": [
+        "organization-tree",
+        "business query organization-tree",
+        "business query organization"
+      ],
+      "resources": [
+        {
+          "resource": "hr.organization",
+          "actions": [
+            "query",
+            "read"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.department",
+          "actions": [
+            "query",
+            "read"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "公司和部门",
+        "组织架构",
+        "部门树",
+        "organization",
+        "organization-tree"
+      ]
+    },
+    {
       "id": "hr.department.query",
       "title": "部门查询",
       "kind": "query",
@@ -185,6 +220,10 @@
         "人数",
         "员工概况",
         "员工统计",
+        "花名册汇总",
+        "人员结构",
+        "在职状态汇总",
+        "按公司部门汇总",
         "headcount",
         "summary"
       ]
@@ -486,7 +525,7 @@
         "Write exactly one JSON plan under .nanobot_channel_webui/runtime-inputs/<chat_id>/ from the user natural-language request. The plan may be a single JSON object or {\"records\":[...]}.",
         "Show the JSON fields back to the user in natural language and wait for explicit confirmation before any write command.",
         "After confirmation, run business create employee --input <same-plan.json>.",
-        "The create command performs the database write and verification against the same JSON plan; do not run a separate business verify command unless troubleshooting a failed create result.",
+        "The create command performs the database write and internal verification against the same JSON plan; use the create result as the troubleshooting evidence if verification fails.",
         "A successful create result must include verification.ok true."
       ],
       "focus_terms": [
@@ -763,7 +802,7 @@
         "Run business preview organization --input <plan.json> to validate what would be created or already exists.",
         "Show the JSON fields and preview result to the user in natural language and wait for explicit confirmation before any write command.",
         "After confirmation, run business create organization --input <same-plan.json>.",
-        "The create command performs verification against the same JSON plan and must return verification.ok true; do not run a separate verify command unless troubleshooting."
+        "The create command performs internal verification against the same JSON plan and must return verification.ok true; use the create result as the troubleshooting evidence if verification fails."
       ],
       "focus_terms": [
         "新增部门",

@@ -29,6 +29,7 @@ export function useWebuiRuntime({
   actions,
   prepareOutgoingMessage,
   showToolMessages,
+  showReasoningMessages,
 }: {
   showFlash: (message: string) => void;
   actions: {
@@ -40,11 +41,11 @@ export function useWebuiRuntime({
     createThread: () => void;
     deleteThread: (threadId: string) => Promise<void>;
     ensureThread: () => Promise<string | null>;
-    createServerThread: () => Promise<string | null>;
     cancelTurn: () => void;
   };
   prepareOutgoingMessage?: (message: AppendMessage) => AppendMessage;
   showToolMessages: boolean;
+  showReasoningMessages: boolean;
 }) {
   const { sendMessage, switchThread, createThread, deleteThread, ensureThread, cancelTurn } = actions;
   const authToken = useAppSelector((state) => state.authToken);
@@ -75,11 +76,13 @@ export function useWebuiRuntime({
   const currentChatIdRef = useRef(currentChatId);
   const activeTurnRef = useRef(activeTurn);
   const showToolMessagesRef = useRef(showToolMessages);
+  const showReasoningMessagesRef = useRef(showReasoningMessages);
   useEffect(() => {
     currentChatIdRef.current = currentChatId;
     activeTurnRef.current = activeTurn;
     showToolMessagesRef.current = showToolMessages;
-  }, [activeTurn, currentChatId, showToolMessages]);
+    showReasoningMessagesRef.current = showReasoningMessages;
+  }, [activeTurn, currentChatId, showReasoningMessages, showToolMessages]);
 
   const convertMessage = useCallback(
     (message: RuntimeMessageSource, index: number) => {
@@ -89,7 +92,10 @@ export function useWebuiRuntime({
         chatId,
         index,
         activeTurnRef.current,
-        { showToolMessages: showToolMessagesRef.current },
+        {
+          showToolMessages: showToolMessagesRef.current,
+          showReasoningMessages: showReasoningMessagesRef.current,
+        },
       );
     },
     [],

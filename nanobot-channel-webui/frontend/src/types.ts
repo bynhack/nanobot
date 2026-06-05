@@ -21,7 +21,11 @@ export interface WebUIBootstrapUI {
 export interface BootstrapConfig {
   title: string;
   authRequired: boolean;
-  authMode?: 'none' | 'token' | 'pocketbase';
+  authMode?: 'none' | 'token' | 'supabase';
+  supabase?: {
+    url?: string;
+    anonKey?: string;
+  };
   upstreamGateway?: {
     enabled?: boolean;
     baseUrl?: string;
@@ -182,6 +186,7 @@ export interface SettingsSkillFile {
   kind?: string;
   path: string;
   content: string;
+  preview_content?: string;
   is_markdown: boolean;
 }
 

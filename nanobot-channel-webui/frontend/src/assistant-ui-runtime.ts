@@ -62,6 +62,10 @@ export function buildThreadSuggestions(
   return normalized as unknown as readonly ThreadSuggestion[];
 }
 
+export function threadRenderKey(threadId: string | null): string {
+  return threadId ?? DRAFT_THREAD_ID;
+}
+
 export function buildExternalThreadListAdapter(
   sessions: SessionSummary[],
   currentChatId: string | null,

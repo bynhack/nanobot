@@ -1,24 +1,21 @@
 ---
-name: hr-policy
-description: >
-  Human-resources data operation policy. Use for HR reads, writes, imports,
-  deletes, matching ambiguity, attachment handling, confirmation summaries, and
-  user-facing wording rules.
+name: "hr-policy"
+description: "HR 写入、导入、删除、匹配歧义、附件处理、确认摘要和用户措辞规则。Use when changing data, preparing confirmations, or resolving ambiguous employee matches; not the default entry for ordinary HR information requests."
 ---
 
 # HR Policy
 
-This skill controls how HR data may be operated on. It is the safety layer above
-schema understanding and database tooling.
+本技能定义 HR 数据操作的业务安全规则。权限边界由 WebUI business runtime、标准业务 CLI
+和数据查询层共同执行；模型不要读取 policy 文件、runtime 文件或数据库配置来判断权限。
 
 ## Read vs Write
 
-- Read-only requests can be executed directly.
-- Create, update, import, invalidate, clear, and delete actions require explicit
-  user confirmation before execution.
-- If a write is incomplete, ambiguous, or risky, ask for only the missing
-  business information needed to continue.
-- Do not guess HR facts.
+- 只读请求可以直接使用 `nanobot-webui-business hr business query|get|analyze`。
+- 默认不要传 `--company`，让当前账号 policy 自动限定授权公司范围；只有用户明确指定公司时
+  才传 `--company "公司全称"`。
+- 新增、修改、导入、作废、清理和删除必须先 preview，并在用户明确确认后执行。
+- 写入信息不完整、有歧义或有风险时，只追问继续处理必需的业务信息。
+- 不要猜测 HR 事实，不要绕过标准业务 CLI 直接访问数据库。
 
 ## Matching Rules
 
@@ -40,22 +37,27 @@ schema understanding and database tooling.
 
 ## Import Workflow
 
-For imports:
+导入类任务：
 
 1. Parse the source data.
 2. Use `hr-schema` to map columns to business objects and fields.
-3. Use `HR business module` read/preview commands for deterministic matching where
-   available.
-4. Produce a concise confirmation summary.
-5. Execute writes only after the user confirms the summary.
+3. 使用标准 `business` read/preview 命令完成匹配和预览。
+4. 输出简洁的确认摘要。
+5. 用户确认后再执行 create、delete 或其他写入命令，最后 verify。
 
-Confirmation summaries should show:
+确认摘要需要说明：
 
 - Goal.
 - Records to create.
 - Records to update.
 - Records checked with no changes.
 - Records that cannot be matched or require a decision.
+
+## Access Boundaries
+
+- 不读取 `runtime/`、`scripts/`、policy 文件、数据库配置、会话历史、audit 日志或 private 文件。
+- scoped 用户的公司范围由业务 CLI 和查询层过滤，不靠提示词、memory 或模型推断。
+- 越权或不确定的请求，应让 CLI/网关拒绝或要求用户补充授权范围，不要自行补全。
 
 ## Attachments
 
@@ -65,7 +67,7 @@ inside it. If the attachment is only context, treat it as reference material.
 
 ## User-Facing Style
 
-The audience is HR staff and management:
+面向 HR 员工和管理者：
 
 - Start with a short conclusion.
 - Use business language by default.

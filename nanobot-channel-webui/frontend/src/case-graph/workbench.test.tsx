@@ -327,6 +327,44 @@ describe('case graph workbench', () => {
     });
   });
 
+  it('moves restored nodes away from collapsed group anchors in relation request options', async () => {
+    vi.stubGlobal('window', {
+      __NANOBOT_WEBUI_BOOTSTRAP__: { title: 'Nanobot', authRequired: false },
+      localStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+      },
+      innerWidth: 1440,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    });
+    const { buildRestoreNodesRelationOptionsForTest } = await import('./workbench');
+
+    const options = buildRestoreNodesRelationOptionsForTest(
+      {
+        nodes: [
+          { id: 'anchor', label: '成组首个主体', x: 320, y: 120 },
+          { id: 'hidden-member', label: '收起组内隐藏主体', x: 320, y: 292 },
+          { id: 'restore', label: '待恢复主体', x: 320, y: 120, isExcluded: true },
+          { id: 'below', label: '下方主体', x: 320, y: 292 },
+        ],
+        edges: [],
+        investigationGroups: [
+          { id: 'group-1', name: '研判组 1', memberNodeIds: ['anchor', 'hidden-member'], collapsed: true },
+        ],
+      },
+      {
+        anchor: { x: 320, y: 120 },
+        'hidden-member': { x: 320, y: 292 },
+        below: { x: 320, y: 292 },
+      },
+      ['restore'],
+    ) as { nodePositions: Record<string, { x: number; y: number }> };
+
+    expect(options.nodePositions.restore).toEqual({ x: 320, y: 492 });
+    expect(options.nodePositions['hidden-member']).toBeUndefined();
+  });
+
   it('persists graph positions only after an explicit node drag', async () => {
     vi.stubGlobal('window', {
       __NANOBOT_WEBUI_BOOTSTRAP__: { title: 'Nanobot', authRequired: false },
@@ -347,6 +385,39 @@ describe('case graph workbench', () => {
 
     expect(shouldPersistGraphPositionsForTest(graphData, positions, 'layout')).toBe(false);
     expect(shouldPersistGraphPositionsForTest(graphData, positions, 'drag')).toBe(true);
+  });
+
+  it('uses a persisted investigation group position instead of recalculating from member nodes', async () => {
+    vi.stubGlobal('window', {
+      __NANOBOT_WEBUI_BOOTSTRAP__: { title: 'Nanobot', authRequired: false },
+      localStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+      },
+      innerWidth: 1440,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    });
+    const { resolveInvestigationGroupOperationPositionForTest } = await import('./workbench');
+    const graphData = {
+      nodes: [
+        { id: 'first', label: '首个主体', x: 320, y: 120 },
+        { id: 'second', label: '第二主体', x: 320, y: 292 },
+      ],
+      edges: [],
+      investigationGroups: [
+        { id: 'group-1', name: '研判组 1', memberNodeIds: ['first', 'second'], collapsed: true, x: 520, y: 260 },
+      ],
+    };
+
+    expect(resolveInvestigationGroupOperationPositionForTest(graphData, {
+      operation: 'create',
+      nodeIds: ['first', 'second'],
+    })).toEqual({ x: 320, y: 120 });
+    expect(resolveInvestigationGroupOperationPositionForTest(graphData, {
+      operation: 'collapse',
+      groupId: 'group-1',
+    })).toEqual({ x: 520, y: 260 });
   });
 
   it('allows relation-operation layout callbacks to patch the latest step snapshot', async () => {
@@ -433,7 +504,8 @@ describe('case graph workbench', () => {
     expect(html).toContain('金额');
     expect(html).toContain('时间');
     expect(html).toContain('应用筛选');
-    expect(html).toContain('当前筛选');
+    expect(html).not.toContain('当前筛选');
+    expect(html).not.toContain('未应用筛选');
     expect(html).toContain('排除项 0');
     expect(html).toContain('显示排除');
   });

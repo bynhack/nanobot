@@ -138,6 +138,7 @@ class FakeCaseGraphService:
         self.relation_restore_calls: list[dict[str, Any]] = []
         self.state_load_calls: list[dict[str, str]] = []
         self.state_layout_calls: list[dict[str, Any]] = []
+        self.state_note_calls: list[dict[str, Any]] = []
         self.drilldown_calls: list[dict[str, Any]] = []
         self.drillup_calls: list[dict[str, Any]] = []
         self.drill_calls: list[dict[str, Any]] = []
@@ -385,6 +386,28 @@ class FakeCaseGraphService:
                 "graph_name": graph_name,
                 "node_positions": node_positions,
                 "viewport": viewport or {},
+            }
+        )
+        return self.graph_state_result
+
+    def update_node_note(
+        self,
+        *,
+        case_id: str,
+        graph_id: str,
+        graph_name: str = "",
+        node_id: str,
+        note: str = "",
+        source_note: str = "",
+    ) -> dict[str, Any]:
+        self.state_note_calls.append(
+            {
+                "case_id": case_id,
+                "graph_id": graph_id,
+                "graph_name": graph_name,
+                "node_id": node_id,
+                "note": note,
+                "source_note": source_note,
             }
         )
         return self.graph_state_result
@@ -1730,12 +1753,23 @@ async def test_http_relation_state_routes_call_state_service() -> None:
                 "viewport": {"x": 0, "y": 0, "zoom": 1},
             },
         )
+        note_response = await client.post(
+            "/api/case-graph/relation/state/case-1/graph-1/operations/node-note",
+            json={
+                "graphName": "图1",
+                "nodeId": "a",
+                "sourceNote": "重点核查",
+                "note": "疑似共同取现",
+            },
+        )
         steps_response = await client.get("/api/case-graph/relation/state/case-1/graph-1/steps")
 
         assert get_response.status == 200
         assert await get_response.json() == service.graph_state_result
         assert layout_response.status == 200
         assert await layout_response.json() == service.graph_state_result
+        assert note_response.status == 200
+        assert await note_response.json() == service.graph_state_result
         assert await steps_response.json() == {"items": [{"stepId": "0001", "operation": {"type": "seed_one_hop"}}]}
         assert service.state_load_calls == [{"case_id": "case-1", "graph_id": "graph-1"}]
         assert service.state_layout_calls == [
@@ -1745,6 +1779,16 @@ async def test_http_relation_state_routes_call_state_service() -> None:
                 "graph_name": "图1",
                 "node_positions": {"a": {"x": 100, "y": 200}},
                 "viewport": {"x": 0, "y": 0, "zoom": 1},
+            }
+        ]
+        assert service.state_note_calls == [
+            {
+                "case_id": "case-1",
+                "graph_id": "graph-1",
+                "graph_name": "图1",
+                "node_id": "a",
+                "source_note": "重点核查",
+                "note": "疑似共同取现",
             }
         ]
 

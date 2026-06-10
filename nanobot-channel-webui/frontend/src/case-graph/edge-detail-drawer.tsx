@@ -1,6 +1,7 @@
-import { Check, FileSearch, X } from 'lucide-react';
+import { Check, FileSearch } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { Modal } from '../components/ui/modal';
 import {
   SortableColumnHeader,
   sortItemsByState,
@@ -109,20 +110,31 @@ export function EdgeDetailDrawer({
   const summary = buildSummary(detail, partyContext);
 
   return (
-    <div className="case-graph-modal-mask case-graph-modal-mask--detail" role="presentation" onClick={onClose}>
-      <section
-        className="case-graph-edge-detail-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="交易线详情"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="case-graph-edge-detail-header">
-          <h2>交易线详情</h2>
-          <button type="button" className="case-graph-edge-detail-close" onClick={onClose} aria-label="关闭交易线详情">
-            <X size={20} />
+    <Modal
+      open={open}
+      title="交易线详情"
+      onClose={onClose}
+      size="full"
+      className="case-graph-edge-detail-modal"
+      bodyClassName="case-graph-detail-modal-body"
+      footer={!loading && detail?.length ? (
+        <>
+          <span>本线已勾选排除 {selectedInDetailCount} / {activeTradeIds.length} 笔交易，已排除 {excludedInDetailCount} 笔</span>
+          <button type="button" className="case-graph-secondary-button" onClick={onClose}>
+            取消
           </button>
-        </div>
+          <button
+            type="button"
+            className="case-graph-primary-button"
+            disabled={applying || !selectedInDetailCount}
+            onClick={onApplyExclude}
+          >
+            <Check size={14} />
+            <span>{applying ? '应用中' : '应用到图'}</span>
+          </button>
+        </>
+      ) : null}
+    >
 
         {loading ? <div className="case-graph-empty">正在加载线详情...</div> : null}
 
@@ -320,25 +332,7 @@ export function EdgeDetailDrawer({
           </div>
         ) : null}
 
-        {!loading && detail?.length ? (
-          <footer className="case-graph-detail-analysis-footer">
-            <span>本线已勾选排除 {selectedInDetailCount} / {activeTradeIds.length} 笔交易，已排除 {excludedInDetailCount} 笔</span>
-            <button type="button" className="case-graph-secondary-button" onClick={onClose}>
-              取消
-            </button>
-            <button
-              type="button"
-              className="case-graph-primary-button"
-              disabled={applying || !selectedInDetailCount}
-              onClick={onApplyExclude}
-            >
-              <Check size={14} />
-              <span>{applying ? '应用中' : '应用到图'}</span>
-            </button>
-          </footer>
-        ) : null}
-      </section>
-    </div>
+    </Modal>
   );
 }
 

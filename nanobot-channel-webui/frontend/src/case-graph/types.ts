@@ -108,6 +108,8 @@ export interface CaseGraphInvestigationGroup {
   groupType?: string;
   note?: string;
   collapsed?: boolean;
+  x?: number;
+  y?: number;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -418,6 +420,7 @@ export interface ApplyCaseGraphInvestigationGroupPayload {
   groupType?: string;
   note?: string;
   collapsed?: boolean;
+  groupPosition?: { x: number; y: number } | null;
   options?: Record<string, unknown>;
 }
 
@@ -486,6 +489,7 @@ export interface RestoreCaseGraphNodePayload {
   graphId: string;
   caseId: string;
   nodeId: string;
+  options?: Record<string, unknown>;
 }
 
 export interface CaseGraphManualPartyPayload {
@@ -533,6 +537,13 @@ export interface AddCaseGraphRealityRelationPayload {
   label?: string;
   note?: string;
   options?: Record<string, unknown>;
+}
+
+export interface UpdateCaseGraphNodeNotePayload {
+  graphName?: string;
+  nodeId: string;
+  note?: string;
+  sourceNote?: string;
 }
 
 export interface CreateCaseGraphPayload {

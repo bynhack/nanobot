@@ -20,6 +20,7 @@ from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 
 from .auth import WebUIAccessControl
+from .case_audit import CaseAuditService, CaseAuditStorage
 from .case_graph.mysql_client import CaseGraphMySQLConfig, PyMySQLCaseGraphQueryClient
 from .case_graph.graph_state_service import GraphStateService
 from .case_graph.relation_service import RelationGraphService
@@ -61,6 +62,18 @@ class _CaseGraphQueryClientNotConfiguredError(RuntimeError):
 class _UnconfiguredCaseGraphQueryClient:
     def __init__(self, config: WebUIConfig) -> None:
         self._config = config
+
+    def list_cases(self) -> list[dict[str, Any]]:
+        raise self._error()
+
+    def list_accounts(self, case_id: str, keyword: str = "") -> list[dict[str, Any]]:
+        raise self._error()
+
+    def case_audit_overview(self, case_id: str) -> dict[str, Any]:
+        raise self._error()
+
+    def query_case_audit_trades(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        raise self._error()
 
     def query_graph(self, payload: dict[str, Any]) -> dict[str, Any]:
         raise self._error()
@@ -384,6 +397,10 @@ class WebUIChannel(BaseChannel):
             query_client=self._build_case_graph_query_client(),
             snapshot_storage=self._case_graph_storage,
         )
+        self._case_audit_service = CaseAuditService(
+            query_client=self._build_case_graph_query_client(),
+        )
+        self._case_audit_storage = CaseAuditStorage()
         self._hook = WebUIHook(self._registry, self._turns)
         self._runtime_attached = self._ensure_runtime_attached()
 
@@ -456,6 +473,12 @@ class WebUIChannel(BaseChannel):
         app.router.add_get("/api/case-graph/graphs", self._handle_case_graph_list)
         app.router.add_get("/api/case-graph/cases", self._handle_case_graph_cases)
         app.router.add_get("/api/case-graph/cases/{case_id}/accounts", self._handle_case_graph_accounts)
+        app.router.add_get("/api/case-audit/cases", self._handle_case_audit_cases)
+        app.router.add_get("/api/case-audit/cases/{case_id}/overview", self._handle_case_audit_overview)
+        app.router.add_get("/api/case-audit/cases/{case_id}/audits", self._handle_case_audit_list)
+        app.router.add_post("/api/case-audit/audits", self._handle_case_audit_create)
+        app.router.add_post("/api/case-audit/audits/{audit_id}", self._handle_case_audit_update)
+        app.router.add_post("/api/case-audit/run", self._handle_case_audit_run)
         app.router.add_get("/api/case-graph/graph/{graph_id}", self._handle_case_graph_detail)
         app.router.add_post("/api/case-graph/graph/{graph_id}", self._handle_case_graph_update)
         app.router.add_delete("/api/case-graph/graph/{graph_id}", self._handle_case_graph_delete)
@@ -473,6 +496,7 @@ class WebUIChannel(BaseChannel):
         app.router.add_post("/api/case-graph/relation/reality-relation", self._handle_case_graph_relation_reality_relation)
         app.router.add_get("/api/case-graph/relation/state/{case_id}/{graph_id}", self._handle_case_graph_state_get)
         app.router.add_post("/api/case-graph/relation/state/{case_id}/{graph_id}/operations/layout", self._handle_case_graph_state_layout)
+        app.router.add_post("/api/case-graph/relation/state/{case_id}/{graph_id}/operations/node-note", self._handle_case_graph_state_node_note)
         app.router.add_post("/api/case-graph/relation/state/{case_id}/{graph_id}/operations/latest-step-layout", self._handle_case_graph_state_latest_step_layout)
         app.router.add_get("/api/case-graph/relation/state/{case_id}/{graph_id}/steps", self._handle_case_graph_state_steps)
         app.router.add_post("/api/case-graph/target-detail", self._handle_case_graph_target_detail)
@@ -947,10 +971,162 @@ class WebUIChannel(BaseChannel):
         except _CaseGraphQueryClientNotConfiguredError as exc:
             return web.json_response({"error": str(exc)}, status=503)
         except ValueError as exc:
+            if exc.args and exc.args[0] == "victimCondition":
+                return web.json_response(
+                    {"error": "请先填写被害人账号或姓名，涉诈资金审计需要以被害人入账作为追踪起点。"},
+                    status=400,
+                )
             return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
         except Exception as exc:
             return web.json_response({"error": f"主体列表读取失败: {exc}"}, status=502)
         return web.json_response({"items": result})
+
+    async def _handle_case_audit_cases(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        try:
+            result = await asyncio.to_thread(self._case_audit_service.list_cases)
+        except _CaseGraphQueryClientNotConfiguredError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        except Exception as exc:
+            return web.json_response({"error": f"案件列表读取失败: {exc}"}, status=502)
+        return web.json_response({"items": result})
+
+    async def _handle_case_audit_overview(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        case_id = request.match_info.get("case_id", "").strip()
+        if not case_id:
+            return web.json_response({"error": "缺少 case_id"}, status=400)
+        try:
+            result = await asyncio.to_thread(self._case_audit_service.overview, case_id)
+        except _CaseGraphQueryClientNotConfiguredError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        except ValueError as exc:
+            return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
+        except Exception as exc:
+            return web.json_response({"error": f"案件审计概览读取失败: {exc}"}, status=502)
+        return web.json_response(result)
+
+    async def _handle_case_audit_list(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        case_id = request.match_info.get("case_id", "").strip()
+        if not case_id:
+            return web.json_response({"error": "缺少 case_id"}, status=400)
+        ensure = str(request.query.get("ensure") or "").strip() in {"1", "true", "yes"}
+        try:
+            active = (
+                await asyncio.to_thread(self._case_audit_storage.get_or_create_default, case_id)
+                if ensure
+                else None
+            )
+            items = await asyncio.to_thread(self._case_audit_storage.list_audits, case_id)
+        except ValueError as exc:
+            return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
+        except Exception as exc:
+            return web.json_response({"error": f"审计档案读取失败: {exc}"}, status=500)
+        active_audit_id = str(active.get("auditId") or "") if isinstance(active, dict) else ""
+        if not active_audit_id and items:
+            active_audit_id = str(items[0].get("auditId") or "")
+        return web.json_response({"items": items, "activeAuditId": active_audit_id})
+
+    async def _handle_case_audit_create(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            case_id = _require_text_field(payload, "caseId")
+            result = await asyncio.to_thread(
+                self._case_audit_storage.create_audit,
+                case_id=case_id,
+                audit_name=str(payload.get("auditName") or ""),
+                conditions=payload.get("conditions") if isinstance(payload.get("conditions"), dict) else None,
+                filters=payload.get("filters") if isinstance(payload.get("filters"), dict) else None,
+            )
+        except ValueError as exc:
+            return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
+        except Exception as exc:
+            return web.json_response({"error": f"审计档案创建失败: {exc}"}, status=500)
+        return web.json_response(result)
+
+    async def _handle_case_audit_update(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        audit_id = request.match_info.get("audit_id", "").strip()
+        if not audit_id:
+            return web.json_response({"error": "缺少 audit_id"}, status=400)
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            result = await asyncio.to_thread(self._case_audit_storage.update_audit, audit_id, dict(payload))
+        except KeyError:
+            return web.json_response({"error": "审计档案不存在"}, status=404)
+        except ValueError as exc:
+            return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
+        except Exception as exc:
+            return web.json_response({"error": f"审计档案保存失败: {exc}"}, status=500)
+        return web.json_response(result)
+
+    async def _handle_case_audit_run(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            _require_text_field(payload, "caseId")
+            result = await asyncio.to_thread(self._case_audit_service.run_case_audit, dict(payload))
+            audit_id = str(payload.get("auditId") or "").strip()
+            if audit_id:
+                await asyncio.to_thread(
+                    self._case_audit_storage.save_run_result,
+                    audit_id,
+                    run_payload=dict(payload),
+                    result=result,
+                )
+        except _CaseGraphQueryClientNotConfiguredError as exc:
+            return web.json_response({"error": str(exc)}, status=503)
+        except KeyError:
+            return web.json_response({"error": "审计档案不存在"}, status=404)
+        except ValueError as exc:
+            return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
+        except Exception as exc:
+            return web.json_response({"error": f"涉诈资金审计失败: {exc}"}, status=502)
+        return web.json_response(result)
 
     async def _handle_case_graph_detail(self, request: Any) -> Any:
         from aiohttp import web
@@ -1599,6 +1775,44 @@ class WebUIChannel(BaseChannel):
             return web.json_response({"error": "图状态不存在"}, status=404)
         except Exception as exc:
             return web.json_response({"error": f"保存步骤布局失败: {exc}"}, status=500)
+        return web.json_response(graph)
+
+    async def _handle_case_graph_state_node_note(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        case_id = request.match_info.get("case_id", "").strip()
+        graph_id = request.match_info.get("graph_id", "").strip()
+        if not case_id or not graph_id:
+            return web.json_response({"error": "缺少 case_id 或 graph_id"}, status=400)
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+        node_id = str(payload.get("nodeId") or "").strip()
+        if not node_id:
+            return web.json_response({"error": "缺少 nodeId"}, status=400)
+        try:
+            graph = await asyncio.to_thread(
+                self._case_graph_state_service.update_node_note,
+                case_id=case_id,
+                graph_id=graph_id,
+                graph_name=str(payload.get("graphName") or "").strip(),
+                node_id=node_id,
+                note=str(payload.get("note") or ""),
+                source_note=str(payload.get("sourceNote") or ""),
+            )
+        except FileNotFoundError:
+            return web.json_response({"error": "图状态不存在"}, status=404)
+        except KeyError:
+            return web.json_response({"error": "主体不存在"}, status=404)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        except Exception as exc:
+            return web.json_response({"error": f"保存主体备注失败: {exc}"}, status=500)
         return web.json_response(graph)
 
     async def _handle_case_graph_state_steps(self, request: Any) -> Any:

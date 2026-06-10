@@ -14,6 +14,8 @@ import {
 import { ChatWorkspace, type ChatWorkspaceRenderContext } from '../components/chat/chat-workspace';
 import type { CaseGraphActionContextValue, CaseGraphActionPreview } from '../components/chat/case-graph-action-context';
 import { ConversationContentPane } from '../components/chat/conversation-content-pane';
+import { Modal } from '../components/ui/modal';
+import { Select } from '../components/ui/select';
 import type { ToolDetailPayload } from '../components/chat/detail-preview-context';
 import type { DetailView } from '../detail-preview-pane';
 import {
@@ -49,6 +51,7 @@ import {
   restoreCaseGraphNode,
   saveCaseGraphLatestStepLayout,
   saveCaseGraphLayoutOperation,
+  saveCaseGraphNodeNote,
   updateCaseGraphContext,
   updateCaseGraphConfig,
 } from './api';
@@ -262,8 +265,6 @@ export function CaseGraphWorkbench({
   const [deleteGraphTarget, setDeleteGraphTarget] = useState<GraphTabState | null>(null);
   const [newGraphForm, setNewGraphForm] = useState({
     graphName: '',
-    saveToClue: '1',
-    clueName: '',
   });
   const [graphConfigForm, setGraphConfigForm] = useState({
     drillNums: '10',
@@ -314,6 +315,8 @@ export function CaseGraphWorkbench({
   });
   const graphNodePositionsRef = useRef<Record<string, GraphNodePoint>>({});
   const pendingStepLayoutRef = useRef<{ caseId: string; graphId: string } | null>(null);
+  const layoutPersistenceInFlightRef = useRef(0);
+  const layoutContextSuppressedUntilRef = useRef(0);
   const caseGraphChatContextRef = useRef<ChatWorkspaceRenderContext | null>(null);
   const lastAutoInsightStepRef = useRef('');
   const workspaceRequestCounterRef = useRef(0);
@@ -550,10 +553,6 @@ export function CaseGraphWorkbench({
     () => Boolean(activeTab && !sameFilterState(filterState, activeTab.appliedFilters)),
     [activeTab, filterState],
   );
-  const appliedFilterLabels = useMemo(
-    () => activeTab ? buildFilterLabels(activeTab.appliedFilters) : [],
-    [activeTab],
-  );
   const activeGraphSteps = useMemo(
     () => activeTab ? graphStepsById[activeTab.graphId] ?? [] : [],
     [activeTab, graphStepsById],
@@ -641,6 +640,12 @@ export function CaseGraphWorkbench({
 
   const syncGraphContext = useCallback((focus: CaseGraphConversationFocus | null) => {
     if (!activeTab) {
+      return;
+    }
+    if (
+      layoutPersistenceInFlightRef.current > 0 ||
+      Date.now() < layoutContextSuppressedUntilRef.current
+    ) {
       return;
     }
     const hasGraphData = Boolean(activeTab.graphData?.nodes.length || activeTab.graphData?.edges.length);
@@ -976,8 +981,6 @@ export function CaseGraphWorkbench({
   const openNewGraphDialog = useCallback(() => {
     setNewGraphForm({
       graphName: `图${graphTabs.length + 1}`,
-      saveToClue: '1',
-      clueName: '',
     });
     setNewGraphDialogOpen(true);
   }, [graphTabs.length]);
@@ -1002,10 +1005,6 @@ export function CaseGraphWorkbench({
     const graphName = newGraphForm.graphName.trim();
     if (!graphName) {
       setError('请输入图形名称');
-      return;
-    }
-    if (newGraphForm.saveToClue === '1' && !newGraphForm.clueName.trim()) {
-      setError('请输入线索名称');
       return;
     }
     setRequests((current) => ({ ...current, creating: true }));
@@ -1094,6 +1093,8 @@ export function CaseGraphWorkbench({
         ? { ...current, graphData: positionedGraphData, originData: positionedOriginData }
         : current
     ));
+    layoutPersistenceInFlightRef.current += 1;
+    layoutContextSuppressedUntilRef.current = Date.now() + 2000;
     void saveCaseGraphLayoutOperation(
       tab.caseId,
       tab.graphId,
@@ -1105,10 +1106,14 @@ export function CaseGraphWorkbench({
           ? { ...current, ...graphStateToTab(state, current), graphContent: current.graphContent, chatId: current.chatId }
           : current
       ));
+      void refreshGraphSteps(tab);
     }).catch((err: unknown) => {
       console.warn('保存图谱布局失败', err);
+    }).finally(() => {
+      layoutPersistenceInFlightRef.current = Math.max(0, layoutPersistenceInFlightRef.current - 1);
+      layoutContextSuppressedUntilRef.current = Date.now() + 600;
     });
-  }, [token, updateActiveTab]);
+  }, [refreshGraphSteps, token, updateActiveTab]);
 
   const markPendingStepLayout = useCallback((tab: Pick<GraphTabState, 'caseId' | 'graphId'>) => {
     pendingStepLayoutRef.current = { caseId: tab.caseId, graphId: tab.graphId };
@@ -1503,6 +1508,11 @@ export function CaseGraphWorkbench({
         caseId: activeTab.caseId,
         graphId: activeTab.graphId,
         nodeId,
+        options: buildRestoreNodesRelationOptions(
+          activeTab.graphData,
+          graphNodePositionsRef.current,
+          [nodeId],
+        ),
       },
       token,
     )
@@ -1529,6 +1539,11 @@ export function CaseGraphWorkbench({
         caseId: activeTab.caseId,
         graphId: activeTab.graphId,
         nodeId: node.nodeId,
+        options: buildRestoreNodesRelationOptions(
+          activeTab.graphData,
+          graphNodePositionsRef.current,
+          activeTab.excludedNodes.map((item) => item.nodeId),
+        ),
       }, token)),
       Promise.resolve(null as unknown as Awaited<ReturnType<typeof restoreCaseGraphNode>>),
     )
@@ -2390,12 +2405,20 @@ export function CaseGraphWorkbench({
     if (!activeTab) return;
     setReplaySelection(null);
     setGroupOperationApplying(true);
+    const positionedGraphData = applyNodePositions(activeTab.graphData, graphNodePositionsRef.current);
+    const relationOptions = buildInvestigationGroupRelationOptions(
+      positionedGraphData,
+      graphNodePositionsRef.current,
+      operationPayload,
+    );
     applyCaseGraphInvestigationGroup(
       {
         caseId: activeTab.caseId,
         graphId: activeTab.graphId,
         ...operationPayload,
-        options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+        groupPosition: operationPayload.groupPosition
+          ?? resolveInvestigationGroupOperationPosition(positionedGraphData, operationPayload),
+        options: relationOptions,
       },
       token,
     )
@@ -2414,6 +2437,36 @@ export function CaseGraphWorkbench({
         setGroupOperationApplying(false);
       });
   }, [activeTab, applyRelationResultToActiveTab, handleCloseInvestigationGroup, refreshGraphSteps, token]);
+
+  const handleUpdateNodeNote = useCallback((nodeId: string, input: { note: string; sourceNote?: string }) => {
+    if (!activeTab) return;
+    const note = input.note.trim();
+    const sourceNote = (input.sourceNote || '').trim();
+    setReplaySelection(null);
+    saveCaseGraphNodeNote(
+      activeTab.caseId,
+      activeTab.graphId,
+      {
+        graphName: activeTab.graphName,
+        nodeId,
+        note,
+        sourceNote,
+      },
+      token,
+    )
+      .then((state) => {
+        updateActiveTab((current) => (
+          current.graphId === activeTab.graphId
+            ? { ...current, ...graphStateToTab(state, current), graphContent: current.graphContent, chatId: current.chatId }
+            : current
+        ));
+        void refreshGraphSteps(activeTab);
+        setError(null);
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : '保存主体备注失败');
+      });
+  }, [activeTab, refreshGraphSteps, token, updateActiveTab]);
 
   const handleSubmitInvestigationGroup = useCallback(() => {
     if (!activeTab || groupDraftNodes.length < 2) return;
@@ -3189,14 +3242,6 @@ export function CaseGraphWorkbench({
                 </button>
               </div>
             </div>
-            <div className="case-graph-applied-filters" aria-label="当前筛选">
-              <strong>当前筛选</strong>
-              {appliedFilterLabels.length ? (
-                appliedFilterLabels.map((label) => <span key={label}>{label}</span>)
-              ) : (
-                <em>未应用筛选</em>
-              )}
-            </div>
             <GraphView
               graphData={visibleGraphData}
               graphContent={displayTab?.graphContent ?? null}
@@ -3298,6 +3343,12 @@ export function CaseGraphWorkbench({
                   return;
                 }
                 applyInvestigationGroupOperation({ operation: 'add_members', groupId, memberNodeIds: nodeIds });
+              }}
+              onUpdateNodeNote={(nodeId, input) => {
+                if (replayActive) {
+                  return;
+                }
+                handleUpdateNodeNote(nodeId, input);
               }}
               groupOperationLoading={groupOperationApplying}
               excluding={requests.excluding}
@@ -3500,24 +3551,29 @@ export function CaseGraphWorkbench({
         onClose={handleCloseManualClue}
       />
 
-      {groupDraftOpen ? (
-        <div className="case-graph-modal-mask" role="presentation" onClick={handleCloseInvestigationGroup}>
-          <section
-            className="case-graph-modal case-graph-investigation-group-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="case-graph-investigation-group-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="case-graph-modal-header">
-              <div>
-                <h2 id="case-graph-investigation-group-title">归并成组</h2>
-                <span>已选择 {groupDraftNodes.length} 个主体，成组后可整体收起或拆分。</span>
-              </div>
-              <button className="case-graph-icon-button" type="button" onClick={handleCloseInvestigationGroup}>
-                <X size={16} />
-              </button>
-            </div>
+      <Modal
+        open={groupDraftOpen}
+        title="归并成组"
+        description={`已选择 ${groupDraftNodes.length} 个主体，成组后可整体收起或拆分。`}
+        onClose={handleCloseInvestigationGroup}
+        size="md"
+        className="case-graph-investigation-group-modal"
+        footer={(
+          <>
+            <button className="case-graph-secondary-button" type="button" onClick={handleCloseInvestigationGroup}>
+              取消
+            </button>
+            <button
+              className="case-graph-primary-button"
+              type="button"
+              disabled={groupOperationApplying || groupDraftNodes.length < 2}
+              onClick={handleSubmitInvestigationGroup}
+            >
+              {groupOperationApplying ? '保存中' : '保存到图'}
+            </button>
+          </>
+        )}
+      >
             <div className="case-graph-investigation-group-body">
               <div className="case-graph-investigation-group-fields">
                 <label>
@@ -3530,16 +3586,18 @@ export function CaseGraphWorkbench({
                 </label>
                 <label>
                   <span>组类型</span>
-                  <select
+                  <Select
                     value={groupDraftForm.groupType}
-                    onChange={(event) => setGroupDraftForm((current) => ({ ...current, groupType: event.target.value }))}
-                  >
-                    <option value="团伙成员">团伙成员</option>
-                    <option value="关联账号">关联账号</option>
-                    <option value="控制关系">控制关系</option>
-                    <option value="资金中转">资金中转</option>
-                    <option value="其他">其他</option>
-                  </select>
+                    ariaLabel="组类型"
+                    options={[
+                      { value: '团伙成员', label: '团伙成员' },
+                      { value: '关联账号', label: '关联账号' },
+                      { value: '控制关系', label: '控制关系' },
+                      { value: '资金中转', label: '资金中转' },
+                      { value: '其他', label: '其他' },
+                    ]}
+                    onChange={(value) => setGroupDraftForm((current) => ({ ...current, groupType: value }))}
+                  />
                 </label>
                 <label className="case-graph-investigation-group-note">
                   <span>研判说明</span>
@@ -3559,41 +3617,28 @@ export function CaseGraphWorkbench({
                 </div>
               </div>
             </div>
-            <footer className="case-graph-modal-footer">
-              <button className="case-graph-secondary-button" type="button" onClick={handleCloseInvestigationGroup}>
-                取消
-              </button>
-              <button
-                className="case-graph-primary-button"
-                type="button"
-                disabled={groupOperationApplying || groupDraftNodes.length < 2}
-                onClick={handleSubmitInvestigationGroup}
-              >
-                {groupOperationApplying ? '保存中' : '保存到图'}
-              </button>
-            </footer>
-          </section>
-        </div>
-      ) : null}
+      </Modal>
 
-      {originPanelOpen ? (
-        <div className="case-graph-modal-mask case-graph-origin-mask" role="presentation" onClick={() => setOriginPanelOpen(false)}>
-          <section
-            className="case-graph-origin-panel"
-            role="dialog"
-            aria-modal="true"
-            aria-label="选择侦办起点"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="case-graph-origin-header">
-              <div>
-                <h2>选择侦办起点</h2>
-                <span>{activeTab ? `${activeTab.graphName} · ${selectedAccountIds.length} 已选` : '请先新建图形'}</span>
-              </div>
-              <button className="case-graph-icon-button" type="button" onClick={() => setOriginPanelOpen(false)}>
-                <X size={16} />
-              </button>
-            </div>
+      <Modal
+        open={originPanelOpen}
+        title="选择侦办起点"
+        description={activeTab ? `${activeTab.graphName} · ${selectedAccountIds.length} 已选` : '请先新建图形'}
+        onClose={() => setOriginPanelOpen(false)}
+        size="xl"
+        className="case-graph-origin-panel"
+        bodyClassName="case-graph-origin-modal-body"
+        footer={(
+          <>
+            <button className="case-graph-secondary-button" type="button" onClick={() => setOriginPanelOpen(false)}>
+              取消
+            </button>
+            <button className="case-graph-primary-button" type="button" onClick={handleAnalyze} disabled={!activeTab || replayActive || requests.querying || selectedAccountIds.length === 0}>
+              <Sparkles size={14} />
+              <span>{requests.querying ? '分析中' : '分析上图'}</span>
+            </button>
+          </>
+        )}
+      >
             <CaseRail
               className="case-graph-rail--origin"
               cases={cases}
@@ -3609,60 +3654,43 @@ export function CaseGraphWorkbench({
               onToggleAccount={handleToggleAccount}
               onToggleAccountGroup={handleToggleAccountGroup}
             />
-            <div className="case-graph-origin-footer">
-              <button className="case-graph-secondary-button" type="button" onClick={() => setOriginPanelOpen(false)}>
-                取消
-              </button>
-              <button className="case-graph-primary-button" type="button" onClick={handleAnalyze} disabled={!activeTab || replayActive || requests.querying || selectedAccountIds.length === 0}>
-                <Sparkles size={14} />
-                <span>{requests.querying ? '分析中' : '分析上图'}</span>
-              </button>
-            </div>
-          </section>
-        </div>
-      ) : null}
+      </Modal>
 
-      {deleteGraphTarget ? (
-        <div className="case-graph-modal-mask" role="presentation" onClick={() => (requests.deleting ? undefined : setDeleteGraphTarget(null))}>
-          <div className="case-graph-modal case-graph-delete-modal" role="dialog" aria-modal="true" aria-label="删除图确认" onClick={(event) => event.stopPropagation()}>
-            <div className="case-graph-modal-header">
-              <div>
-                <h2>删除图</h2>
-                <span>将删除这张图、绑定的研判对话以及相关工作文件，操作不可恢复。</span>
-              </div>
-              <button className="case-graph-icon-button" type="button" disabled={requests.deleting} onClick={() => setDeleteGraphTarget(null)}>
-                <X size={16} />
-              </button>
-            </div>
+      <Modal
+        open={Boolean(deleteGraphTarget)}
+        title="删除图"
+        description="将删除这张图、绑定的研判对话以及相关工作文件，操作不可恢复。"
+        onClose={() => setDeleteGraphTarget(null)}
+        closeDisabled={requests.deleting}
+        size="sm"
+        className="case-graph-delete-modal"
+        ariaLabel="删除图确认"
+        footer={(
+          <>
+            <button className="case-graph-secondary-button" type="button" disabled={requests.deleting} onClick={() => setDeleteGraphTarget(null)}>
+              取消
+            </button>
+            <button className="case-graph-danger-button" type="button" disabled={requests.deleting} onClick={handleConfirmDeleteGraph}>
+              {requests.deleting ? '删除中' : '确认删除'}
+            </button>
+          </>
+        )}
+      >
+        {deleteGraphTarget ? (
             <div className="case-graph-delete-copy">
               确认删除「{deleteGraphTarget.graphName}」吗？
             </div>
-            <div className="case-graph-modal-footer">
-              <button className="case-graph-secondary-button" type="button" disabled={requests.deleting} onClick={() => setDeleteGraphTarget(null)}>
-                取消
-              </button>
-              <button className="case-graph-danger-button" type="button" disabled={requests.deleting} onClick={handleConfirmDeleteGraph}>
-                {requests.deleting ? '删除中' : '确认删除'}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+        ) : null}
+      </Modal>
 
-      {excludedDialogOpen ? (
-        <div className="case-graph-modal-mask" role="presentation" onClick={() => setExcludedDialogOpen(false)}>
-          <div className="case-graph-modal case-graph-excluded-modal" role="dialog" aria-modal="true" aria-label="排除管理" onClick={(event) => event.stopPropagation()}>
-            <div className="case-graph-modal-header">
-              <div>
-                <strong>排除管理</strong>
-                <span>
-                  已取消上图 {activeTab?.excludedNodes.length ?? 0} 个主体，已排除 {activeTab?.excludedTrades.length ?? 0} 笔交易流水
-                </span>
-              </div>
-              <button className="case-graph-icon-button" type="button" onClick={() => setExcludedDialogOpen(false)}>
-                <X size={16} />
-              </button>
-            </div>
+      <Modal
+        open={excludedDialogOpen}
+        title="排除管理"
+        description={`已取消上图 ${activeTab?.excludedNodes.length ?? 0} 个主体，已排除 ${activeTab?.excludedTrades.length ?? 0} 笔交易流水`}
+        onClose={() => setExcludedDialogOpen(false)}
+        size="lg"
+        className="case-graph-excluded-modal"
+      >
             <div className="case-graph-excluded-tabs" role="tablist" aria-label="排除项类型">
               <button
                 type="button"
@@ -3802,34 +3830,36 @@ export function CaseGraphWorkbench({
                 </div>
               </>
             )}
-          </div>
-        </div>
-      ) : null}
+      </Modal>
 
-      {newGraphDialogOpen ? (
-        <div className="case-graph-modal-mask" role="presentation">
-          <div className="case-graph-modal">
-            <div className="case-graph-modal-header">
-              <h2>新建图形</h2>
-              <button type="button" onClick={() => setNewGraphDialogOpen(false)}>
-                <X size={18} />
-              </button>
-            </div>
+      <Modal
+        open={newGraphDialogOpen}
+        title="新建图形"
+        onClose={() => setNewGraphDialogOpen(false)}
+        size="md"
+        bodyClassName="case-graph-form-modal-body"
+        footer={(
+          <>
+            <button className="case-graph-secondary-button" type="button" onClick={() => setNewGraphDialogOpen(false)}>取消</button>
+            <button className="case-graph-primary-button" type="button" onClick={handleCreateGraph} disabled={requests.creating}>
+              <span>{requests.creating ? '创建中' : '确认'}</span>
+            </button>
+          </>
+        )}
+      >
             <label className="case-graph-field">
               <span>案件</span>
-              <select
-                className="case-graph-select"
+              <Select
                 value={caseIdDraft}
-                onChange={(event) => handleCaseIdChange(event.target.value)}
+                options={[
+                  { value: '', label: casesLoading ? '案件加载中...' : '请选择案件', disabled: casesLoading },
+                  ...cases.map((item) => ({ value: item.id, label: item.caseName || item.caseCode || item.id })),
+                ]}
                 disabled={casesLoading}
-              >
-                <option value="">{casesLoading ? '案件加载中...' : '请选择案件'}</option>
-                {cases.map((item) => (
-                  <option key={item.id} value={item.id}>
-                    {item.caseName || item.caseCode || item.id}
-                  </option>
-                ))}
-              </select>
+                placeholder={casesLoading ? '案件加载中...' : '请选择案件'}
+                ariaLabel="案件"
+                onChange={handleCaseIdChange}
+              />
             </label>
             <label className="case-graph-field">
               <span>图形名称</span>
@@ -3839,40 +3869,23 @@ export function CaseGraphWorkbench({
                 placeholder="请输入"
               />
             </label>
-            <div className="case-graph-radio-row">
-              <span>是否保存为线索</span>
-              <label><input type="radio" checked={newGraphForm.saveToClue === '1'} onChange={() => setNewGraphForm((current) => ({ ...current, saveToClue: '1' }))} />是</label>
-              <label><input type="radio" checked={newGraphForm.saveToClue === '0'} onChange={() => setNewGraphForm((current) => ({ ...current, saveToClue: '0', clueName: '' }))} />否</label>
-            </div>
-            {newGraphForm.saveToClue === '1' ? (
-              <label className="case-graph-field">
-                <span>线索名称</span>
-                <input
-                  value={newGraphForm.clueName}
-                  onChange={(event) => setNewGraphForm((current) => ({ ...current, clueName: event.target.value }))}
-                  placeholder="请输入"
-                />
-              </label>
-            ) : null}
-            <div className="case-graph-modal-footer">
-              <button className="case-graph-secondary-button" type="button" onClick={() => setNewGraphDialogOpen(false)}>取消</button>
-              <button className="case-graph-primary-button" type="button" onClick={handleCreateGraph} disabled={requests.creating}>
-                <span>{requests.creating ? '创建中' : '确认'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      </Modal>
 
-      {graphConfigDialogOpen ? (
-        <div className="case-graph-modal-mask" role="presentation" onClick={() => setGraphConfigDialogOpen(false)}>
-          <div className="case-graph-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="case-graph-modal-header">
-              <h2>当前图钻取配置</h2>
-              <button type="button" onClick={() => setGraphConfigDialogOpen(false)}>
-                <X size={18} />
-              </button>
-            </div>
+      <Modal
+        open={graphConfigDialogOpen}
+        title="当前图钻取配置"
+        onClose={() => setGraphConfigDialogOpen(false)}
+        size="md"
+        bodyClassName="case-graph-form-modal-body"
+        footer={(
+          <>
+            <button className="case-graph-secondary-button" type="button" onClick={() => setGraphConfigDialogOpen(false)}>取消</button>
+            <button className="case-graph-primary-button" type="button" onClick={handleSaveGraphConfig} disabled={requests.querying}>
+              <span>{requests.querying ? '保存中' : '确认'}</span>
+            </button>
+          </>
+        )}
+      >
             <label className="case-graph-field">
               <span>上下钻个数</span>
               <input
@@ -3908,15 +3921,7 @@ export function CaseGraphWorkbench({
                 />
               </label>
             </div>
-            <div className="case-graph-modal-footer">
-              <button className="case-graph-secondary-button" type="button" onClick={() => setGraphConfigDialogOpen(false)}>取消</button>
-              <button className="case-graph-primary-button" type="button" onClick={handleSaveGraphConfig} disabled={requests.querying}>
-                <span>{requests.querying ? '保存中' : '确认'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      </Modal>
     </section>
   );
 }
@@ -3946,14 +3951,16 @@ function buildReplayTimelineSteps(steps: CaseGraphStepSnapshot[]): CaseGraphRepl
 }
 
 function countActiveGraphElements(graph: CaseGraphStateBody): { nodeCount: number; edgeCount: number } {
+  const nodes = Array.isArray(graph.nodes) ? graph.nodes : [];
+  const edges = Array.isArray(graph.edges) ? graph.edges : [];
   const excludedNodeIds = new Set(
-    graph.nodes
+    nodes
       .filter((node) => node.isExcluded)
       .map((node) => String(node.id || '').trim())
       .filter(Boolean),
   );
-  const nodeCount = graph.nodes.filter((node) => !node.isExcluded).length;
-  const edgeCount = graph.edges.filter((edge) => {
+  const nodeCount = nodes.filter((node) => !node.isExcluded).length;
+  const edgeCount = edges.filter((edge) => {
     const source = String(edge.source || edge.from || '').trim();
     const target = String(edge.target || edge.to || '').trim();
     return !edge.isExcluded && !excludedNodeIds.has(source) && !excludedNodeIds.has(target);
@@ -4255,17 +4262,6 @@ function normalizeDateTimeLocal(value: string, endOfDay: boolean): string {
   if (!trimmed) return '';
   const normalized = trimmed.replace('T', ' ');
   return normalized.length === 16 ? `${normalized}:${endOfDay ? '59' : '00'}` : normalized;
-}
-
-function buildFilterLabels(filters: CaseGraphFilterState): string[] {
-  const labels: string[] = [];
-  if (filters.minAmount || filters.maxAmount) {
-    labels.push(`金额 ${filters.minAmount || '不限'} ~ ${filters.maxAmount || '不限'}`);
-  }
-  if (filters.startTime || filters.endTime) {
-    labels.push(`时间 ${filters.startTime || '不限'} ~ ${filters.endTime || '不限'}`);
-  }
-  return labels;
 }
 
 function buildRelationSeeds(
@@ -4715,6 +4711,21 @@ export function buildRelationOptionsForTest(
   return buildRelationOptions(graphData, positions);
 }
 
+export function buildRestoreNodesRelationOptionsForTest(
+  graphData: CaseGraphData | null,
+  positions: Record<string, GraphNodePoint>,
+  restoreNodeIds: string[],
+): Record<string, unknown> {
+  return buildRestoreNodesRelationOptions(graphData, positions, restoreNodeIds);
+}
+
+export function resolveInvestigationGroupOperationPositionForTest(
+  graphData: CaseGraphData | null,
+  operationPayload: Omit<ApplyCaseGraphInvestigationGroupPayload, 'caseId' | 'graphId' | 'options'>,
+): GraphNodePoint | null {
+  return resolveInvestigationGroupOperationPosition(graphData, operationPayload);
+}
+
 export function shouldPersistGraphPositionsForTest(
   graphData: CaseGraphData | null,
   positions: Record<string, GraphNodePoint>,
@@ -4924,6 +4935,198 @@ function buildRelationOptions(
     nodePositions[nodeId] = { x, y };
   }
   return Object.keys(nodePositions).length ? { nodePositions } : {};
+}
+
+function buildInvestigationGroupRelationOptions(
+  graphData: CaseGraphData | null,
+  positions: Record<string, GraphNodePoint>,
+  operationPayload: Omit<ApplyCaseGraphInvestigationGroupPayload, 'caseId' | 'graphId' | 'options'>,
+): Record<string, unknown> {
+  const options = buildRelationOptions(graphData, positions);
+  if (!graphData || !['expand', 'ungroup', 'remove_member'].includes(operationPayload.operation)) {
+    return options;
+  }
+  const nodePositions = options.nodePositions;
+  if (!nodePositions || typeof nodePositions !== 'object') {
+    return options;
+  }
+  const groupId = String(operationPayload.groupId || '').trim();
+  const group = (graphData.investigationGroups ?? []).find((item) => item.id === groupId);
+  if (!group?.collapsed) {
+    return options;
+  }
+  const ignoredNodeIds = new Set<string>();
+  if (operationPayload.operation === 'expand' || operationPayload.operation === 'ungroup') {
+    for (const nodeId of group.memberNodeIds ?? []) {
+      ignoredNodeIds.add(String(nodeId || '').trim());
+    }
+  } else {
+    for (const nodeId of operationPayload.memberNodeIds ?? []) {
+      ignoredNodeIds.add(String(nodeId || '').trim());
+    }
+  }
+  const nextNodePositions = { ...(nodePositions as Record<string, GraphNodePoint>) };
+  for (const nodeId of ignoredNodeIds) {
+    delete nextNodePositions[nodeId];
+  }
+  return Object.keys(nextNodePositions).length ? { ...options, nodePositions: nextNodePositions } : {};
+}
+
+const GRAPH_NODE_COLLISION_WIDTH = 248;
+const GRAPH_NODE_COLLISION_HEIGHT = 84;
+const GRAPH_NODE_COLLISION_X_GAP = 24;
+const GRAPH_NODE_COLLISION_Y_GAP = 16;
+const GRAPH_NODE_RESTORE_STEP_Y = GRAPH_NODE_COLLISION_HEIGHT + 40;
+
+function buildRestoreNodesRelationOptions(
+  graphData: CaseGraphData | null,
+  positions: Record<string, GraphNodePoint>,
+  restoreNodeIds: string[],
+): Record<string, unknown> {
+  if (!graphData) {
+    return {};
+  }
+  const restoreSet = new Set(restoreNodeIds.map((nodeId) => String(nodeId || '').trim()).filter(Boolean));
+  if (!restoreSet.size) {
+    return buildRelationOptions(graphData, positions);
+  }
+
+  const nodeById = new Map(graphData.nodes.map((node) => [node.id, node]));
+  const { hiddenNodeIds, groupAnchorNodeIds } = resolveCollapsedGroupOccupancy(graphData);
+  const nextPositions: Record<string, GraphNodePoint> = {};
+  const occupied = new Map<string, GraphNodePoint>();
+
+  for (const node of graphData.nodes) {
+    const nodeId = String(node.id || '').trim();
+    if (!nodeId || hiddenNodeIds.has(nodeId) || restoreSet.has(nodeId)) {
+      continue;
+    }
+    const point = resolveNodePoint(node, positions);
+    if (!point) {
+      continue;
+    }
+    nextPositions[nodeId] = point;
+    if (!node.isExcluded || groupAnchorNodeIds.has(nodeId)) {
+      occupied.set(nodeId, point);
+    }
+  }
+
+  for (const nodeId of restoreSet) {
+    const node = nodeById.get(nodeId);
+    if (!node) {
+      continue;
+    }
+    const preferred = resolveNodePoint(node, positions);
+    if (!preferred) {
+      continue;
+    }
+    const point = resolveNonCollidingGraphPoint(preferred, occupied);
+    nextPositions[nodeId] = point;
+    occupied.set(nodeId, point);
+  }
+
+  return Object.keys(nextPositions).length ? { nodePositions: nextPositions } : {};
+}
+
+function resolveInvestigationGroupOperationPosition(
+  graphData: CaseGraphData | null,
+  operationPayload: Omit<ApplyCaseGraphInvestigationGroupPayload, 'caseId' | 'graphId' | 'options'>,
+): GraphNodePoint | null {
+  if (!graphData) {
+    return null;
+  }
+  const nodeById = new Map(graphData.nodes.map((node) => [node.id, node]));
+  if (operationPayload.operation === 'create') {
+    const firstNodeId = operationPayload.nodeIds?.[0];
+    return firstNodeId ? resolveNodePoint(nodeById.get(firstNodeId) ?? null, {}) : null;
+  }
+  const groupId = String(operationPayload.groupId || '').trim();
+  const group = groupId
+    ? (graphData.investigationGroups ?? []).find((item) => item.id === groupId) ?? null
+    : null;
+  if (!group) {
+    return null;
+  }
+  const groupX = finiteNumber(group.x);
+  const groupY = finiteNumber(group.y);
+  if (groupX != null && groupY != null) {
+    return { x: groupX, y: groupY };
+  }
+  const firstNodeId = group.memberNodeIds?.[0];
+  return firstNodeId ? resolveNodePoint(nodeById.get(firstNodeId) ?? null, {}) : null;
+}
+
+function resolveCollapsedGroupOccupancy(graphData: CaseGraphData): {
+  hiddenNodeIds: Set<string>;
+  groupAnchorNodeIds: Set<string>;
+} {
+  const nodeIds = new Set(graphData.nodes.map((node) => node.id));
+  const hiddenNodeIds = new Set<string>();
+  const groupAnchorNodeIds = new Set<string>();
+  for (const group of graphData.investigationGroups ?? []) {
+    if (!group.collapsed) {
+      continue;
+    }
+    const members = (group.memberNodeIds ?? [])
+      .map((nodeId) => String(nodeId || '').trim())
+      .filter((nodeId) => nodeId && nodeIds.has(nodeId));
+    const anchor = members[0];
+    if (anchor) {
+      groupAnchorNodeIds.add(anchor);
+    }
+    for (const nodeId of members.slice(1)) {
+      hiddenNodeIds.add(nodeId);
+    }
+  }
+  return { hiddenNodeIds, groupAnchorNodeIds };
+}
+
+function resolveNodePoint(
+  node: CaseGraphData['nodes'][number] | null | undefined,
+  positions: Record<string, GraphNodePoint>,
+): GraphNodePoint | null {
+  if (!node) {
+    return null;
+  }
+  const nodeId = String(node.id || '').trim();
+  const point = positions[nodeId];
+  const x = finiteNumber(point?.x) ?? finiteNumber(node.x);
+  const y = finiteNumber(point?.y) ?? finiteNumber(node.y);
+  return x == null || y == null ? null : { x, y };
+}
+
+function resolveNonCollidingGraphPoint(
+  preferred: GraphNodePoint,
+  occupied: Map<string, GraphNodePoint>,
+): GraphNodePoint {
+  const candidates: GraphNodePoint[] = [preferred];
+  for (let step = 1; step <= 12; step += 1) {
+    candidates.push({ x: preferred.x, y: preferred.y + GRAPH_NODE_RESTORE_STEP_Y * step });
+  }
+  for (let step = 1; step <= 6; step += 1) {
+    const sideOffset = GRAPH_NODE_COLLISION_WIDTH + 56;
+    candidates.push(
+      { x: preferred.x + sideOffset, y: preferred.y + GRAPH_NODE_RESTORE_STEP_Y * step },
+      { x: preferred.x - sideOffset, y: preferred.y + GRAPH_NODE_RESTORE_STEP_Y * step },
+      { x: preferred.x, y: preferred.y - GRAPH_NODE_RESTORE_STEP_Y * step },
+    );
+  }
+  return candidates.find((point) => !hasGraphPointCollision(point, occupied)) ?? preferred;
+}
+
+function hasGraphPointCollision(
+  point: GraphNodePoint,
+  occupied: Map<string, GraphNodePoint>,
+): boolean {
+  for (const existing of occupied.values()) {
+    if (
+      Math.abs(existing.x - point.x) < GRAPH_NODE_COLLISION_WIDTH + GRAPH_NODE_COLLISION_X_GAP &&
+      Math.abs(existing.y - point.y) < GRAPH_NODE_COLLISION_HEIGHT + GRAPH_NODE_COLLISION_Y_GAP
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function buildRelationSeedFromNode(

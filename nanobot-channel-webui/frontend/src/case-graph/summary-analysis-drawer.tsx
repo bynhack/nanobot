@@ -1,6 +1,8 @@
-import { Check, FileSearch, X } from 'lucide-react';
+import { Check, FileSearch } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { Modal } from '../components/ui/modal';
+import { Select } from '../components/ui/select';
 import {
   SortableColumnHeader,
   sortItemsByState,
@@ -118,23 +120,32 @@ export function SummaryAnalysisDrawer({
   const title = node?.label || node?.accountName || node?.name || node?.tradeCard || node?.id || '全图';
 
   return (
-    <div className="case-graph-modal-mask case-graph-modal-mask--detail" role="presentation" onClick={onClose}>
-      <section
-        className="case-graph-summary-analysis-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="综合筛选"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="case-graph-edge-detail-header">
-          <div className="case-graph-detail-analysis-title">
-            <h2>综合筛选</h2>
-            <span>{isGlobalScope ? `全图综合查询 · 主体 ${items.length} 个` : `${title} · 可加入或排除的主体 ${items.length} 个`}</span>
-          </div>
-          <button type="button" className="case-graph-edge-detail-close" onClick={onClose} aria-label="关闭综合筛选">
-            <X size={20} />
+    <Modal
+      open={open}
+      title="综合筛选"
+      description={isGlobalScope ? `全图综合查询 · 主体 ${items.length} 个` : `${title} · 可加入或排除的主体 ${items.length} 个`}
+      onClose={onClose}
+      size="full"
+      className="case-graph-summary-analysis-modal"
+      bodyClassName="case-graph-detail-modal-body"
+      footer={(
+        <>
+          <span>{buildSummaryFooterText(selectedTotalCount, selectedActionCounts)}</span>
+          <button type="button" className="case-graph-secondary-button" onClick={onClose}>
+            取消
           </button>
-        </div>
+          <button
+            type="button"
+            className="case-graph-primary-button"
+            disabled={loading || applying || !items.length || !selectedTotalCount}
+            onClick={onApply}
+          >
+            <Check size={14} />
+            <span>{applying ? '处理中' : '应用到图'}</span>
+          </button>
+        </>
+      )}
+    >
 
         <div className="case-graph-summary-analysis-body">
           <div className="case-graph-summary-status-tabs" aria-label="按上图状态筛选主体">
@@ -184,15 +195,16 @@ export function SummaryAnalysisDrawer({
               ariaLabel="结束日期"
               placeholder="结束日期"
             />
-            <select
+            <Select
               value={filters.direction}
-              onChange={(event) => setFilters((current) => ({ ...current, direction: event.target.value as SummaryAnalysisFilters['direction'] }))}
-              aria-label="资金方向"
-            >
-              <option value="all">全部方向</option>
-              <option value="in">只看来款</option>
-              <option value="out">只看去向</option>
-            </select>
+              ariaLabel="资金方向"
+              options={[
+                { value: 'all', label: '全部方向' },
+                { value: 'in', label: '只看来款' },
+                { value: 'out', label: '只看去向' },
+              ]}
+              onChange={(value) => setFilters((current) => ({ ...current, direction: value as SummaryAnalysisFilters['direction'] }))}
+            />
             <input
               type="number"
               min="0"
@@ -325,23 +337,7 @@ export function SummaryAnalysisDrawer({
           </div>
         </div>
 
-        <footer className="case-graph-detail-analysis-footer">
-          <span>{buildSummaryFooterText(selectedTotalCount, selectedActionCounts)}</span>
-          <button type="button" className="case-graph-secondary-button" onClick={onClose}>
-            取消
-          </button>
-          <button
-            type="button"
-            className="case-graph-primary-button"
-            disabled={loading || applying || !items.length || !selectedTotalCount}
-            onClick={onApply}
-          >
-            <Check size={14} />
-            <span>{applying ? '处理中' : '应用到图'}</span>
-          </button>
-        </footer>
-      </section>
-    </div>
+    </Modal>
   );
 }
 

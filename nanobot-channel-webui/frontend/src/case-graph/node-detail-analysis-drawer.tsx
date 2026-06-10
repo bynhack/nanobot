@@ -1,6 +1,7 @@
-import { Check, FileSearch, Loader2, X } from 'lucide-react';
+import { Check, FileSearch, Loader2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { Modal } from '../components/ui/modal';
 import {
   SortableColumnHeader,
   sortItemsByState,
@@ -118,23 +119,32 @@ export function NodeDetailAnalysisDrawer({
   const subtitle = `${title} · ${relationships.length} 条关联线${detailRows.length ? ` · 已载入 ${detailRows.length} 笔交易` : ''}`;
 
   return (
-    <div className="case-graph-modal-mask case-graph-modal-mask--detail" role="presentation" onClick={onClose}>
-      <section
-        className="case-graph-detail-analysis-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label="交易核查"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="case-graph-edge-detail-header">
-          <div className="case-graph-detail-analysis-title">
-            <h2>交易核查</h2>
-            <span>{subtitle}</span>
-          </div>
-          <button type="button" className="case-graph-edge-detail-close" onClick={onClose} aria-label="关闭交易核查">
-            <X size={20} />
+    <Modal
+      open={open}
+      title="交易核查"
+      description={subtitle}
+      onClose={onClose}
+      size="full"
+      className="case-graph-detail-analysis-modal"
+      bodyClassName="case-graph-detail-modal-body"
+      footer={(
+        <>
+          <span>本次核查已勾选排除 {selectedTradeIds.length} 笔交易</span>
+          <button type="button" className="case-graph-secondary-button" onClick={onClose}>
+            取消
           </button>
-        </div>
+          <button
+            type="button"
+            className="case-graph-primary-button"
+            disabled={applying || !selectedTradeIds.length}
+            onClick={onApply}
+          >
+            <Check size={14} />
+            <span>{applying ? '应用中' : '应用到图'}</span>
+          </button>
+        </>
+      )}
+    >
 
         <div className="case-graph-detail-analysis-body">
           <main className="case-graph-detail-analysis-main">
@@ -288,23 +298,7 @@ export function NodeDetailAnalysisDrawer({
           </main>
         </div>
 
-        <footer className="case-graph-detail-analysis-footer">
-          <span>本次核查已勾选排除 {selectedTradeIds.length} 笔交易</span>
-          <button type="button" className="case-graph-secondary-button" onClick={onClose}>
-            取消
-          </button>
-          <button
-            type="button"
-            className="case-graph-primary-button"
-            disabled={applying || !selectedTradeIds.length}
-            onClick={onApply}
-          >
-            <Check size={14} />
-            <span>{applying ? '应用中' : '应用到图'}</span>
-          </button>
-        </footer>
-      </section>
-    </div>
+    </Modal>
   );
 }
 

@@ -1,12 +1,34 @@
 # AGENTS.md
 
-This file supplements the repository-level `../AGENTS.md` for work inside `nanobot-channel-webui/`.
+Project instructions for the standalone `nanobot-channel-webui` plugin. Treat this file as the
+primary agent guide for work in this package.
 
-## Scope
+## Project Identity
 
-- Applies only to `nanobot-channel-webui/`
-- Prefer changes inside this plugin subtree unless the user explicitly asks for cross-repo work
-- Do not use older implementations such as `/Users/brian/Documents/Projects/nanobot/webui` or `/Users/brian/Documents/Projects/skyable` as default reference baselines; inspect them only when the user explicitly asks for historical comparison or migration archaeology
+- This package is a standalone `nanobot.channels` entry-point plugin.
+- Scope is this plugin directory: `nanobot-channel-webui/`.
+- Prefer changes inside this plugin subtree unless the user explicitly asks for cross-repo work.
+- Frontend source lives in `frontend/`; Python/backend source lives in `src/nanobot_channel_webui/`.
+- Built UI assets are generated into `static/` and then synced into
+  `src/nanobot_channel_webui/static/` for the wheel.
+
+## Never Rules
+
+- Treat this file as the plugin project's primary instruction file.
+- Never use older implementations such as `/Users/brian/Documents/Projects/nanobot/webui` or
+  `/Users/brian/Documents/Projects/skyable` as default reference baselines. Inspect them only when
+  the user explicitly asks for historical comparison or migration archaeology.
+- Never run browser testing just because a browser is open, a localhost URL exists, or frontend code
+  changed. Follow the Browser Verification rules below.
+- Never add tests, use test-driven workflow, or run broad test suites mechanically for simple
+  localized changes.
+- Never hand-edit generated static assets unless the user explicitly asks for that.
+- Never rely on a bare `nanobot` command for gateway startup without checking `which nanobot`; this
+  machine can have an older Anaconda executable on PATH.
+- Never add or revive original-implementation parity trackers unless the user explicitly asks for
+  historical comparison.
+- Never add dated plan or release-note documents under `docs/` unless the user explicitly asks for
+  process documentation.
 
 ## Read First
 
@@ -17,11 +39,18 @@ Before changing behavior, read these in order:
 3. `DESIGN.md`
 4. `docs/README.md`
 5. `docs/case-graph/README.md`
+6. `docs/case-audit/README.md`
 
 For case-graph work, also read:
 
 1. `docs/case-graph/feature-tracker.md`
 2. `docs/case-graph/pending-fixes.md`
+
+For case-audit work, also read:
+
+1. `docs/case-audit/feature-tracker.md`
+2. `docs/case-audit/pending-fixes.md`
+3. `docs/case-audit-amount-recognition.md`
 
 Do not use the old Ga-web / skyable-cloud implementation as a parity target unless the user explicitly
 asks for historical comparison. Some original behavior is known to be flawed; current planning should be
@@ -52,10 +81,16 @@ Do not rely on deleted dated plan/design notes. The current docs directory is an
   - HTTP routes, WebSocket handling, auth wiring
 - `src/nanobot_channel_webui/case_graph/`
   - case-graph backend service, storage, MySQL query client, types
+- `src/nanobot_channel_webui/case_audit/`
+  - 涉诈资金审计 backend service and file-based audit storage
 - `frontend/`
   - Vite React frontend source
 - `frontend/src/case-graph/`
   - case-graph UI, adapters, types, workbench, graph canvas
+- `frontend/src/case-audit/`
+  - 涉诈资金审计 UI, adapters, types, and amount-recognition graph
+- `frontend/src/components/ui/`
+  - reusable UI foundations such as modal and select controls
 - `static/`
   - local built static assets
 - `src/nanobot_channel_webui/static/`
@@ -65,7 +100,7 @@ Do not rely on deleted dated plan/design notes. The current docs directory is an
 - `tests/`
   - plugin-local Python tests
 
-## Build And Test
+## Verification Policy
 
 Testing is risk-based, not mechanical. Do not run Python or frontend tests after every edit by
 default; choose the smallest useful verification based on the change.
@@ -73,6 +108,20 @@ default; choose the smallest useful verification based on the change.
 Test case coverage should focus on core product invariants, not exhaustive implementation details.
 Prefer a few high-signal tests that protect business behavior over many narrow tests that only
 lock the current code shape.
+
+Before adding or running tests, make an explicit risk judgment. Simple, localized changes should
+usually be verified by code inspection, type/build feedback already produced by the touched tool,
+or a focused manual check instead of adding new test cases. Browser checks must follow the Browser
+Verification rules below. Do not use test-driven workflow or create new test cases for small
+implementation fixes, visual tweaks, interaction configuration changes, copy updates, or
+straightforward bug fixes unless the change protects a durable product invariant or prevents a
+regression that is hard to verify manually.
+
+Avoid redundant verification. If `./scripts/publish-local.sh` will be run for a completed runtime
+change, do not also run standalone `npm test`, `npm run build`, or Python test commands first unless
+there is a specific risk that the publish script will not isolate well enough. When standalone
+verification is justified, run the narrowest relevant command and do not stack multiple overlapping
+test/build commands by default.
 
 Skip tests for simple documentation, copy, comment-only, README, AGENTS, PRODUCT, or docs index
 changes that do not affect installed runtime behavior.
@@ -96,11 +145,31 @@ When adding or pruning tests, keep these as core coverage:
 Avoid expanding tests just to cover:
 
 - purely visual copy or button placement that is not a product invariant
+- official library behavior or configuration wiring that can be confirmed by documentation and a
+  focused manual check
 - every invalid input permutation when one representative validation path is enough
 - internal helper implementation details that are already covered through a workflow test
 - duplicate frontend and backend assertions for the same contract unless both sides have distinct risk
 
-From `nanobot-channel-webui/`:
+## Browser Verification
+
+Browser testing is opt-in by default. Do not use the in-app browser merely because a browser tab is
+open, a localhost URL is available, or a frontend file changed. Use browser testing only when the
+user explicitly asks for browser verification, asks to inspect what is currently visible, reports a
+browser-only issue that cannot be diagnosed from code/logs, or when a significant visual/interactive
+change truly needs live confirmation before handoff. In the last case, say why browser verification
+is needed before doing it, keep the check narrowly scoped, and do not turn it into broad acceptance
+testing.
+
+For simple frontend fixes, configuration changes, copy changes, documentation changes, and small
+interaction wiring changes, prefer code inspection plus the required build/publish outcome, then let
+the user perform manual acceptance in their browser. Do not use browser testing as a substitute for
+risk judgment, and do not add automated tests just because browser testing was skipped.
+
+## Commands
+
+Use these from `nanobot-channel-webui/` only when the verification policy above says they are
+justified.
 
 ```bash
 pytest tests/test_case_graph_service.py -q
@@ -124,6 +193,8 @@ Full local verification flow:
 ./scripts/publish-local.sh
 ```
 
+## Local Publish
+
 When the user asks for a modification or new requirement and the request is clear and complete,
 execute it end-to-end instead of stopping at a plan. For any complete feature implementation,
 behavior change, frontend change, backend change, packaging change, or static-asset change that is
@@ -139,15 +210,16 @@ has completed and that they can test it locally.
 
 If a runtime change touches Python backend code, routes, service logic, entry points, packaged
 backend data, or anything the running `nanobot gateway` process loads at startup, restart the local
-service after `./scripts/publish-local.sh` before browser acceptance testing. If the change is
-frontend-only, publishing the rebuilt static assets and reloading the page is enough.
+service after `./scripts/publish-local.sh` before saying the work is ready. If the change is
+frontend-only, publishing the rebuilt static assets is enough; do not use browser testing unless the
+Browser Verification rules allow it.
 
 When starting or restarting the backend gateway, run it in `tmux`, not as a foreground tool session,
 `nohup` background job, or shell job that Codex cannot later inspect. Prefer a stable session name,
 for example `nanobot-gateway`, so later turns can check logs, stop, or restart the service without
 leaving orphaned processes.
 
-On this machine, prefer the uv tool executable when starting the gateway:
+On this machine, prefer this executable when starting the gateway:
 
 ```bash
 /Users/brian/.local/bin/nanobot gateway --config ~/.nanobot/config.json
@@ -283,7 +355,11 @@ These are still real unless code and docs are updated together:
 - Do not rely on delayed DOM cleanup loops to fix stale interaction visuals. If cleanup is needed, it should be tied to the interaction boundary (`contextmenu`, canvas click, drill start, `setData` / `render`) and should clear G6 element states before the next graph data render whenever possible.
 - G6 `html` nodes render user markup inside a G6-owned wrapper element. Official state styles such as `opacity` and `zIndex` may be written to that wrapper, not to `.case-graph-g6-node`; verification and cleanup must inspect the wrapper computed/inline style as well as the inner node classes.
 - Keep official transient interaction states separate from business focus state. Clearing hover/click should affect G6 states like `highlight`, `dim`, `click-highlight`, and `click-dim`; clearing user focus/selection should be handled through the canvas focus state (`activeNodeId`, `activeEdgeId`, `selectedNodeIds`, role filters) and the corresponding node render data.
-- Browser verification for graph interaction changes should cover the real flow that can strand state: hover a node, open the G6 context menu, run drill/extension, and assert both inner classes and wrapper opacity/z-index return to the expected state after render. Checking only `.case-graph-g6-node` classes is not sufficient for HTML-node visual bugs.
+- When browser verification is explicitly requested or justified under the Browser Verification rules,
+  graph interaction checks should cover the real flow that can strand state: hover a node, open the
+  G6 context menu, run drill/extension, and assert both inner classes and wrapper opacity/z-index
+  return to the expected state after render. Checking only `.case-graph-g6-node` classes is not
+  sufficient for HTML-node visual bugs.
 
 ### Case-graph interaction design principles
 
@@ -326,15 +402,4 @@ Case-graph interactions should be designed for police investigators who can use 
 - When an implementation completes, removes, renames, defers, or materially changes a feature, update the relevant fact files in the same turn. Do not leave older design, gap, pending-fix, or feature-tracker entries describing the previous state.
 - If a change invalidates an earlier design or planning assumption, rewrite the durable fact/tracker entry instead of adding a dated note that competes with it.
 - Do not add or revive original-implementation parity trackers unless the user explicitly asks for historical comparison.
-- Do not add new dated plan or release-note documents under `docs/` unless the user explicitly asks for process documentation
-
-## Release Notes For Agents
-
-- This plugin is packaged as a standalone `nanobot.channels` entry-point plugin
-- Local install target is still the same upstream `nanobot-ai` tool environment
-- If you change frontend assets or package data, make sure the wheel-shipped static directory is updated before calling the work done
-- Before presenting a completed feature implementation or runtime/UI behavior modification to the user, run `./scripts/publish-local.sh`
-- If backend runtime behavior changed, restart the local gateway service after publishing and before saying the work is ready; frontend-only changes only need publish plus page reload.
-- After local publish succeeds, say so directly so the user knows they can perform manual acceptance testing
-- If the change is documentation-only and does not affect the installed runtime, say that explicitly; otherwise publish locally before handing back
-- Do not mechanically run Python/frontend tests for simple changes; use judgment and pick targeted verification only when it provides real confidence
+- Do not add new dated plan or release-note documents under `docs/` unless the user explicitly asks for process documentation.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -44,14 +45,51 @@ class GraphStateService:
     ) -> dict[str, Any]:
         current = self._repository.load_current(case_id, graph_id)
         graph = dict(current["graph"])
+        graph_node_ids = {
+            str(node.get("id") or "").strip()
+            for node in graph.get("nodes") or []
+            if isinstance(node, dict) and str(node.get("id") or "").strip()
+        }
+        group_ids = {
+            str(group.get("id") or "").strip()
+            for group in graph.get("investigationGroups") or []
+            if isinstance(group, dict) and str(group.get("id") or "").strip()
+        }
+        graph_node_positions: dict[str, dict[str, float]] = {}
+        group_positions: dict[str, dict[str, float]] = {}
+        for raw_node_id, raw_point in node_positions.items():
+            node_id = str(raw_node_id or "").strip()
+            if not node_id or not isinstance(raw_point, dict):
+                continue
+            try:
+                x = float(raw_point.get("x"))
+                y = float(raw_point.get("y"))
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(x) or not math.isfinite(y):
+                continue
+            if node_id in graph_node_ids:
+                graph_node_positions[node_id] = {"x": x, "y": y}
+            elif node_id in group_ids:
+                group_positions[node_id] = {"x": x, "y": y}
+
+        next_groups = []
+        for group in graph.get("investigationGroups") or []:
+            if not isinstance(group, dict):
+                continue
+            group_id = str(group.get("id") or "").strip()
+            position = group_positions.get(group_id)
+            next_groups.append({**group, **position} if position else group)
+
         previous_layout = dict(graph.get("layout") or {})
         next_layout = {
-            "nodePositions": dict(node_positions),
+            "nodePositions": graph_node_positions,
             "viewport": dict(viewport or previous_layout.get("viewport") or {}),
         }
-        if previous_layout == next_layout:
+        if previous_layout == next_layout and next_groups == list(graph.get("investigationGroups") or []):
             return current
         graph["layout"] = next_layout
+        graph["investigationGroups"] = next_groups
         state_result = self._repository.append_step(
             case_id=case_id,
             graph_id=graph_id,
@@ -71,6 +109,59 @@ class GraphStateService:
                 "removedEdges": [],
             },
             summary={"changedNodeCount": len(node_positions)},
+        )
+        return state_result["graph"]
+
+    def update_node_note(
+        self,
+        *,
+        case_id: str,
+        graph_id: str,
+        graph_name: str = "",
+        node_id: str,
+        note: str = "",
+        source_note: str = "",
+    ) -> dict[str, Any]:
+        normalized_node_id = str(node_id or "").strip()
+        if not normalized_node_id:
+            raise ValueError("missing node_id")
+        current = self._repository.load_current(case_id, graph_id)
+        graph = dict(current["graph"])
+        nodes = []
+        changed = False
+        for node in graph.get("nodes") or []:
+            if not isinstance(node, dict):
+                continue
+            next_node = dict(node)
+            if str(next_node.get("id") or "").strip() == normalized_node_id:
+                next_node["note"] = str(note or "").strip()
+                next_node["sourceNote"] = str(source_note or "").strip()
+                changed = next_node != node
+            nodes.append(next_node)
+        if not any(str(node.get("id") or "").strip() == normalized_node_id for node in nodes):
+            raise KeyError(normalized_node_id)
+        if not changed:
+            return current
+        graph["nodes"] = nodes
+        state_result = self._repository.append_step(
+            case_id=case_id,
+            graph_id=graph_id,
+            graph_name=graph_name or str(current.get("graphName") or ""),
+            operation={
+                "type": "node_note_update",
+                "label": "标注主体备注",
+                "params": {"nodeId": normalized_node_id},
+            },
+            graph=graph,
+            delta={
+                "addedNodes": [],
+                "addedEdges": [],
+                "updatedNodes": [{"id": normalized_node_id}],
+                "updatedEdges": [],
+                "removedNodes": [],
+                "removedEdges": [],
+            },
+            summary={"updatedNodeCount": 1},
         )
         return state_result["graph"]
 

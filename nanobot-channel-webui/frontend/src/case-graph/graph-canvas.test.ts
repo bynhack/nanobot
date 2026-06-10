@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildGraphPngFilenameForTest,
@@ -10,10 +10,15 @@ import {
   clearGraphTransientStatesForTest,
   createGraphRenderSnapshotForTest,
   buildCollapsedInvestigationGroupRenderEdgesForTest,
+  buildCollapsedInvestigationGroupRenderNodesForTest,
   buildInvestigationGroupSummariesForTest,
-  computeParallelEdgeOffsetsForTest,
+  buildRenderedEdgeMetricsForTest,
+  compactLayoutAfterVisibleNodeRemovalForTest,
   resolveNextSelectedNodeIdsForTest,
-  resolveEdgeTypeForTest,
+  resolveGraphEdgeTypeForTest,
+  resolveMoneyEdgeStyleForTest,
+  resolveNodeFlowDirectionForTest,
+  resolveDirectionalEdgePortsForTest,
   resolveGraphCanvasLayoutForTest,
   resolveGraphRenderTransitionForTest,
   expandExportBoundsForTest,
@@ -88,33 +93,111 @@ describe('graph canvas parallel edge offsets', () => {
     });
   });
 
-  it('keeps bidirectional quadratic edges on matching curve offset signs', () => {
-    const edges: CaseGraphData['edges'] = [
-      {
-        id: 'a->b',
-        from: 'a',
-        to: 'b',
-        source: 'a',
-        target: 'b',
-        tradeAmount: 1000,
-        tradeCount: 1,
-      },
-      {
-        id: 'b->a',
-        from: 'b',
-        to: 'a',
-        source: 'b',
-        target: 'a',
-        tradeAmount: 2000,
-        tradeCount: 1,
-      },
+  it('fills same-column slots after visible nodes are removed', () => {
+    const previousNodes: CaseGraphData['nodes'] = [
+      { id: 'top', label: '上方主体' },
+      { id: 'removed', label: '被排除主体' },
+      { id: 'bottom', label: '下方主体' },
+      { id: 'right', label: '右侧主体' },
     ];
+    const previousLayout = new Map([
+      ['top', { x: 320, y: 120 }],
+      ['removed', { x: 320, y: 292 }],
+      ['bottom', { x: 320, y: 464 }],
+      ['right', { x: 640, y: 464 }],
+    ]);
+    const previous = createGraphRenderSnapshotForTest(previousNodes, [], previousLayout);
+    const nextNodes: CaseGraphData['nodes'] = previousNodes.filter((node) => node.id !== 'removed');
+    const nextLayout = new Map([
+      ['top', { x: 320, y: 120 }],
+      ['bottom', { x: 320, y: 464 }],
+      ['right', { x: 640, y: 464 }],
+    ]);
 
-    const offsets = computeParallelEdgeOffsetsForTest(edges);
+    const compacted = compactLayoutAfterVisibleNodeRemovalForTest(nextLayout, nextNodes, previous);
 
-    expect(offsets.get('a->b')).toBeGreaterThan(0);
-    expect(offsets.get('b->a')).toBeGreaterThan(0);
-    expect(offsets.get('a->b')).toBe(offsets.get('b->a'));
+    expect(compacted.get('top')).toEqual({ x: 320, y: 120 });
+    expect(compacted.get('bottom')).toEqual({ x: 320, y: 292 });
+    expect(compacted.get('right')).toEqual({ x: 640, y: 464 });
+  });
+
+  it('fills multiple removed slots with following nodes in the same column', () => {
+    const previousNodes: CaseGraphData['nodes'] = [
+      { id: 'top', label: '上方主体' },
+      { id: 'removed-a', label: '被排除主体 A' },
+      { id: 'removed-b', label: '被排除主体 B' },
+      { id: 'removed-c', label: '被排除主体 C' },
+      { id: 'bottom-a', label: '下方主体 A' },
+      { id: 'bottom-b', label: '下方主体 B' },
+      { id: 'right', label: '右侧主体' },
+    ];
+    const previousLayout = new Map([
+      ['top', { x: 320, y: 120 }],
+      ['removed-a', { x: 320, y: 292 }],
+      ['removed-b', { x: 320, y: 464 }],
+      ['removed-c', { x: 320, y: 636 }],
+      ['bottom-a', { x: 320, y: 808 }],
+      ['bottom-b', { x: 320, y: 980 }],
+      ['right', { x: 640, y: 464 }],
+    ]);
+    const previous = createGraphRenderSnapshotForTest(previousNodes, [], previousLayout);
+    const nextNodes = previousNodes.filter((node) => !node.id.startsWith('removed'));
+    const nextLayout = new Map([
+      ['top', { x: 320, y: 120 }],
+      ['bottom-a', { x: 320, y: 808 }],
+      ['bottom-b', { x: 320, y: 980 }],
+      ['right', { x: 640, y: 464 }],
+    ]);
+
+    const compacted = compactLayoutAfterVisibleNodeRemovalForTest(nextLayout, nextNodes, previous);
+
+    expect(compacted.get('top')).toEqual({ x: 320, y: 120 });
+    expect(compacted.get('bottom-a')).toEqual({ x: 320, y: 292 });
+    expect(compacted.get('bottom-b')).toEqual({ x: 320, y: 464 });
+    expect(compacted.get('right')).toEqual({ x: 640, y: 464 });
+  });
+
+  it('does not compact layout when visible nodes have not been removed', () => {
+    const nodes: CaseGraphData['nodes'] = [
+      { id: 'top', label: '上方主体' },
+      { id: 'bottom', label: '下方主体' },
+    ];
+    const layout = new Map([
+      ['top', { x: 320, y: 120 }],
+      ['bottom', { x: 320, y: 464 }],
+    ]);
+    const previous = createGraphRenderSnapshotForTest(nodes, [], layout);
+
+    const compacted = compactLayoutAfterVisibleNodeRemovalForTest(layout, nodes, previous);
+
+    expect(compacted).toBe(layout);
+    expect(compacted.get('bottom')).toEqual({ x: 320, y: 464 });
+  });
+
+  it('fills hidden member slots after a collapsed investigation group keeps the first selected node as anchor', () => {
+    const nodes: CaseGraphData['nodes'] = [
+      { id: 'first', label: '首个选择主体' },
+      { id: 'grouped-a', label: '成组主体 A' },
+      { id: 'grouped-b', label: '成组主体 B' },
+      { id: 'following', label: '下方主体' },
+    ];
+    const layout = new Map([
+      ['first', { x: 320, y: 120 }],
+      ['grouped-a', { x: 320, y: 292 }],
+      ['grouped-b', { x: 320, y: 464 }],
+      ['following', { x: 320, y: 636 }],
+    ]);
+    const previous = createGraphRenderSnapshotForTest(nodes, [], layout);
+
+    const compacted = compactLayoutAfterVisibleNodeRemovalForTest(
+      layout,
+      nodes,
+      previous,
+      new Set(['grouped-a', 'grouped-b']),
+    );
+
+    expect(compacted.get('first')).toEqual({ x: 320, y: 120 });
+    expect(compacted.get('following')).toEqual({ x: 320, y: 292 });
   });
 
   it('aggregates external money edges when an investigation group is collapsed', () => {
@@ -198,6 +281,54 @@ describe('graph canvas parallel edge offsets', () => {
     expect(expandedEdges).toBe(edges);
   });
 
+  it('renders a collapsed investigation group as a standalone graph node', () => {
+    const nodes: CaseGraphData['nodes'] = [
+      { id: 'a', label: '成员A' },
+      { id: 'b', label: '成员B' },
+      { id: 'x', label: '外部主体' },
+    ];
+    const layout = new Map([
+      ['a', { x: 120, y: 80 }],
+      ['b', { x: 120, y: 220 }],
+      ['x', { x: 420, y: 80 }],
+    ]);
+
+    const renderNodes = buildCollapsedInvestigationGroupRenderNodesForTest([
+      { id: 'group-1', name: '研判组 1', memberNodeIds: ['a', 'b'], collapsed: true, x: 240, y: 180 },
+    ], nodes, layout);
+
+    expect(renderNodes).toEqual([
+      expect.objectContaining({
+        id: 'group-1',
+        name: '研判组 1',
+        isGroup: true,
+        type: 'group',
+      }),
+    ]);
+  });
+
+  it('computes edge strength from collapsed investigation group render edges', () => {
+    const nodes: CaseGraphData['nodes'] = [
+      { id: 'a', name: '成员甲' },
+      { id: 'b', name: '成员乙' },
+      { id: 'x', name: '外部小额' },
+      { id: 'y', name: '外部大额' },
+    ];
+    const groups: CaseGraphData['investigationGroups'] = [
+      { id: 'group-1', name: '研判组 1', memberNodeIds: ['a', 'b'], collapsed: true },
+    ];
+    const edges: CaseGraphData['edges'] = [
+      { id: 'a->x', from: 'a', to: 'x', source: 'a', target: 'x', tradeAmount: 100, tradeCount: 1 },
+      { id: 'b->y-1', from: 'b', to: 'y', source: 'b', target: 'y', tradeAmount: 120000, tradeCount: 2 },
+      { id: 'a->y-2', from: 'a', to: 'y', source: 'a', target: 'y', tradeAmount: 80000, tradeCount: 1 },
+    ];
+
+    const metrics = buildRenderedEdgeMetricsForTest(edges, groups, nodes);
+
+    expect(metrics.get('investigation-group-edge:group-1->y')?.amount).toBe(200000);
+    expect(metrics.get('investigation-group-edge:group-1->y')?.strength).toBe('strong');
+  });
+
   it('summarizes investigation group money without counting internal transfers as external flow', () => {
     const nodes: CaseGraphData['nodes'] = [
       { id: 'a', label: '成员A' },
@@ -266,8 +397,75 @@ describe('graph canvas parallel edge offsets', () => {
     ]);
   });
 
-  it('uses quadratic edges for stable two-sided bidirectional rendering', () => {
-    expect(resolveEdgeTypeForTest()).toBe('quadratic');
+  it('uses flow-capable horizontal cubic edges for all money relation lines', () => {
+    expect(resolveGraphEdgeTypeForTest()).toBe('case-graph-flow-cubic');
+  });
+
+  it('marks flow direction relative to the hovered reference node', () => {
+    const activeOutgoing: CaseGraphData['edges'][number] = {
+      id: 'a->b',
+      from: 'a',
+      to: 'b',
+      source: 'a',
+      target: 'b',
+      tradeAmount: 1000,
+      tradeCount: 1,
+    };
+    const activeIncoming: CaseGraphData['edges'][number] = {
+      id: 'c->a',
+      from: 'c',
+      to: 'a',
+      source: 'c',
+      target: 'a',
+      tradeAmount: 2000,
+      tradeCount: 1,
+    };
+    const unrelated: CaseGraphData['edges'][number] = {
+      id: 'c->d',
+      from: 'c',
+      to: 'd',
+      source: 'c',
+      target: 'd',
+      tradeAmount: 3000,
+      tradeCount: 1,
+    };
+
+    expect(resolveNodeFlowDirectionForTest(activeOutgoing, 'a')).toBe('out');
+    expect(resolveNodeFlowDirectionForTest(activeIncoming, 'a')).toBe('in');
+    expect(resolveNodeFlowDirectionForTest(unrelated, 'a')).toBeNull();
+    expect(resolveNodeFlowDirectionForTest(activeOutgoing, null)).toBeNull();
+  });
+
+  it('keeps default money edges one color and only colors hovered flow direction', () => {
+    const weak = resolveMoneyEdgeStyleForTest(500, { edgeKind: 'money', strength: 'weak' });
+    const strong = resolveMoneyEdgeStyleForTest(150000, { edgeKind: 'money', strength: 'strong' });
+    const outgoing = resolveMoneyEdgeStyleForTest(150000, {
+      edgeKind: 'money',
+      strength: 'strong',
+      isFlowAnimated: true,
+      flowColor: '#0f8b7f',
+    });
+    const incoming = resolveMoneyEdgeStyleForTest(150000, {
+      edgeKind: 'money',
+      strength: 'strong',
+      isFlowAnimated: true,
+      flowColor: '#3158d4',
+    });
+
+    expect(weak.stroke).toBe(strong.stroke);
+    expect(outgoing.stroke).toBe('#0f8b7f');
+    expect(incoming.stroke).toBe('#3158d4');
+  });
+
+  it('connects outgoing edges from the right port and incoming edges to the left port', () => {
+    const portConfig = resolveDirectionalEdgePortsForTest();
+
+    expect(portConfig.sourcePort).toBe('out-right');
+    expect(portConfig.targetPort).toBe('in-left');
+    expect(portConfig.ports).toEqual([
+      expect.objectContaining({ key: 'in-left', placement: 'left' }),
+      expect.objectContaining({ key: 'out-right', placement: 'right' }),
+    ]);
   });
 
   it('keeps context menu inside the graph stage near the bottom edge', () => {
@@ -281,7 +479,7 @@ describe('graph canvas parallel edge offsets', () => {
     expect(position.y).toBeLessThanOrEqual(370);
   });
 
-  it('uses left drag for node positioning and middle drag for canvas panning', () => {
+  it('uses official node drag, shift brush select, and middle canvas panning', () => {
     const behaviors = buildGraphBehaviorsForTest();
     const dragCanvasBehavior = behaviors.find(
       (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'drag-canvas',
@@ -303,7 +501,7 @@ describe('graph canvas parallel edge offsets', () => {
       type: 'brush-select',
       state: 'selected',
       enableElements: ['node'],
-      trigger: ['drag'],
+      trigger: ['shift'],
       animation: false,
     }));
     expect(brushBehavior?.enable?.({ targetType: 'canvas', button: 0 })).toBe(true);
@@ -330,19 +528,22 @@ describe('graph canvas parallel edge offsets', () => {
     expect(clickSelectBehavior).not.toHaveProperty('onClick');
     expect(dragElementBehavior).toEqual(expect.objectContaining({
       type: 'drag-element',
-      dropEffect: 'none',
+      key: 'case-graph-drag-node',
+      animation: false,
+      dropEffect: 'move',
     }));
-    expect(dragElementBehavior?.enable?.({ button: 0 })).toBe(true);
-    expect(dragElementBehavior?.enable?.({ button: 1 })).toBe(false);
+    expect(dragElementBehavior?.enable?.({ targetType: 'node', button: 0 })).toBe(true);
+    expect(dragElementBehavior?.enable?.({ targetType: 'node', button: 1 })).toBe(true);
+    expect(dragElementBehavior?.enable?.({ targetType: 'canvas', button: 0 })).toBe(false);
   });
 
-  it('allows drag-element to start from G6 node drag events without targetType', () => {
+  it('uses G6 drag-element for HTML node positioning', () => {
     const dragBehavior = buildGraphBehaviorsForTest().find(
       (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'drag-element',
     );
 
     expect(dragBehavior?.enable?.({ button: 0 })).toBe(true);
-    expect(dragBehavior?.enable?.({ nativeEvent: { button: 2 } })).toBe(false);
+    expect(dragBehavior?.enable?.({ nativeEvent: { button: 2 } })).toBe(true);
     const replayDragBehavior = buildGraphBehaviorsForTest(false, false).find(
       (behavior): behavior is Record<string, any> => typeof behavior === 'object' && behavior?.type === 'drag-element',
     );
@@ -382,6 +583,10 @@ describe('graph canvas parallel edge offsets', () => {
     }));
     expect(hoverBehavior?.enable?.({ targetType: 'node' })).toBe(true);
     expect(hoverBehavior?.enable?.({ targetType: 'edge' })).toBe(false);
+    const view = { setCursor: vi.fn() };
+    hoverBehavior?.onHover?.({ view });
+    hoverBehavior?.onHoverEnd?.({ view });
+    expect(view.setCursor).not.toHaveBeenCalled();
   });
 
   it('suppresses official hover and click interactions while graph operations are settling', () => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Network } from 'lucide-react';
+import { Check, ChevronDown, Network, Scale } from 'lucide-react';
 
 import { AuthTokenModal } from './auth-token-modal';
 import { readAppearanceMode, readUiTheme } from './app-helpers';
@@ -8,6 +8,7 @@ import { loadSessionWorkspace } from './api';
 import { ConversationContentPane } from './components/chat/conversation-content-pane';
 import { DetailPreviewContext, type ToolDetailPayload } from './components/chat/detail-preview-context';
 import { DEFAULT_UI_THEME } from './components/settings/types';
+import { CaseAuditPage } from './case-audit/page';
 import { CaseGraphWorkbench } from './case-graph/workbench';
 import type { DetailView } from './detail-preview-pane';
 import { LoginPage } from './login-page';
@@ -28,7 +29,120 @@ import {
   shouldUseImmersivePreview,
 } from './preview-layout';
 
-type AppView = 'chat' | 'settings' | 'case_graph';
+type AppView = 'chat' | 'settings' | 'case_graph' | 'case_audit';
+type FeatureView = Extract<AppView, 'case_graph' | 'case_audit'>;
+
+const FEATURE_NAV_ITEMS: Array<{
+  view: FeatureView;
+  label: string;
+  description: string;
+  Icon: typeof Network;
+}> = [
+  {
+    view: 'case_graph',
+    label: '案件资金上图',
+    description: '围绕案件主体、账号和交易关系开展图谱研判。',
+    Icon: Network,
+  },
+  {
+    view: 'case_audit',
+    label: '涉诈资金审计',
+    description: '以被害人入账为起点，发现候选嫌疑人并认定金额。',
+    Icon: Scale,
+  },
+];
+
+function FeatureNavigationMenu({
+  activeView,
+  title,
+  onSelect,
+}: {
+  activeView: FeatureView;
+  title: string;
+  onSelect: (view: FeatureView) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const activeItem = FEATURE_NAV_ITEMS.find((item) => item.view === activeView) ?? FEATURE_NAV_ITEMS[0];
+  const ActiveIcon = activeItem.Icon;
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && menuRef.current && !menuRef.current.contains(target)) {
+        setOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener('pointerdown', closeOnOutsidePointer);
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('pointerdown', closeOnOutsidePointer);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div className="feature-nav" ref={menuRef}>
+      <button
+        className={`feature-nav-trigger${open ? ' is-open' : ''}`}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="feature-nav-mark" aria-hidden="true">
+          <ActiveIcon size={21} />
+        </span>
+        <span className="feature-nav-current">
+          <span>{title}</span>
+          <strong>{activeItem.label}</strong>
+        </span>
+        <ChevronDown size={15} aria-hidden="true" />
+      </button>
+
+      {open ? (
+        <div className="feature-nav-menu" role="menu" aria-label="功能导航">
+          {FEATURE_NAV_ITEMS.map((item) => {
+            const ItemIcon = item.Icon;
+            const active = item.view === activeView;
+            return (
+              <button
+                key={item.view}
+                className={`feature-nav-menu-item${active ? ' is-active' : ''}`}
+                type="button"
+                role="menuitem"
+                aria-current={active ? 'page' : undefined}
+                onClick={() => {
+                  onSelect(item.view);
+                  setOpen(false);
+                }}
+              >
+                <span className="feature-nav-menu-icon" aria-hidden="true">
+                  <ItemIcon size={18} />
+                </span>
+                <span className="feature-nav-menu-copy">
+                  <strong>{item.label}</strong>
+                  <small>{item.description}</small>
+                </span>
+                {active ? <Check size={16} aria-hidden="true" /> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 function clampDetailWidth(width: number, viewportWidth: number, immersive: boolean, sidebarOpen: boolean): number {
   if (!immersive) {
@@ -201,6 +315,11 @@ export function App() {
     setDetailView(null);
     setAppView('settings');
   }, []);
+  const handleSelectFeature = useCallback((view: FeatureView) => {
+    setPreviewSidebarOpen(false);
+    setDetailView(null);
+    setAppView(view);
+  }, []);
   const handleToggleSidebar = useCallback(() => {
     if (previewOpen && shouldUseImmersivePreview(window.innerWidth)) {
       setPreviewSidebarOpen((value) => !value);
@@ -331,12 +450,25 @@ export function App() {
             currentUser={currentUser}
             showFlash={showFlash}
             headerSlot={(
-              <div className="case-graph-product-brand" aria-label={bootstrap.title}>
-                <span className="case-graph-product-mark">
-                  <Network size={18} />
-                </span>
-                <span>{bootstrap.title}</span>
-              </div>
+              <FeatureNavigationMenu
+                activeView={appView === 'case_audit' ? 'case_audit' : 'case_graph'}
+                title={bootstrap.title}
+                onSelect={handleSelectFeature}
+              />
+            )}
+          />
+        ) : null}
+
+        {appView === 'case_audit' ? (
+          <CaseAuditPage
+            token={authToken}
+            onBack={() => setAppView('case_graph')}
+            navigationSlot={(
+              <FeatureNavigationMenu
+                activeView="case_audit"
+                title={bootstrap.title}
+                onSelect={handleSelectFeature}
+              />
             )}
           />
         ) : null}

@@ -23,6 +23,7 @@ import type {
   QueryCaseGraphSummaryCandidatesPayload,
   RestoreCaseGraphNodePayload,
   UpdateCaseGraphConfigPayload,
+  UpdateCaseGraphNodeNotePayload,
 } from './types';
 import type { SummaryAnalysisItem } from './summary-analysis-drawer';
 
@@ -265,6 +266,20 @@ export function addCaseGraphRealityRelation(
   token: string,
 ): Promise<CaseGraphRelationResponse> {
   return postJson('/api/case-graph/relation/reality-relation', payload, token, '标注现实关系失败');
+}
+
+export function saveCaseGraphNodeNote(
+  caseId: string,
+  graphId: string,
+  payload: UpdateCaseGraphNodeNotePayload,
+  token: string,
+): Promise<CaseGraphStateSnapshot> {
+  return postJson(
+    `/api/case-graph/relation/state/${encodeURIComponent(caseId)}/${encodeURIComponent(graphId)}/operations/node-note`,
+    payload,
+    token,
+    '保存主体备注失败',
+  );
 }
 
 export function loadCaseGraphTargetDetail(

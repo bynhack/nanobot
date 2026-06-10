@@ -1,5 +1,6 @@
 import { Search } from 'lucide-react';
 
+import { Select } from '../components/ui/select';
 import type { CaseGraphCaseOption, CaseGraphSelectableAccount } from './types';
 
 interface CaseRailProps {
@@ -50,19 +51,17 @@ export function CaseRail({
       <div className="case-graph-form">
         <label className="case-graph-field">
           <span>案件</span>
-          <select
-            className="case-graph-select"
+          <Select
             value={caseIdDraft}
-            onChange={(event) => onCaseIdChange(event.target.value)}
+            options={[
+              { value: '', label: casesLoading ? '案件加载中...' : '请选择案件', disabled: casesLoading },
+              ...cases.map((item) => ({ value: item.id, label: item.caseName || item.caseCode || item.id })),
+            ]}
             disabled={casesLoading || caseSelectDisabled}
-          >
-            <option value="">{casesLoading ? '案件加载中...' : '请选择案件'}</option>
-            {cases.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.caseName || item.caseCode || item.id}
-              </option>
-            ))}
-          </select>
+            placeholder={casesLoading ? '案件加载中...' : '请选择案件'}
+            ariaLabel="案件"
+            onChange={onCaseIdChange}
+          />
         </label>
 
         <label className="case-graph-field">

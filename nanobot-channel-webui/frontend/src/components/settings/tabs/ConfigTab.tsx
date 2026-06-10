@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { loadSettingsConfig, saveSettingsConfig } from '../../../api';
 import type { SettingsConfigSnapshot } from '../../../types';
+import { Select } from '../../ui/select';
 import { buildVisualConfigDraft, buildVisualConfigPayload, VisualConfigDraft, asRecord, readText, readBoolean } from '../utils/configUtils';
 import { SettingsRow, SettingsSectionTitle } from '../ui/SettingsRow';
 import { FileMetaList } from '../ui/FileMetaList';
@@ -90,17 +91,13 @@ export function ConfigTab({ token }: { token: string }) {
           </SettingsRow>
 
           <SettingsRow label="服务商" hint="指定模型所属的后端集成。">
-            <select
-              className="settings-select"
+            <Select
+              className="settings-app-select"
               value={visualDraft.provider}
-              onChange={(event) => setVisualDraft((current) => current ? { ...current, provider: event.target.value } : current)}
-            >
-              {providerOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </select>
+              options={providerOptions.map((option) => ({ value: option, label: option }))}
+              ariaLabel="服务商"
+              onChange={(value) => setVisualDraft((current) => current ? { ...current, provider: value } : current)}
+            />
           </SettingsRow>
 
           <SettingsRow label="接口令牌" hint="用于接口鉴权的访问令牌。">

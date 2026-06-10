@@ -1,6 +1,7 @@
-import { X } from 'lucide-react';
 import { useEffect, useId, useMemo, useState } from 'react';
 
+import { Modal } from '../components/ui/modal';
+import { Select } from '../components/ui/select';
 import { CaseGraphDateInput } from './date-input';
 import type {
   CaseGraphManualPartyPayload,
@@ -119,28 +120,46 @@ export function ManualClueDrawer({
   const canApply = activeMode === 'node' ? canApplyNode : activeMode === 'trade' ? canApplyTrade : canApplyRelation;
 
   return (
-    <div className="case-graph-modal-mask case-graph-modal-mask--detail" role="presentation" onClick={onClose}>
-      <section
-        className="case-graph-manual-clue"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="case-graph-manual-clue-title"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <header className="case-graph-edge-detail-header">
-          <div className="case-graph-detail-analysis-title">
-            <h2 id="case-graph-manual-clue-title">人工补充线索</h2>
-            <span>补充图上没有进入数据库的办案事实</span>
-          </div>
+    <Modal
+      open={open}
+      title="人工补充线索"
+      description="补充图上没有进入数据库的办案事实"
+      onClose={onClose}
+      size="lg"
+      className="case-graph-manual-clue"
+      bodyClassName="case-graph-manual-clue-modal-body"
+      footer={(
+        <>
+          <button type="button" className="case-graph-secondary-button" onClick={onClose}>取消</button>
           <button
             type="button"
-            className="case-graph-edge-detail-close"
-            aria-label="关闭人工补充线索"
-            onClick={onClose}
+            className="case-graph-primary-button"
+            disabled={applying || !canApply}
+            onClick={() => {
+              if (activeMode === 'node') {
+                onApplyNode({
+                  label: nodeLabel,
+                  tradeCard: nodeTradeCard,
+                  discoveryReason: nodeDiscoveryReason,
+                  sourceNote: nodeSourceNote,
+                  note: nodeNote,
+                  ...(targetPosition ? { position: targetPosition } : {}),
+                });
+                return;
+              }
+              if (activeMode === 'trade') {
+                if (!payer || !payee) return;
+                onApplyTrade({ payer, payee, amount, tradeTime, method, summary, sourceNote });
+                return;
+              }
+              onApplyRelation({ sourceNodeId, targetNodeId, relationType, note: relationNote });
+            }}
           >
-            <X size={20} />
+            {applying ? '保存中...' : '保存到图'}
           </button>
-        </header>
+        </>
+      )}
+    >
 
         <div className="case-graph-manual-clue-tabs" role="tablist" aria-label="补充类型">
           <button
@@ -242,9 +261,12 @@ export function ManualClueDrawer({
               <SearchableNodeField label="关联主体" value={targetNodeId} nodes={nodeOptions} onChange={setTargetNodeId} />
               <label>
                 <span>现实关系</span>
-                <select value={relationType} onChange={(event) => setRelationType(event.target.value)}>
-                  {RELATION_TYPES.map((item) => <option key={item} value={item}>{item}</option>)}
-                </select>
+                <Select
+                  value={relationType}
+                  ariaLabel="现实关系"
+                  options={RELATION_TYPES.map((item) => ({ value: item, label: item }))}
+                  onChange={setRelationType}
+                />
               </label>
             </div>
             <label className="case-graph-manual-clue-full">
@@ -254,37 +276,7 @@ export function ManualClueDrawer({
           </div>
         )}
 
-        <footer className="case-graph-manual-clue-footer">
-          <button type="button" className="case-graph-secondary-button" onClick={onClose}>取消</button>
-          <button
-            type="button"
-            className="case-graph-primary-button"
-            disabled={applying || !canApply}
-            onClick={() => {
-              if (activeMode === 'node') {
-                onApplyNode({
-                  label: nodeLabel,
-                  tradeCard: nodeTradeCard,
-                  discoveryReason: nodeDiscoveryReason,
-                  sourceNote: nodeSourceNote,
-                  note: nodeNote,
-                  ...(targetPosition ? { position: targetPosition } : {}),
-                });
-                return;
-              }
-              if (activeMode === 'trade') {
-                if (!payer || !payee) return;
-                onApplyTrade({ payer, payee, amount, tradeTime, method, summary, sourceNote });
-                return;
-              }
-              onApplyRelation({ sourceNodeId, targetNodeId, relationType, note: relationNote });
-            }}
-          >
-            {applying ? '保存中...' : '保存到图'}
-          </button>
-        </footer>
-      </section>
-    </div>
+    </Modal>
   );
 }
 

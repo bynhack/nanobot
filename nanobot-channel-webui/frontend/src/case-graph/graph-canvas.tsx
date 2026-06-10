@@ -1,10 +1,11 @@
-import { ChevronLeft, ChevronRight, Download, FileSearch, History, Layers, LocateFixed, MousePointer2, Network, Route, SearchCheck, Settings2, UserPlus, X } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Download, FileSearch, History, Layers, LocateFixed, MousePointer2, Network, Route, SearchCheck, Settings2, UserPlus } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react';
 import { createPortal } from 'react-dom';
 import type { Graph as G6Graph } from '@antv/g6';
 
+import { Modal } from '../components/ui/modal';
+import { Select } from '../components/ui/select';
 import { buildCaseGraphViewModel, formatCompactAmount } from './graph-analysis';
-import type { CaseGraphNodeRole } from './graph-analysis';
 import { computeCaseGraphLayout, type CaseGraphLayoutMode } from './graph-layout';
 import { detectCaseGraphCluePatterns, type CaseGraphCluePatternMatch } from './clue-patterns';
 import type { CaseGraphConversationFocus, CaseGraphData, CaseGraphExcludedNode, CaseGraphNode, CaseGraphReplayTimeline, CaseGraphTradeCard } from './types';
@@ -44,6 +45,7 @@ interface GraphCanvasProps {
   onRemoveInvestigationGroupMember: (groupId: string, nodeId: string) => void;
   onRemoveInvestigationGroupMembers: (groupId: string, nodeIds: string[]) => void;
   onAddInvestigationGroupMembers: (groupId: string, nodeIds: string[]) => void;
+  onUpdateNodeNote: (nodeId: string, input: { note: string; sourceNote?: string }) => void;
   groupOperationLoading?: boolean;
   onOpenEdgeDetail: (edgeId: string, edgeFocus?: CaseGraphConversationFocus, edgeOverride?: CaseGraphData['edges'][number]) => void;
   onFocusChange?: (focus: CaseGraphConversationFocus | null) => void;
@@ -120,6 +122,9 @@ interface GraphNodeRenderData {
   nodeId: string;
   title: string;
   subtitle: string;
+  isInvestigationGroup?: boolean;
+  memberCount?: number;
+  externalEdgeCount?: number;
   isSeed: boolean;
   isFocus: boolean;
   isActive: boolean;
@@ -167,10 +172,20 @@ const GRAPH_HEIGHT = 620;
 const NODE_WIDTH = 248;
 const NODE_HEIGHT = 84;
 const COLUMN_GAP = 126;
-const ROW_GAP = 88;
+const ROW_GAP = 40;
 const GRAPH_PADDING: [number, number, number, number] = [24, 24, 132, 24];
 const MINIMAP_SIZE: [number, number] = [176, 108];
-const GRAPH_EDGE_TYPE = 'quadratic';
+const FLOW_EDGE_TYPE = 'case-graph-flow-cubic';
+const NODE_IN_PORT = 'in-left';
+const NODE_OUT_PORT = 'out-right';
+const NODE_CONNECTION_PORTS = [
+  { key: NODE_IN_PORT, placement: 'left', r: 0, fill: 'transparent', stroke: 'transparent' },
+  { key: NODE_OUT_PORT, placement: 'right', r: 0, fill: 'transparent', stroke: 'transparent' },
+] as const;
+const FLOW_EDGE_IN_COLOR = '#2563eb';
+const FLOW_EDGE_OUT_COLOR = '#0f766e';
+const FLOW_GLOW_IN_COLOR = '#93c5fd';
+const FLOW_GLOW_OUT_COLOR = '#5eead4';
 const CONTEXT_MENU_WIDTH = 210;
 const CONTEXT_MENU_ROW_HEIGHT = 48;
 const CONTEXT_MENU_PADDING = 10;
@@ -190,6 +205,7 @@ const GRAPH_REVEAL_STATE_HOLD_MS = 2200;
 const GRAPH_POSITION_EPSILON = 0.5;
 const MAX_CLUE_PATTERN_HULLS = 6;
 const ADD_TO_GROUP_POPOVER_WIDTH = 360;
+const LOCAL_COMPACTION_COLUMN_TOLERANCE = 48;
 const NODE_RIGHT_CLICK_CONTEXT_MENU_ENABLED = false;
 const EXPORT_PNG_PADDING = 40;
 const EXPORT_PNG_BACKGROUND = '#ffffff';
@@ -201,6 +217,42 @@ const CLUE_PATTERN_HULL_STYLES = [
   { fill: '#be123c', stroke: '#be123c' },
   { fill: '#475569', stroke: '#475569' },
 ] as const;
+
+let flowMarkerEdgeRegistered = false;
+
+function registerFlowMarkerCubicEdge(g6: any, g: any): void {
+  if (flowMarkerEdgeRegistered) return;
+  const { CubicHorizontal, ExtensionCategory, register } = g6;
+  const { Path } = g;
+  class CaseGraphFlowCubic extends CubicHorizontal {
+    render(attributes = this.parsedAttributes, container = this) {
+      super.render(attributes, container);
+      const flowEnabled = Boolean((attributes as any).flowEnabled);
+      const keyShape = this.shapeMap.key;
+      const flowStyle = {
+        d: keyShape?.attributes?.d,
+        stroke: (attributes as any).flowGlowColor || FLOW_GLOW_OUT_COLOR,
+        lineWidth: Math.max(Number((attributes as any).lineWidth ?? 2), 3.8),
+        opacity: flowEnabled ? 0.95 : 0,
+        lineDash: [18, 72],
+        lineDashOffset: 0,
+        shadowColor: (attributes as any).flowGlowColor || FLOW_GLOW_OUT_COLOR,
+        shadowBlur: flowEnabled ? 12 : 0,
+        pointerEvents: 'none',
+      };
+      const flow = this.upsert('flow-glow', Path, flowStyle, this);
+      if (flowEnabled && !(flow as any).__caseGraphFlowAnimationStarted) {
+        flow.animate([{ lineDashOffset: 0 }, { lineDashOffset: -90 }], {
+          duration: 1200,
+          iterations: Infinity,
+        });
+        (flow as any).__caseGraphFlowAnimationStarted = true;
+      }
+    }
+  }
+  register(ExtensionCategory.EDGE, FLOW_EDGE_TYPE, CaseGraphFlowCubic);
+  flowMarkerEdgeRegistered = true;
+}
 const GRAPH_NODE_ANIMATION = {
   enter: 'fade',
   update: [{ fields: ['x', 'y'], duration: GRAPH_DATA_ANIMATION.duration, easing: GRAPH_DATA_ANIMATION.easing }],
@@ -219,14 +271,6 @@ const EXPORT_NODE_ROLE_PALETTE: Record<string, { color: string; border: string; 
   transit: { color: '#64748b', border: '#b8c3d3', fill: '#f4f6f9' },
   peripheral: { color: '#7b8798', border: '#d5deec', fill: '#ffffff' },
 };
-const ROLE_CHIPS: Array<{ role: Exclude<CaseGraphNodeRole, 'peripheral'>; label: string; className: string }> = [
-  { role: 'upstream', label: '来款', className: 'is-upstream' },
-  { role: 'core', label: '核心', className: 'is-core' },
-  { role: 'bridge', label: '桥接', className: 'is-bridge' },
-  { role: 'downstream', label: '去向', className: 'is-downstream' },
-  { role: 'transit', label: '中转', className: 'is-transit' },
-];
-
 export function GraphCanvas({
   graphData,
   graphContent,
@@ -263,19 +307,21 @@ export function GraphCanvas({
   onRemoveInvestigationGroupMember,
   onRemoveInvestigationGroupMembers,
   onAddInvestigationGroupMembers,
+  onUpdateNodeNote,
   groupOperationLoading = false,
   onFocusChange,
   onNodePositionsChange,
 }: GraphCanvasProps) {
   const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
   const [activeEdgeId, setActiveEdgeId] = useState<string | null>(null);
-  const [activeRoleFilter, setActiveRoleFilter] = useState<Exclude<CaseGraphNodeRole, 'peripheral'> | null>(null);
+  const [hoverFlowNodeId, setHoverFlowNodeId] = useState<string | null>(null);
   const [canvasContextMenu, setCanvasContextMenu] = useState<CanvasContextMenuState | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectionToolbarPosition, setSelectionToolbarPosition] = useState<SelectionToolbarPosition | null>(null);
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [groupDetailForm, setGroupDetailForm] = useState<InvestigationGroupDetailForm>({ name: '', groupType: '', note: '' });
   const [groupSelectedMemberIds, setGroupSelectedMemberIds] = useState<string[]>([]);
+  const [nodeNoteForm, setNodeNoteForm] = useState({ sourceNote: '', note: '' });
   const [addToGroupOpen, setAddToGroupOpen] = useState(false);
   const [addToGroupPopoverPosition, setAddToGroupPopoverPosition] = useState<SelectionToolbarPosition | null>(null);
   const [cluePatternsVisible, setCluePatternsVisible] = useState(false);
@@ -311,11 +357,13 @@ export function GraphCanvas({
   const selectionToolbarFrameRef = useRef<number | null>(null);
   const nodesLengthRef = useRef(0);
   const activeNodeIdRef = useRef<string | null>(null);
+  const activeGroupIdRef = useRef<string | null>(null);
   const selectedNodeIdsRef = useRef<string[]>([]);
   const hoverStateActiveRef = useRef(false);
   const contextMenuNodeIdRef = useRef<string | null>(null);
   const contextMenuSelectionIdsRef = useRef<string[]>([]);
   const nodeLookupRef = useRef<Map<string, CaseGraphData['nodes'][number]>>(new Map());
+  const investigationGroupLookupRef = useRef<Map<string, CaseGraphData['investigationGroups'][number]>>(new Map());
   const edgeLookupRef = useRef<Map<string, CaseGraphData['edges'][number]>>(new Map());
   const tradeCardByNodeIdRef = useRef<Map<string, CaseGraphTradeCard>>(new Map());
   const drilldownLoadingRef = useRef(drilldownLoading);
@@ -331,10 +379,14 @@ export function GraphCanvas({
   const onRemoveInvestigationGroupMemberRef = useRef(onRemoveInvestigationGroupMember);
   const onRemoveInvestigationGroupMembersRef = useRef(onRemoveInvestigationGroupMembers);
   const onAddInvestigationGroupMembersRef = useRef(onAddInvestigationGroupMembers);
+  const onUpdateNodeNoteRef = useRef(onUpdateNodeNote);
   const groupOperationLoadingRef = useRef(groupOperationLoading);
   const activeEdgeIdRef = useRef<string | null>(null);
+  const hoverFlowNodeIdRef = useRef<string | null>(null);
   const activeNeighborhoodRef = useRef<GraphActiveNeighborhood | null>(null);
   const graphFocusDrawCycleRef = useRef(0);
+  const collapsedGroupDragIgnoredNodeIdsRef = useRef<Set<string>>(new Set());
+  const nodeDragSuppressClickUntilRef = useRef(0);
   const cluePatternFocusCycleRef = useRef(0);
 
   const nodes = graphData?.nodes ?? [];
@@ -391,7 +443,6 @@ export function GraphCanvas({
     () => buildRenderNodeLookup(nodeLookup, investigationGroups),
     [investigationGroups, nodeLookup],
   );
-  const parallelOffsets = useMemo(() => computeParallelEdgeOffsets(renderEdges), [renderEdges]);
   const graphView = useMemo(
     () =>
       buildCaseGraphViewModel(graphData, {
@@ -400,6 +451,18 @@ export function GraphCanvas({
       }),
     [focusAccountIds, focusLabels, graphData],
   );
+  const renderEdgeMetricsById = useMemo(() => {
+    return buildCaseGraphViewModel(
+      {
+        nodes: buildRenderMetricNodes(nodes, investigationGroups, nodeLookup),
+        edges: renderMoneyEdges,
+      },
+      {
+        focusAccountIds,
+        focusLabels,
+      },
+    ).edgeMetricsById;
+  }, [focusAccountIds, focusLabels, investigationGroups, nodeLookup, nodes, renderMoneyEdges]);
   const cluePatternMatches = useMemo(
     () => detectCaseGraphCluePatterns(graphData, graphView),
     [graphData, graphView],
@@ -448,6 +511,21 @@ export function GraphCanvas({
       },
     );
   }, [focusAccountIds, focusLabels, graphContent, graphData, graphView, graphViewport.height, graphViewport.width, layoutMode, preferPersistedPositions]);
+  const collapsedGroupLayoutState = useMemo(
+    () => resolveCollapsedInvestigationGroupLayoutState(investigationGroups, graphLayout, nodeLookup),
+    [graphLayout, investigationGroups, nodeLookup],
+  );
+  useEffect(() => {
+    collapsedGroupDragIgnoredNodeIdsRef.current = collapsedGroupLayoutState.dragIgnoredNodeIds;
+  }, [collapsedGroupLayoutState.dragIgnoredNodeIds]);
+  const displayGraphLayout = useMemo(
+    () => compactLayoutAfterVisibleNodeRemoval(graphLayout, nodes, graphRenderSnapshotRef.current, {
+      hiddenNodeIds: collapsedGroupLayoutState.hiddenNodeIds,
+      nodeHeight: NODE_HEIGHT,
+      rowGap: ROW_GAP,
+    }),
+    [collapsedGroupLayoutState, graphLayout, nodes],
+  );
 
   const activeNeighborhood = useMemo(() => {
     if (cluePatternsVisible && selectedCluePattern) {
@@ -455,9 +533,6 @@ export function GraphCanvas({
         relatedNodeIds: new Set(selectedCluePattern.nodeIds),
         relatedEdgeIds: new Set(selectedCluePattern.edgeIds),
       };
-    }
-    if (activeRoleFilter) {
-      return buildRoleNeighborhood(activeRoleFilter, nodes, renderEdges, graphView.nodeMetricsById);
     }
     if (!activeNodeId && !activeEdgeId) {
       return null;
@@ -474,12 +549,20 @@ export function GraphCanvas({
       }
     }
     return null;
-  }, [activeEdgeId, activeNodeId, activeRoleFilter, cluePatternsVisible, edgeLookup, graphView.nodeMetricsById, nodes, renderEdges, selectedCluePattern]);
+  }, [activeEdgeId, activeNodeId, cluePatternsVisible, edgeLookup, selectedCluePattern]);
 
   const selectedNode = activeNodeId ? nodeLookup.get(activeNodeId) ?? null : null;
   const selectedEdge = activeEdgeId ? edgeLookup.get(activeEdgeId) ?? null : null;
   const selectedNodeMetrics = activeNodeId ? graphView.nodeMetricsById.get(activeNodeId) ?? null : null;
-  const activeRoleCount = activeRoleFilter ? graphView.roleCounts[activeRoleFilter] : 0;
+  const notedNodeCount = useMemo(
+    () => nodes.filter((node) => `${node.sourceNote || ''}${node.note || ''}`.trim()).length,
+    [nodes],
+  );
+  const selectedNodeHasNoteChanges = Boolean(selectedNode)
+    && (
+      nodeNoteForm.sourceNote.trim() !== (selectedNode?.sourceNote || '').trim()
+      || nodeNoteForm.note.trim() !== (selectedNode?.note || '').trim()
+    );
   const selectedNodes = useMemo(
     () => selectedNodeIds.map((nodeId) => nodeLookup.get(nodeId)).filter((node): node is CaseGraphData['nodes'][number] => Boolean(node)),
     [nodeLookup, selectedNodeIds],
@@ -526,6 +609,7 @@ export function GraphCanvas({
 
   useEffect(() => {
     nodeLookupRef.current = renderNodeLookup;
+    investigationGroupLookupRef.current = investigationGroupLookup;
     edgeLookupRef.current = edgeLookup;
     tradeCardByNodeIdRef.current = tradeCardByNodeId;
     drilldownLoadingRef.current = drilldownLoading;
@@ -541,12 +625,14 @@ export function GraphCanvas({
     onRemoveInvestigationGroupMemberRef.current = onRemoveInvestigationGroupMember;
     onRemoveInvestigationGroupMembersRef.current = onRemoveInvestigationGroupMembers;
     onAddInvestigationGroupMembersRef.current = onAddInvestigationGroupMembers;
+    onUpdateNodeNoteRef.current = onUpdateNodeNote;
     groupOperationLoadingRef.current = groupOperationLoading;
   }, [
     drilldownLoading,
     edgeLookup,
     excluding,
     groupOperationLoading,
+    investigationGroupLookup,
     onCreateInvestigationGroup,
     onDrillDown,
     onExcludeNode,
@@ -557,6 +643,7 @@ export function GraphCanvas({
     onRestoreNode,
     onToggleInvestigationGroup,
     onUpdateInvestigationGroup,
+    onUpdateNodeNote,
     onUngroupInvestigationGroup,
     renderNodeLookup,
     tradeCardByNodeId,
@@ -577,6 +664,13 @@ export function GraphCanvas({
   }, [activeGroup?.id, activeGroup?.name, activeGroup?.groupType, activeGroup?.note]);
 
   useEffect(() => {
+    setNodeNoteForm({
+      sourceNote: selectedNode?.sourceNote || '',
+      note: selectedNode?.note || '',
+    });
+  }, [selectedNode?.id, selectedNode?.sourceNote, selectedNode?.note]);
+
+  useEffect(() => {
     onFocusChangeRef.current = onFocusChange;
   }, [onFocusChange]);
 
@@ -593,15 +687,15 @@ export function GraphCanvas({
   }, [replayTimeline]);
 
   useEffect(() => {
-    if (!onNodePositionsChange || !graphLayout.size) {
+    if (!onNodePositionsChange || !displayGraphLayout.size) {
       return;
     }
     const positions: Record<string, { x: number; y: number }> = {};
-    for (const [nodeId, point] of graphLayout) {
+    for (const [nodeId, point] of displayGraphLayout) {
       positions[nodeId] = { x: point.x, y: point.y };
     }
     onNodePositionsChange(positions, 'layout');
-  }, [graphLayout, onNodePositionsChange]);
+  }, [displayGraphLayout, onNodePositionsChange]);
 
   useEffect(() => {
     nodesLengthRef.current = nodes.length;
@@ -609,10 +703,12 @@ export function GraphCanvas({
 
   useEffect(() => {
     activeNodeIdRef.current = activeNodeId;
+    activeGroupIdRef.current = activeGroupId;
     activeEdgeIdRef.current = activeEdgeId;
+    hoverFlowNodeIdRef.current = hoverFlowNodeId;
     activeNeighborhoodRef.current = activeNeighborhood;
     selectedNodeIdsRef.current = selectedNodeIds;
-  }, [activeEdgeId, activeNeighborhood, activeNodeId, selectedNodeIds]);
+  }, [activeEdgeId, activeGroupId, activeNeighborhood, activeNodeId, hoverFlowNodeId, selectedNodeIds]);
 
   useEffect(() => {
     scheduleSelectionToolbarPositionUpdate();
@@ -646,21 +742,28 @@ export function GraphCanvas({
     const graph = graphRef.current;
     const graphHost = graphHostRef.current;
     if (!graphHost) return;
+    resetGraphCursor(graph, graphHost);
     if (graph) {
       void clearG6HtmlNodeHoverStates(graph, graphHost);
     } else {
       clearG6HtmlNodeStateClasses(graphHost);
     }
     hoverStateActiveRef.current = false;
+    if (hoverFlowNodeIdRef.current) {
+      hoverFlowNodeIdRef.current = null;
+      setHoverFlowNodeId(null);
+    }
   };
 
   const clearInteractionState = (): Promise<void> => {
     const graph = graphRef.current;
     const graphHost = graphHostRef.current;
     if (!graphHost) return Promise.resolve();
+    resetGraphCursor(graph, graphHost);
     clearG6HtmlNodeInteractionClasses(graphHost);
     if (graph) {
       return clearG6HtmlNodeInteractionStates(graph, graphHost).finally(() => {
+        resetGraphCursor(graph, graphHost);
         clearG6HtmlNodeInteractionClasses(graphHost);
         hoverStateActiveRef.current = false;
       });
@@ -676,8 +779,7 @@ export function GraphCanvas({
     setSelectedCluePatternId(null);
   };
 
-  const clearFocusState = (options: { clearRole?: boolean; clearCluePatternPanel?: boolean } = {}) => {
-    const shouldClearRole = options.clearRole ?? true;
+  const clearFocusState = (options: { clearCluePatternPanel?: boolean } = {}) => {
     const shouldClearCluePatternPanel = options.clearCluePatternPanel ?? true;
     activeNodeIdRef.current = null;
     activeEdgeIdRef.current = null;
@@ -695,9 +797,6 @@ export function GraphCanvas({
     } else {
       setSelectedCluePatternId(null);
     }
-    if (shouldClearRole) {
-      setActiveRoleFilter(null);
-    }
     setSelectedNodeIds([]);
   };
 
@@ -707,6 +806,7 @@ export function GraphCanvas({
       activeNodeId?: string | null;
       activeEdgeId?: string | null;
       selectedNodeIds?: string[];
+      flowNodeId?: string | null;
     } = {},
   ): Promise<void> => {
     const graph = graphRef.current;
@@ -714,31 +814,75 @@ export function GraphCanvas({
     const nextActiveNodeId = options.activeNodeId ?? activeNodeIdRef.current;
     const nextActiveEdgeId = options.activeEdgeId ?? activeEdgeIdRef.current;
     const nextSelectedNodeIds = options.selectedNodeIds ?? selectedNodeIdsRef.current;
+    const nextFlowNodeId = options.flowNodeId ?? hoverFlowNodeIdRef.current;
     graphFocusDrawCycleRef.current += 1;
 
-    graph.updateNodeData(
-      nodes.map((node) => ({
-        id: node.id,
-        data: buildNodeRenderData(
-          node,
-          graphView.nodeMetricsById.get(node.id),
-          Boolean(resolveTradeCard(node, tradeCardByNodeId)),
-          nextActiveNodeId,
-          nextSelectedNodeIds,
-          neighborhood,
-        ),
-      })),
+    const renderedNodeIds = new Set(
+      graph.getNodeData()
+        .map((node) => String(node.id || '').trim())
+        .filter(Boolean),
     );
-    graph.updateEdgeData(
-      renderEdges.map((edge) => {
+    const renderedEdgeIds = new Set(
+      graph.getEdgeData()
+        .map((edge) => String(edge.id || '').trim())
+        .filter(Boolean),
+    );
+    const nodeUpdates = [...renderedNodeIds]
+      .map((nodeId) => {
+        const group = investigationGroupLookup.get(nodeId);
+        if (group?.collapsed) {
+          const renderNode = renderNodeLookup.get(nodeId);
+          if (!renderNode) return null;
+          return {
+            id: nodeId,
+            data: buildInvestigationGroupNodeRenderData(
+              renderNode,
+              investigationGroupSummaries.get(nodeId),
+              activeGroupIdRef.current,
+              neighborhood,
+            ),
+          };
+        }
+        const node = nodeLookup.get(nodeId);
+        if (!node) return null;
+        return {
+          id: node.id,
+          data: buildNodeRenderData(
+            node,
+            graphView.nodeMetricsById.get(node.id),
+            Boolean(resolveTradeCard(node, tradeCardByNodeId)),
+            nextActiveNodeId,
+            nextSelectedNodeIds,
+            neighborhood,
+          ),
+        };
+      })
+      .filter((update): update is { id: string; data: GraphNodeRenderData } => Boolean(update));
+    if (nodeUpdates.length) {
+      graph.updateNodeData(nodeUpdates);
+    }
+    const edgeUpdates = renderEdges
+      .map((edge) => {
         const edgeId = resolveEdgeId(edge);
-        const metrics = graphView.edgeMetricsById.get(edgeId);
+        if (!renderedEdgeIds.has(edgeId)) return null;
+        const metrics = renderEdgeMetricsById.get(edgeId);
         return {
           id: edgeId,
-          data: buildEdgeRenderData(edge, metrics, neighborhood, parallelOffsets.get(edgeId) ?? 0, nextActiveEdgeId),
+          type: FLOW_EDGE_TYPE,
+          data: buildEdgeRenderData(
+            edge,
+            metrics,
+            neighborhood,
+            nextFlowNodeId,
+            nextActiveEdgeId,
+          ),
+          style: buildEdgeFlowStyle(edge, nextFlowNodeId),
         };
-      }),
-    );
+      })
+      .filter((update): update is { id: string; type: string; data: ReturnType<typeof buildEdgeRenderData>; style: ReturnType<typeof buildEdgeFlowStyle> } => Boolean(update));
+    if (edgeUpdates.length) {
+      graph.updateEdgeData(edgeUpdates);
+    }
     return graph.draw().catch(() => {});
   };
 
@@ -854,7 +998,6 @@ export function GraphCanvas({
     activeNeighborhoodRef.current = null;
     setActiveNodeId(selectedIds[0] ?? null);
     setActiveEdgeId(null);
-    setActiveRoleFilter(null);
     setSelectedNodeIds(selectedIds);
   };
 
@@ -881,12 +1024,6 @@ export function GraphCanvas({
       setSelectedCluePatternId(null);
     }
   }, [cluePatternMatches, selectedCluePatternId]);
-
-  useEffect(() => {
-    if (activeRoleFilter && graphView.roleCounts[activeRoleFilter] === 0) {
-      setActiveRoleFilter(null);
-    }
-  }, [activeRoleFilter, graphView.roleCounts]);
 
   useEffect(() => {
     if (drilldownLoading) {
@@ -925,18 +1062,33 @@ export function GraphCanvas({
     const graphHost = graphHostRef.current;
     if (!graphHost) return;
 
-    const clearWhenOutsideNode = (event: PointerEvent | MouseEvent) => {
+    const syncHoverFlowNode = (event: PointerEvent | MouseEvent) => {
       const target = event.target;
-      if (target instanceof Element && target.closest('.case-graph-g6-node')) return;
+      let currentNodeId: string | null = null;
+      if (target instanceof Element) {
+        const nodeElement = target.closest<HTMLElement>('.case-graph-g6-node[data-node-id]');
+        currentNodeId = nodeElement?.dataset.nodeId ?? null;
+      }
+      if (currentNodeId) {
+        if (hoverFlowNodeIdRef.current !== currentNodeId) {
+          hoverFlowNodeIdRef.current = currentNodeId;
+          setHoverFlowNodeId(currentNodeId);
+        }
+        return;
+      }
+      if (hoverFlowNodeIdRef.current) {
+        hoverFlowNodeIdRef.current = null;
+        setHoverFlowNodeId(null);
+      }
       if (!hoverStateActiveRef.current) return;
       clearHoverState();
     };
-    document.addEventListener('pointermove', clearWhenOutsideNode, true);
-    document.addEventListener('mousemove', clearWhenOutsideNode, true);
+    document.addEventListener('pointermove', syncHoverFlowNode, true);
+    document.addEventListener('mousemove', syncHoverFlowNode, true);
     graphHost.addEventListener('pointerleave', clearHoverState);
     return () => {
-      document.removeEventListener('pointermove', clearWhenOutsideNode, true);
-      document.removeEventListener('mousemove', clearWhenOutsideNode, true);
+      document.removeEventListener('pointermove', syncHoverFlowNode, true);
+      document.removeEventListener('mousemove', syncHoverFlowNode, true);
       graphHost.removeEventListener('pointerleave', clearHoverState);
     };
   }, []);
@@ -947,7 +1099,9 @@ export function GraphCanvas({
     let disposed = false;
     let createdGraph: G6Graph | null = null;
 
-    void import('@antv/g6').then(({ CanvasEvent, EdgeEvent, Graph, GraphEvent, NodeEvent }) => {
+    void Promise.all([import('@antv/g6'), import('@antv/g')]).then(([g6, g]) => {
+      const { CanvasEvent, EdgeEvent, Graph, GraphEvent, NodeEvent } = g6;
+      registerFlowMarkerCubicEdge(g6, g);
       const graphHost = graphHostRef.current;
       if (!graphHost || disposed) return;
 
@@ -970,6 +1124,8 @@ export function GraphCanvas({
             dy: -NODE_HEIGHT / 2,
             opacity: 1,
             zIndex: 0,
+            port: true,
+            ports: NODE_CONNECTION_PORTS,
             innerHTML: (datum: any) => renderNodeMarkup(datum.data),
           },
           animation: GRAPH_NODE_ANIMATION as any,
@@ -995,13 +1151,16 @@ export function GraphCanvas({
           },
         },
         edge: {
-          type: GRAPH_EDGE_TYPE,
+          type: FLOW_EDGE_TYPE,
           style: {
             stroke: (datum: any) => getMoneyEdgeStyle(Number(datum?.data?.tradeAmount ?? 0), datum?.data).stroke,
             lineWidth: (datum: any) => getMoneyEdgeStyle(Number(datum?.data?.tradeAmount ?? 0), datum?.data).lineWidth,
             opacity: (datum: any) => getMoneyEdgeStyle(Number(datum?.data?.tradeAmount ?? 0), datum?.data).opacity,
             lineDash: (datum: any) => (datum?.data?.edgeKind === 'reality' ? [6, 7] : datum?.data?.isExcluded ? [8, 6] : []),
-            curveOffset: (datum: any) => Number(datum?.data?.curveOffset ?? 0),
+            flowEnabled: (datum: any) => Boolean(datum?.data?.isFlowAnimated),
+            flowGlowColor: (datum: any) => datum?.data?.flowGlowColor ?? FLOW_GLOW_OUT_COLOR,
+            sourcePort: NODE_OUT_PORT,
+            targetPort: NODE_IN_PORT,
             lineCap: 'round',
             lineJoin: 'round',
             endArrow: (datum: any) => datum?.data?.edgeKind !== 'reality',
@@ -1022,12 +1181,10 @@ export function GraphCanvas({
           animation: GRAPH_EDGE_ANIMATION as any,
           state: {
             [HOVER_HIGHLIGHT_STATE]: {
-              stroke: '#1d4ed8',
               lineWidth: 4,
               opacity: 1,
             },
             [CLICK_HIGHLIGHT_STATE]: {
-              stroke: '#1d4ed8',
               lineWidth: 4,
               opacity: 1,
             },
@@ -1099,7 +1256,12 @@ export function GraphCanvas({
             },
           },
         },
-        behaviors: buildGraphBehaviors(),
+        behaviors: buildGraphBehaviors({
+          onSelectionChange: syncSelectedNodeIdsFromGraph,
+          onOfficialStateChange: syncOfficialStateClasses,
+          isInteractionSuppressed: () => officialInteractionSuppressedRef.current,
+          canBrushSelect: () => !replayModeRef.current,
+        }),
         plugins: [
           {
             type: 'minimap',
@@ -1133,6 +1295,16 @@ export function GraphCanvas({
               closeCluePatternPanel();
               void clearInteractionState();
               const nodeId = resolveEventId(event);
+              if (nodeId && investigationGroupLookupRef.current.has(nodeId)) {
+                setCanvasContextMenu(null);
+                contextMenuNodeIdRef.current = null;
+                contextMenuSelectionIdsRef.current = [];
+                setActiveNodeId(null);
+                setActiveEdgeId(null);
+                setSelectedNodeIds([]);
+                setActiveGroupId(nodeId);
+                return [];
+              }
               const node = nodeId ? nodeLookupRef.current.get(nodeId) ?? null : null;
               setCanvasContextMenu(null);
               contextMenuNodeIdRef.current = nodeId;
@@ -1146,7 +1318,6 @@ export function GraphCanvas({
                 ? currentSelection
                 : [nodeId];
               contextMenuSelectionIdsRef.current = actionNodeIds;
-              setActiveRoleFilter(null);
               setActiveEdgeId(null);
               setActiveNodeId(nodeId);
               setSelectedNodeIds(actionNodeIds);
@@ -1245,17 +1416,43 @@ export function GraphCanvas({
       graph.on(GraphEvent.AFTER_DRAW, syncRenderedOfficialStateClasses);
       graph.on(GraphEvent.AFTER_RENDER, syncRenderedOfficialStateClasses);
 
+      graph.on(NodeEvent.POINTER_ENTER, (event: any) => {
+        const nodeId = resolveEventId(event);
+        if (!nodeId) return;
+        hoverFlowNodeIdRef.current = nodeId;
+        setHoverFlowNodeId(nodeId);
+      });
+
+      graph.on(NodeEvent.POINTER_LEAVE, (event: any) => {
+        const nodeId = resolveEventId(event);
+        if (nodeId && hoverFlowNodeIdRef.current !== nodeId) return;
+        hoverFlowNodeIdRef.current = null;
+        setHoverFlowNodeId(null);
+      });
+
       graph.on(NodeEvent.CLICK, (event: any) => {
+        if (Date.now() < nodeDragSuppressClickUntilRef.current) {
+          return;
+        }
         const nodeId = resolveEventId(event);
         closeCluePatternPanel();
         setCanvasContextMenu(null);
-        setActiveRoleFilter(null);
-        setActiveGroupId(null);
         if (nodeId) {
+          if (investigationGroupLookupRef.current.has(nodeId)) {
+            suppressNextCanvasClickRef.current = true;
+            setActiveNodeId(null);
+            setActiveEdgeId(null);
+            setSelectedNodeIds([]);
+            setActiveGroupId(nodeId);
+            return;
+          }
+          setActiveGroupId(null);
           const native = event?.nativeEvent ?? event?.originalEvent ?? event;
           setActiveEdgeId(null);
           setActiveNodeId(nodeId);
           setSelectedNodeIds((current) => resolveNextSelectedNodeIds(current, nodeId, native));
+        } else {
+          setActiveGroupId(null);
         }
       });
 
@@ -1263,7 +1460,6 @@ export function GraphCanvas({
         const groupId = resolveEventId(event);
         closeCluePatternPanel();
         setCanvasContextMenu(null);
-        setActiveRoleFilter(null);
         setActiveNodeId(null);
         setActiveEdgeId(null);
         setSelectedNodeIds([]);
@@ -1277,7 +1473,6 @@ export function GraphCanvas({
         const edgeId = resolveEventId(event);
         closeCluePatternPanel();
         setCanvasContextMenu(null);
-        setActiveRoleFilter(null);
         setActiveGroupId(null);
         if (edgeId) {
           const edge = edgeLookupRef.current.get(edgeId)
@@ -1350,12 +1545,20 @@ export function GraphCanvas({
       onSelectionChange: syncSelectedNodeIdsFromGraph,
       onOfficialStateChange: syncOfficialStateClasses,
       isInteractionSuppressed: () => officialInteractionSuppressedRef.current,
+      canDragElement: (event: any) => !replayModeRef.current && !investigationGroupLookupRef.current.has(resolveEventId(event) ?? ''),
       canBrushSelect: () => !replayModeRef.current,
-      canDragElement: () => !replayModeRef.current,
       onDragFinish: () => {
-        const positions = collectRenderedNodePositions(graph);
+        suppressNextCanvasClickRef.current = true;
+        nodeDragSuppressClickUntilRef.current = Date.now() + 250;
+        window.setTimeout(() => {
+          if (Date.now() >= nodeDragSuppressClickUntilRef.current) {
+            suppressNextCanvasClickRef.current = false;
+          }
+        }, 260);
+        const positions = collectRenderedNodePositions(graph, collapsedGroupDragIgnoredNodeIdsRef.current);
         if (!Object.keys(positions).length) return;
         onNodePositionsChangeRef.current?.(positions, 'drag');
+        scheduleSelectionToolbarPositionUpdate();
       },
     }));
   }, [graphReadyNonce, nodes]);
@@ -1370,18 +1573,26 @@ export function GraphCanvas({
     const graph = graphRef.current;
     if (!graph) return;
 
-    const nextSnapshot = createGraphRenderSnapshot(nodes, renderEdges, graphLayout);
+    const nextSnapshot = createGraphRenderSnapshot(nodes, renderEdges, displayGraphLayout);
     const transition = resolveGraphRenderTransition(graphRenderSnapshotRef.current, nextSnapshot);
+    const collapsedGroupMemberNodeIds = collapsedGroupLayoutState.memberNodeIds;
+    const collapsedGroupNodes = buildCollapsedInvestigationGroupRenderNodes(
+      investigationGroups,
+      nodeLookup,
+      collapsedGroupLayoutState.anchorPositions,
+    );
+    const expandedGroupIds = new Set(investigationGroups.filter((group) => !group.collapsed).map((group) => group.id));
     const graphPayload = {
-      nodes: nodes.map((node) => {
-        const point = graphLayout.get(node.id) ?? { x: NODE_WIDTH / 2, y: NODE_HEIGHT / 2 };
+      nodes: [
+        ...nodes.filter((node) => !collapsedGroupMemberNodeIds.has(node.id)).map((node) => {
+        const point = displayGraphLayout.get(node.id) ?? { x: NODE_WIDTH / 2, y: NODE_HEIGHT / 2 };
         const seedTradeCard = resolveTradeCard(node, tradeCardByNodeId);
         const metrics = graphView.nodeMetricsById.get(node.id);
         const revealStates = transition.shouldAnimate && transition.newNodeIds.has(node.id) ? [REVEAL_STATE] : undefined;
         const groupId = investigationGroupByNodeId.get(node.id);
         return {
           id: node.id,
-          ...(groupId ? { combo: groupId } : {}),
+          ...(groupId && expandedGroupIds.has(groupId) ? { combo: groupId } : {}),
           style: {
             x: point.x,
             y: point.y,
@@ -1396,7 +1607,27 @@ export function GraphCanvas({
             activeNeighborhoodRef.current,
           ),
         };
-      }),
+        }),
+        ...collapsedGroupNodes.map((node) => {
+          const point = collapsedGroupLayoutState.anchorPositions.get(node.id) ?? { x: NODE_WIDTH / 2, y: NODE_HEIGHT / 2 };
+          const summary = investigationGroupSummaries.get(node.id);
+          const revealStates = transition.shouldAnimate && transition.newNodeIds.has(node.id) ? [REVEAL_STATE] : undefined;
+          return {
+            id: node.id,
+            style: {
+              x: point.x,
+              y: point.y,
+            },
+            ...(revealStates ? { states: revealStates } : {}),
+            data: buildInvestigationGroupNodeRenderData(
+              node,
+              summary,
+              activeGroupIdRef.current,
+              activeNeighborhoodRef.current,
+            ),
+          };
+        }),
+      ],
       edges: renderEdges.map((edge) => {
         const edgeId = resolveEdgeId(edge);
         const revealStates = transition.shouldAnimate && transition.newEdgeIds.has(edgeId) ? [REVEAL_STATE] : undefined;
@@ -1404,23 +1635,24 @@ export function GraphCanvas({
           id: edgeId,
           source: edge.source,
           target: edge.target,
-          type: GRAPH_EDGE_TYPE,
+          type: FLOW_EDGE_TYPE,
           ...(revealStates ? { states: revealStates } : {}),
+          style: buildEdgeFlowStyle(edge, hoverFlowNodeIdRef.current),
           data: buildEdgeRenderData(
             edge,
-            graphView.edgeMetricsById.get(edgeId),
+            renderEdgeMetricsById.get(edgeId),
             activeNeighborhoodRef.current,
-            parallelOffsets.get(edgeId) ?? 0,
+            hoverFlowNodeIdRef.current,
           ),
         };
       }),
-      combos: investigationGroups.map((group) => {
+      combos: investigationGroups.filter((group) => !group.collapsed).map((group) => {
         const memberNodeIds = (group.memberNodeIds ?? []).filter((nodeId) => nodeLookup.has(nodeId));
         const summary = investigationGroupSummaries.get(group.id);
         return {
           id: group.id,
           style: {
-            collapsed: Boolean(group.collapsed),
+            collapsed: false,
           },
           data: {
             ...group,
@@ -1463,7 +1695,7 @@ export function GraphCanvas({
       await expandRenderedInvestigationGroups(graph, groupsWithMemberChanges);
       graph.setData(graphPayload);
       await graph.render();
-      await syncInvestigationGroupCollapseState(graph, investigationGroups);
+      await syncInvestigationGroupCollapseState(graph, graphPayload.combos.map((combo) => combo.data));
     })()
       .then(async () => {
         if (
@@ -1519,7 +1751,7 @@ export function GraphCanvas({
           officialInteractionSuppressedRef.current = false;
         }
       });
-  }, [graphLayout, graphReadyNonce, graphView, investigationGroupByNodeId, investigationGroupSummaries, investigationGroups, nodeLookup, nodes, parallelOffsets, renderEdges, tradeCardByNodeId]);
+  }, [displayGraphLayout, graphReadyNonce, graphView, investigationGroupByNodeId, investigationGroupSummaries, investigationGroups, nodeLookup, nodes, renderEdgeMetricsById, renderEdges, tradeCardByNodeId]);
 
   useEffect(() => {
     const graph = graphRef.current;
@@ -1528,8 +1760,9 @@ export function GraphCanvas({
       activeNodeId,
       activeEdgeId,
       selectedNodeIds,
+      flowNodeId: hoverFlowNodeId,
     });
-  }, [activeEdgeId, activeNeighborhood, activeNodeId, graphReadyNonce, graphView, nodes, parallelOffsets, renderEdges, selectedNodeIds, tradeCardByNodeId]);
+  }, [activeEdgeId, activeNeighborhood, activeNodeId, graphReadyNonce, graphView, hoverFlowNodeId, nodes, renderEdges, selectedNodeIds, tradeCardByNodeId]);
 
   useEffect(() => {
     if (activeNodeId && !nodeLookup.has(activeNodeId)) {
@@ -1645,7 +1878,6 @@ export function GraphCanvas({
       activeEdgeIdRef.current = null;
       selectedNodeIdsRef.current = [];
       activeNeighborhoodRef.current = nextNeighborhood;
-      setActiveRoleFilter(null);
       setActiveEdgeId(null);
       setActiveNodeId(null);
       setSelectedNodeIds([]);
@@ -1707,6 +1939,11 @@ export function GraphCanvas({
       const groupNodes = selectedNodesRefCurrent(nodeLookupRef.current, selectedNodeIdsRef.current)
         .filter((item) => !item.isExcluded);
       if (groupNodes.length < 2 || groupOperationLoadingRef.current) return;
+      officialInteractionSuppressedRef.current = true;
+      clearFocusState();
+      void clearInteractionState().finally(() => {
+        officialInteractionSuppressedRef.current = false;
+      });
       onCreateInvestigationGroupRef.current(groupNodes);
       return;
     }
@@ -1776,53 +2013,67 @@ export function GraphCanvas({
     setGroupSelectedMemberIds([]);
   };
 
+  const handleSaveSelectedNodeNote = () => {
+    if (!selectedNode || !selectedNodeHasNoteChanges) return;
+    onUpdateNodeNoteRef.current(selectedNode.id, {
+      sourceNote: nodeNoteForm.sourceNote.trim(),
+      note: nodeNoteForm.note.trim(),
+    });
+  };
+
   return (
     <section className="case-graph-canvas" aria-label="主图画布">
       {nodes.length ? (
-        <div className="case-graph-insight-strip case-graph-insight-strip--compact" aria-label="判读摘要">
-            <div className="case-graph-role-chip-row">
-            {ROLE_CHIPS.map(({ role, label, className }) => (
-              <button
-                key={role}
-                type="button"
-                className={`case-graph-role-chip ${className}${activeRoleFilter === role ? ' is-selected' : ''}`}
-                aria-pressed={activeRoleFilter === role}
-                disabled={graphView.roleCounts[role] === 0}
-                onClick={() => {
-                  setCanvasContextMenu(null);
-                  clearFocusState({ clearRole: false });
-                  void clearInteractionState();
-                  setActiveRoleFilter((current) => (current === role ? null : role));
-                }}
-              >
-                {label} {graphView.roleCounts[role]}
-              </button>
-            ))}
+        <div className="case-graph-insight-strip case-graph-insight-strip--compact case-graph-note-strip" aria-label="主体备注">
+          <div className="case-graph-note-summary">
+            <strong>主体备注</strong>
+            <span>{notedNodeCount ? `${notedNodeCount} 个主体已备注` : '暂无备注'}</span>
           </div>
 
-          {selectedNodeMetrics ? (
-            <div
-              className="case-graph-active-brief"
-              title={`${selectedNodeMetrics.displayName} · ${selectedNodeMetrics.roleLabel} · 收 ${formatCompactAmount(selectedNodeMetrics.receivedAmount)} 元 · 出 ${formatCompactAmount(selectedNodeMetrics.sentAmount)} 元 · ${selectedNodeMetrics.degree} 个关联对象`}
-            >
-              <strong>{selectedNodeMetrics.displayName}</strong>
-              <span>{selectedNodeMetrics.roleLabel}</span>
-              <span>收 {formatCompactAmount(selectedNodeMetrics.receivedAmount)} 元</span>
-              <span>出 {formatCompactAmount(selectedNodeMetrics.sentAmount)} 元</span>
-              <span>{selectedNodeMetrics.degree} 个关联对象</span>
-            </div>
-          ) : activeRoleFilter ? (
-            <div
-              className="case-graph-active-brief"
-              title={`${ROLE_CHIPS.find((item) => item.role === activeRoleFilter)?.label} · ${activeRoleCount} 个节点 · 已高亮该角色及其一跳资金线 · 再点一次取消`}
-            >
-              <strong>{ROLE_CHIPS.find((item) => item.role === activeRoleFilter)?.label}</strong>
-              <span>{activeRoleCount} 个节点</span>
-              <span>已高亮该角色及其一跳资金线</span>
-              <span>再点一次取消</span>
+          {selectedNode ? (
+            <div className="case-graph-node-note-panel">
+              <div
+                className="case-graph-node-note-target"
+                title={selectedNodeMetrics?.displayName || selectedNode.name || selectedNode.label || selectedNode.id}
+              >
+                <strong>{selectedNodeMetrics?.displayName || selectedNode.name || selectedNode.label || selectedNode.id}</strong>
+                <span>
+                  {selectedNodeMetrics
+                    ? `收 ${formatCompactAmount(selectedNodeMetrics.receivedAmount)} 元 · 出 ${formatCompactAmount(selectedNodeMetrics.sentAmount)} 元`
+                    : '当前选中主体'}
+                </span>
+              </div>
+              <label className="case-graph-node-note-field">
+                <span>备注类型</span>
+                <input
+                  type="text"
+                  value={nodeNoteForm.sourceNote}
+                  placeholder="例如：重点核查"
+                  maxLength={24}
+                  onChange={(event) => setNodeNoteForm((current) => ({ ...current, sourceNote: event.target.value }))}
+                />
+              </label>
+              <label className="case-graph-node-note-field case-graph-node-note-field--wide">
+                <span>备注内容</span>
+                <input
+                  type="text"
+                  value={nodeNoteForm.note}
+                  placeholder="记录人工判断、核查进展或处置意见"
+                  maxLength={120}
+                  onChange={(event) => setNodeNoteForm((current) => ({ ...current, note: event.target.value }))}
+                />
+              </label>
+              <button
+                type="button"
+                className="case-graph-node-note-save"
+                disabled={!selectedNodeHasNoteChanges}
+                onClick={handleSaveSelectedNodeNote}
+              >
+                保存备注
+              </button>
             </div>
           ) : (
-            <p className="case-graph-insight-hint">点击节点聚焦主体，或点击上方角色标签高亮同类节点。</p>
+            <p className="case-graph-insight-hint">点击节点后，可以为主体添加人工备注；备注会随图谱步骤保存。</p>
           )}
         </div>
       ) : null}
@@ -2074,36 +2325,57 @@ export function GraphCanvas({
         ) : null}
 
         {activeGroup && typeof document !== 'undefined' ? createPortal(
-          <div
-            className="case-graph-modal-mask case-graph-modal-mask--detail"
-            role="presentation"
-            onClick={() => setActiveGroupId(null)}
-          >
-            <section
-              className="case-graph-group-detail-popover"
-              role="dialog"
-              aria-modal="true"
-              aria-label="研判组详情"
-              onClick={(event) => event.stopPropagation()}
-            >
-              <header className="case-graph-group-detail-header">
-              <div className="case-graph-group-detail-title">
+          <Modal
+            open
+            title={(
+              <span className="case-graph-group-detail-title">
                 <Layers size={16} />
-                <div>
+                <span>
                   <strong>{activeGroup.name || '研判组'}</strong>
                   <span>{activeGroup.groupType || '未标注类型'} · {activeGroupSummary?.memberCount ?? activeGroupMemberNodes.length} 个主体</span>
-                </div>
-              </div>
-              <button
-                type="button"
-                className="case-graph-mini-button case-graph-mini-button--icon"
-                title="关闭"
-                aria-label="关闭研判组详情"
-                onClick={() => setActiveGroupId(null)}
-              >
-                <X size={14} />
-              </button>
-              </header>
+                </span>
+              </span>
+            )}
+            onClose={() => setActiveGroupId(null)}
+            size="lg"
+            className="case-graph-group-detail-popover"
+            bodyClassName="case-graph-group-detail-modal-body"
+            footer={(
+              <>
+                <button
+                  type="button"
+                  className="case-graph-secondary-button"
+                  disabled={groupOperationLoading || !groupDetailDirty}
+                  onClick={handleSaveActiveGroupDetail}
+                >
+                  保存信息
+                </button>
+                <button
+                  type="button"
+                  className="case-graph-secondary-button"
+                  disabled={groupOperationLoading}
+                  onClick={() => {
+                    const nextCollapsed = !activeGroup.collapsed;
+                    setActiveGroupId(null);
+                    onToggleInvestigationGroupRef.current(activeGroup.id, nextCollapsed);
+                  }}
+                >
+                  {activeGroup.collapsed ? '展开' : '收起'}
+                </button>
+                <button
+                  type="button"
+                  className="case-graph-secondary-button case-graph-secondary-button--danger"
+                  disabled={groupOperationLoading}
+                  onClick={() => {
+                    setActiveGroupId(null);
+                    onUngroupInvestigationGroupRef.current(activeGroup.id);
+                  }}
+                >
+                  拆分
+                </button>
+              </>
+            )}
+          >
 
               <div className="case-graph-group-detail-body">
                 <div className="case-graph-group-detail-stats">
@@ -2136,18 +2408,21 @@ export function GraphCanvas({
                   </label>
                   <label>
                     <span>类型</span>
-                    <select
+                    <Select
                       value={groupDetailForm.groupType}
                       disabled={groupOperationLoading}
-                      onChange={(event) => setGroupDetailForm((current) => ({ ...current, groupType: event.target.value }))}
-                    >
-                      <option value="">未标注类型</option>
-                      <option value="团伙成员">团伙成员</option>
-                      <option value="关联账号">关联账号</option>
-                      <option value="控制关系">控制关系</option>
-                      <option value="资金中转">资金中转</option>
-                      <option value="其他">其他</option>
-                    </select>
+                      ariaLabel="类型"
+                      placeholder="未标注类型"
+                      options={[
+                        { value: '', label: '未标注类型' },
+                        { value: '团伙成员', label: '团伙成员' },
+                        { value: '关联账号', label: '关联账号' },
+                        { value: '控制关系', label: '控制关系' },
+                        { value: '资金中转', label: '资金中转' },
+                        { value: '其他', label: '其他' },
+                      ]}
+                      onChange={(value) => setGroupDetailForm((current) => ({ ...current, groupType: value }))}
+                    />
                   </label>
                   <label className="case-graph-group-detail-note">
                     <span>研判说明</span>
@@ -2221,41 +2496,7 @@ export function GraphCanvas({
                 </div>
               </div>
 
-            <footer className="case-graph-group-detail-actions">
-              <button
-                type="button"
-                className="case-graph-secondary-button"
-                disabled={groupOperationLoading || !groupDetailDirty}
-                onClick={handleSaveActiveGroupDetail}
-              >
-                保存信息
-              </button>
-              <button
-                type="button"
-                className="case-graph-secondary-button"
-                disabled={groupOperationLoading}
-                onClick={() => {
-                  const nextCollapsed = !activeGroup.collapsed;
-                  setActiveGroupId(null);
-                  onToggleInvestigationGroupRef.current(activeGroup.id, nextCollapsed);
-                }}
-              >
-                {activeGroup.collapsed ? '展开' : '收起'}
-              </button>
-              <button
-                type="button"
-                className="case-graph-secondary-button case-graph-secondary-button--danger"
-                disabled={groupOperationLoading}
-                onClick={() => {
-                  setActiveGroupId(null);
-                  onUngroupInvestigationGroupRef.current(activeGroup.id);
-                }}
-              >
-                拆分
-              </button>
-            </footer>
-            </section>
-          </div>,
+          </Modal>,
           document.body,
         ) : null}
 
@@ -2403,7 +2644,7 @@ export function GraphCanvas({
                       .filter((nodeId) => !(group.memberNodeIds ?? []).includes(nodeId));
                     if (!nodeIds.length) return;
                     setAddToGroupOpen(false);
-                    clearFocusState({ clearRole: false });
+                    clearFocusState();
                     void clearInteractionState();
                     onAddInvestigationGroupMembersRef.current(group.id, nodeIds);
                   }}
@@ -2681,7 +2922,7 @@ function drawExportNodeCard(context: CanvasRenderingContext2D, card: ExportNodeC
   const y = card.y - exportBounds.minY - NODE_HEIGHT / 2;
   const roleStyle = data.isExcluded
     ? { color: '#8a94a6', border: '#b8c0cc', fill: '#f4f6f9' }
-    : EXPORT_NODE_ROLE_PALETTE[data.role] ?? EXPORT_NODE_ROLE_PALETTE.peripheral;
+    : EXPORT_NODE_ROLE_PALETTE.peripheral;
   context.save();
   context.globalAlpha = data.isDimmed && !data.isRelationHighlighted && !data.isActive && !data.isSelected ? 0.24 : data.isExcluded ? 0.58 : 1;
   drawRoundedRect(context, x, y, NODE_WIDTH, NODE_HEIGHT, 8, roleStyle.fill, roleStyle.border, data.isExcluded ? [6, 5] : undefined);
@@ -2693,28 +2934,35 @@ function drawExportNodeCard(context: CanvasRenderingContext2D, card: ExportNodeC
     context.stroke();
   }
 
-  const badgeX = x + 12;
-  const badgeY = y + 10;
-  drawRoundedRect(context, badgeX, badgeY, 34, 34, 6, mixWithWhite(roleStyle.color, 0.88), mixWithWhite(roleStyle.color, 0.74));
-  context.fillStyle = roleStyle.color;
-  context.font = '800 12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-  context.fillText(data.isExcluded ? '排' : data.roleBadge, badgeX + 17, badgeY + 17);
+  const badgeLabel = data.isExcluded ? '排' : data.roleBadge;
+  const hasBadge = Boolean(badgeLabel);
+  if (hasBadge) {
+    const badgeX = x + 12;
+    const badgeY = y + 10;
+    drawRoundedRect(context, badgeX, badgeY, 34, 34, 6, mixWithWhite(roleStyle.color, 0.88), mixWithWhite(roleStyle.color, 0.74));
+    context.fillStyle = roleStyle.color;
+    context.font = '800 12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    context.fillText(badgeLabel, badgeX + 17, badgeY + 17);
+  }
 
-  const copyX = x + 58;
+  const copyX = hasBadge ? x + 58 : x + 14;
   const titleY = y + 20;
   context.textAlign = 'left';
   context.textBaseline = 'alphabetic';
   context.fillStyle = '#111827';
   context.font = '700 12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  const roleWidth = measureRolePillWidth(context, data.roleLabel);
-  drawEllipsisText(context, data.isExcluded ? `已排除 · ${data.title}` : data.title, copyX, titleY, NODE_WIDTH - 74 - roleWidth);
-  drawRolePill(context, x + NODE_WIDTH - 12 - roleWidth, y + 9, roleWidth, data.roleLabel, roleStyle.color);
+  const roleWidth = data.roleLabel ? measureRolePillWidth(context, data.roleLabel) : 0;
+  const titleWidth = NODE_WIDTH - (copyX - x) - 12 - (roleWidth ? roleWidth + 8 : 0);
+  drawEllipsisText(context, data.isExcluded ? `已排除 · ${data.title}` : data.title, copyX, titleY, titleWidth);
+  if (data.roleLabel) {
+    drawRolePill(context, x + NODE_WIDTH - 12 - roleWidth, y + 9, roleWidth, data.roleLabel, roleStyle.color);
+  }
 
   context.fillStyle = '#667085';
   context.font = '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  drawEllipsisText(context, data.subtitle, copyX, y + 40, NODE_WIDTH - 70);
+  drawEllipsisText(context, data.subtitle, copyX, y + 40, NODE_WIDTH - (copyX - x) - 12);
   context.fillStyle = '#8a94a6';
   drawEllipsisText(context, data.receivedText, copyX, y + 62, 74);
   drawEllipsisText(context, data.sentText, copyX + 86, y + 62, 74);
@@ -2919,22 +3167,57 @@ function buildNodeRenderData(
   } | null,
 ) {
   const isRelationHighlighted = Boolean(activeNeighborhood?.relatedNodeIds.has(node.id));
+  const noteLabel = resolveNodeNoteLabel(node);
   return {
     nodeId: node.id,
     title: node.name || node.label || node.accountName || node.tradeCard || node.accountId || node.id,
     subtitle: resolveNodeSubtitle(node),
-    role: metrics?.role ?? 'peripheral',
-    roleLabel: metrics?.roleLabel ?? '外围',
-    roleBadge: resolveRoleBadge(metrics?.role),
+    role: 'peripheral',
+    roleLabel: noteLabel,
+    roleBadge: noteLabel ? '注' : '',
     receivedText: `收 ${formatCompactAmount(metrics?.receivedAmount ?? 0)} 元`,
     sentText: `出 ${formatCompactAmount(metrics?.sentAmount ?? 0)} 元`,
     isSeed,
-    isFocus: Boolean(metrics?.isFocus),
+    isFocus: false,
     isActive: activeNodeId === node.id,
     isRelationHighlighted,
     isSelected: selectedNodeIds.includes(node.id),
     isDimmed: Boolean(activeNeighborhood && !activeNeighborhood.relatedNodeIds.has(node.id)),
     isExcluded: Boolean(node.isExcluded),
+  };
+}
+
+function buildInvestigationGroupNodeRenderData(
+  node: CaseGraphData['nodes'][number],
+  summary: InvestigationGroupSummary | undefined,
+  activeGroupId: string | null,
+  activeNeighborhood: {
+    relatedNodeIds: Set<string>;
+    relatedEdgeIds: Set<string>;
+  } | null,
+): GraphNodeRenderData {
+  const memberCount = summary?.memberCount ?? 0;
+  const externalEdgeCount = summary?.externalEdgeCount ?? 0;
+  const isRelationHighlighted = Boolean(activeNeighborhood?.relatedNodeIds.has(node.id));
+  return {
+    nodeId: node.id,
+    title: node.name || node.label || '研判组',
+    subtitle: `${memberCount} 个主体 · 对外线 ${externalEdgeCount} 条`,
+    isInvestigationGroup: true,
+    memberCount,
+    externalEdgeCount,
+    role: 'group',
+    roleLabel: '研判组',
+    roleBadge: '组',
+    receivedText: `流入 ${formatCompactAmount(summary?.incomingAmount ?? 0)} 元`,
+    sentText: `流出 ${formatCompactAmount(summary?.outgoingAmount ?? 0)} 元`,
+    isSeed: false,
+    isFocus: false,
+    isActive: activeGroupId === node.id,
+    isRelationHighlighted,
+    isSelected: false,
+    isDimmed: Boolean(activeNeighborhood && !activeNeighborhood.relatedNodeIds.has(node.id)),
+    isExcluded: false,
   };
 }
 
@@ -2945,10 +3228,11 @@ function buildEdgeRenderData(
     relatedNodeIds: Set<string>;
     relatedEdgeIds: Set<string>;
   } | null,
-  curveOffset = 0,
+  flowNodeId: string | null = null,
   activeEdgeId: string | null = null,
 ) {
   const edgeId = resolveEdgeId(edge);
+  const flowDirection = resolveNodeFlowDirection(edge, flowNodeId);
   if (edge.edgeKind === 'reality') {
     return {
       edgeKind: 'reality',
@@ -2962,11 +3246,14 @@ function buildEdgeRenderData(
       isDimmed: Boolean(activeNeighborhood && !activeNeighborhood.relatedEdgeIds.has(edgeId)),
       isExcluded: false,
       showLabel: activeNeighborhood ? activeNeighborhood.relatedEdgeIds.has(edgeId) : true,
-      curveOffset,
     };
   }
   return {
     edgeKind: 'money',
+    flowDirection,
+    flowColor: flowDirection === 'in' ? FLOW_EDGE_IN_COLOR : flowDirection === 'out' ? FLOW_EDGE_OUT_COLOR : undefined,
+    flowGlowColor: flowDirection === 'in' ? FLOW_GLOW_IN_COLOR : flowDirection === 'out' ? FLOW_GLOW_OUT_COLOR : undefined,
+    isFlowAnimated: Boolean(flowDirection),
     tradeCount: edge.tradeCount,
     tradeAmount: edge.tradeAmount,
     strength: metrics?.strength ?? 'medium',
@@ -2977,8 +3264,27 @@ function buildEdgeRenderData(
     showLabel: activeNeighborhood
       ? activeNeighborhood.relatedEdgeIds.has(edgeId)
       : (metrics?.strength ?? 'medium') !== 'weak',
-    curveOffset,
   };
+}
+
+function buildEdgeFlowStyle(edge: CaseGraphData['edges'][number], flowNodeId: string | null = null) {
+  const flowDirection = resolveNodeFlowDirection(edge, flowNodeId);
+  return {
+    flowEnabled: Boolean(flowDirection),
+    flowGlowColor: flowDirection === 'in' ? FLOW_GLOW_IN_COLOR : FLOW_GLOW_OUT_COLOR,
+  };
+}
+
+function resolveNodeFlowDirection(
+  edge: CaseGraphData['edges'][number],
+  referenceNodeId: string | null | undefined,
+): 'in' | 'out' | null {
+  if (!referenceNodeId || edge.edgeKind === 'reality') return null;
+  const source = String(edge.source ?? edge.from ?? '').trim();
+  const target = String(edge.target ?? edge.to ?? '').trim();
+  if (source === referenceNodeId) return 'out';
+  if (target === referenceNodeId) return 'in';
+  return null;
 }
 
 const INVESTIGATION_GROUP_EDGE_PREFIX = 'investigation-group-edge:';
@@ -3108,6 +3414,57 @@ function buildRenderNodeLookup(
   return lookup;
 }
 
+function buildCollapsedInvestigationGroupRenderNodes(
+  groups: CaseGraphData['investigationGroups'] | undefined,
+  nodeLookup: Map<string, CaseGraphData['nodes'][number]>,
+  anchorPositions: Map<string, { x: number; y: number }>,
+): CaseGraphData['nodes'] {
+  const renderNodes: CaseGraphData['nodes'] = [];
+  const existingIds = new Set(nodeLookup.keys());
+  for (const group of groups ?? []) {
+    if (!group?.collapsed || !group.id || existingIds.has(group.id)) continue;
+    const memberNodeIds = (group.memberNodeIds ?? []).filter((nodeId) => nodeLookup.has(nodeId));
+    if (memberNodeIds.length < 2 || !anchorPositions.has(group.id)) continue;
+    renderNodes.push({
+      id: group.id,
+      name: group.name || '研判组',
+      label: group.name || '研判组',
+      accountName: group.name || '研判组',
+      isGroup: true,
+      type: 'group',
+      accounts: memberNodeIds
+        .map((nodeId) => nodeLookup.get(nodeId)?.accounts ?? [])
+        .flat(),
+    });
+  }
+  return renderNodes;
+}
+
+function buildRenderMetricNodes(
+  nodes: CaseGraphData['nodes'],
+  groups: CaseGraphData['investigationGroups'] | undefined,
+  nodeLookup: Map<string, CaseGraphData['nodes'][number]>,
+): CaseGraphData['nodes'] {
+  const metricNodes = [...nodes];
+  const existingIds = new Set(metricNodes.map((node) => node.id));
+  for (const group of groups ?? []) {
+    if (!group?.collapsed || !group.id || existingIds.has(group.id)) continue;
+    const memberNodeIds = (group.memberNodeIds ?? []).filter((nodeId) => nodeLookup.has(nodeId));
+    metricNodes.push({
+      id: group.id,
+      name: group.name || '研判组',
+      label: group.name || '研判组',
+      isGroup: true,
+      type: group.groupType || 'subject',
+      accounts: memberNodeIds
+        .map((nodeId) => nodeLookup.get(nodeId)?.accounts ?? [])
+        .flat(),
+    });
+    existingIds.add(group.id);
+  }
+  return metricNodes;
+}
+
 function buildInvestigationGroupSummaries(
   groups: CaseGraphData['investigationGroups'] | undefined,
   nodes: CaseGraphData['nodes'],
@@ -3189,58 +3546,6 @@ function resolveGroupCounterpartDirectionLabel(direction: InvestigationGroupCoun
   return '双向';
 }
 
-const PARALLEL_EDGE_OFFSET = 28;
-
-function computeParallelEdgeOffsets(edges: CaseGraphData['edges']): Map<string, number> {
-  const groups = new Map<string, CaseGraphData['edges']>();
-  for (const edge of edges) {
-    const source = String(edge.source ?? edge.from ?? '').trim();
-    const target = String(edge.target ?? edge.to ?? '').trim();
-    if (!source || !target) continue;
-    const key = source < target ? `${source}::${target}` : `${target}::${source}`;
-    const bucket = groups.get(key);
-    if (bucket) bucket.push(edge);
-    else groups.set(key, [edge]);
-  }
-
-  const offsets = new Map<string, number>();
-  for (const bucket of groups.values()) {
-    if (bucket.length < 2) continue;
-    if (bucket.length === 2) {
-      const [left, right] = bucket;
-      const leftSource = String(left.source ?? left.from ?? '').trim();
-      const leftTarget = String(left.target ?? left.to ?? '').trim();
-      const rightSource = String(right.source ?? right.from ?? '').trim();
-      const rightTarget = String(right.target ?? right.to ?? '').trim();
-      const isBidirectionalPair =
-        leftSource === rightTarget &&
-        leftTarget === rightSource &&
-        leftSource !== leftTarget;
-
-      if (isBidirectionalPair) {
-        offsets.set(resolveEdgeId(left), PARALLEL_EDGE_OFFSET);
-        offsets.set(resolveEdgeId(right), PARALLEL_EDGE_OFFSET);
-        continue;
-      }
-
-      offsets.set(resolveEdgeId(left), -PARALLEL_EDGE_OFFSET / 2);
-      offsets.set(resolveEdgeId(right), PARALLEL_EDGE_OFFSET / 2);
-      continue;
-    }
-    // Rare: more than 2 parallel edges. Spread them symmetrically.
-    const step = PARALLEL_EDGE_OFFSET;
-    const start = -((bucket.length - 1) / 2) * step;
-    bucket.forEach((edge, index) => {
-      offsets.set(resolveEdgeId(edge), start + index * step);
-    });
-  }
-  return offsets;
-}
-
-export function computeParallelEdgeOffsetsForTest(edges: CaseGraphData['edges']): Map<string, number> {
-  return computeParallelEdgeOffsets(edges);
-}
-
 export function buildCollapsedInvestigationGroupRenderEdgesForTest(
   edges: CaseGraphData['edges'],
   groups: CaseGraphData['investigationGroups'] | undefined,
@@ -3257,8 +3562,50 @@ export function buildInvestigationGroupSummariesForTest(
   return buildInvestigationGroupSummaries(groups, nodes, edges);
 }
 
-export function resolveEdgeTypeForTest(): string {
-  return GRAPH_EDGE_TYPE;
+export function buildCollapsedInvestigationGroupRenderNodesForTest(
+  groups: CaseGraphData['investigationGroups'] | undefined,
+  nodes: CaseGraphData['nodes'],
+  layout: Map<string, { x: number; y: number }>,
+): CaseGraphData['nodes'] {
+  const nodeLookup = new Map(nodes.map((node) => [node.id, node]));
+  const collapsedState = resolveCollapsedInvestigationGroupLayoutState(groups, layout, nodeLookup);
+  return buildCollapsedInvestigationGroupRenderNodes(groups, nodeLookup, collapsedState.anchorPositions);
+}
+
+export function buildRenderedEdgeMetricsForTest(
+  edges: CaseGraphData['edges'],
+  groups: CaseGraphData['investigationGroups'] | undefined,
+  nodes: CaseGraphData['nodes'],
+): ReturnType<typeof buildCaseGraphViewModel>['edgeMetricsById'] {
+  const nodeLookup = new Map(nodes.map((node) => [node.id, node]));
+  const renderEdges = buildCollapsedInvestigationGroupRenderEdges(edges, groups, nodeLookup);
+  return buildCaseGraphViewModel({
+    nodes: buildRenderMetricNodes(nodes, groups, nodeLookup),
+    edges: renderEdges,
+  }).edgeMetricsById;
+}
+
+export function resolveGraphEdgeTypeForTest(): string {
+  return FLOW_EDGE_TYPE;
+}
+
+export function resolveNodeFlowDirectionForTest(edge: CaseGraphData['edges'][number], activeNodeId?: string | null): 'in' | 'out' | null {
+  return resolveNodeFlowDirection(edge, activeNodeId);
+}
+
+export function resolveMoneyEdgeStyleForTest(
+  amount: number,
+  data?: Parameters<typeof getMoneyEdgeStyle>[1],
+): ReturnType<typeof getMoneyEdgeStyle> {
+  return getMoneyEdgeStyle(amount, data);
+}
+
+export function resolveDirectionalEdgePortsForTest(): { sourcePort: string; targetPort: string; ports: typeof NODE_CONNECTION_PORTS } {
+  return {
+    sourcePort: NODE_OUT_PORT,
+    targetPort: NODE_IN_PORT,
+    ports: NODE_CONNECTION_PORTS,
+  };
 }
 
 export function resolveGraphCanvasLayoutForTest(graphData: CaseGraphData): Map<string, { x: number; y: number }> {
@@ -3285,6 +3632,19 @@ export function createGraphRenderSnapshotForTest(
   layout: Map<string, { x: number; y: number }>,
 ): GraphRenderSnapshot {
   return createGraphRenderSnapshot(nodes, edges, layout);
+}
+
+export function compactLayoutAfterVisibleNodeRemovalForTest(
+  layout: Map<string, { x: number; y: number }>,
+  nodes: CaseGraphData['nodes'],
+  previous: GraphRenderSnapshot,
+  hiddenNodeIds?: Set<string>,
+): Map<string, { x: number; y: number }> {
+  return compactLayoutAfterVisibleNodeRemoval(layout, nodes, previous, {
+    hiddenNodeIds,
+    nodeHeight: NODE_HEIGHT,
+    rowGap: ROW_GAP,
+  });
 }
 
 export function clearGraphInteractionStatesForTest(states: string[]): string[] {
@@ -3396,6 +3756,18 @@ function resolveNodeSubtitle(node: CaseGraphData['nodes'][number]): string {
   return '图谱节点';
 }
 
+function resolveNodeNoteLabel(node: CaseGraphData['nodes'][number]): string {
+  const sourceNote = String(node.sourceNote || '').trim();
+  if (sourceNote) {
+    return sourceNote.length > 8 ? `${sourceNote.slice(0, 8)}...` : sourceNote;
+  }
+  const note = String(node.note || '').trim();
+  if (!note) {
+    return '';
+  }
+  return note.length > 8 ? `${note.slice(0, 8)}...` : note;
+}
+
 function collectNodeAccountIds(node: CaseGraphData['nodes'][number]): string[] {
   const values = [
     node.accountId,
@@ -3433,40 +3805,6 @@ function buildEdgeFocusPayload(
     fromName: sourceNode?.accountName || sourceNode?.label || sourceNode?.name || source,
     toName: targetNode?.accountName || targetNode?.label || targetNode?.name || target,
   };
-}
-
-function buildRoleNeighborhood(
-  role: Exclude<CaseGraphNodeRole, 'peripheral'>,
-  nodes: CaseGraphData['nodes'],
-  edges: CaseGraphData['edges'],
-  nodeMetricsById: ReturnType<typeof buildCaseGraphViewModel>['nodeMetricsById'],
-): {
-  relatedNodeIds: Set<string>;
-  relatedEdgeIds: Set<string>;
-} | null {
-  const selectedNodeIds = new Set<string>();
-  for (const node of nodes) {
-    if (nodeMetricsById.get(node.id)?.role === role) {
-      selectedNodeIds.add(node.id);
-    }
-  }
-
-  if (!selectedNodeIds.size) {
-    return null;
-  }
-
-  const relatedNodeIds = new Set<string>(selectedNodeIds);
-  const relatedEdgeIds = new Set<string>();
-  for (const edge of edges) {
-    if (!selectedNodeIds.has(edge.source) && !selectedNodeIds.has(edge.target)) {
-      continue;
-    }
-    relatedNodeIds.add(edge.source);
-    relatedNodeIds.add(edge.target);
-    relatedEdgeIds.add(resolveEdgeId(edge));
-  }
-
-  return { relatedNodeIds, relatedEdgeIds };
 }
 
 function toggleId(current: string[], id: string): string[] {
@@ -3559,7 +3897,7 @@ function buildGraphBehaviors(
     onOfficialStateChange?: () => void;
     isInteractionSuppressed?: () => boolean;
     canBrushSelect?: () => boolean;
-    canDragElement?: () => boolean;
+    canDragElement?: (event: any) => boolean;
     onDragFinish?: () => void;
   } = {},
 ): Array<string | Record<string, unknown>> {
@@ -3569,10 +3907,20 @@ function buildGraphBehaviors(
       enable: (event: any) => isMiddlePointer(event),
     },
     {
+      type: 'drag-element',
+      key: 'case-graph-drag-node',
+      animation: false,
+      dropEffect: 'move',
+      enable: (event: any) => callbacks.canDragElement?.(event) !== false
+        && !callbacks.isInteractionSuppressed?.()
+        && (event?.targetType == null || event?.targetType === 'node'),
+      onFinish: callbacks.onDragFinish,
+    },
+    {
       type: 'brush-select',
       state: 'selected',
       enableElements: ['node'],
-      trigger: ['drag'],
+      trigger: ['shift'],
       animation: false,
       style: {
         lineWidth: 2,
@@ -3596,11 +3944,9 @@ function buildGraphBehaviors(
       inactiveState: HOVER_DIM_STATE,
       animation: false,
       onHover: (event: any) => {
-        event?.view?.setCursor?.('pointer');
         callbacks.onOfficialStateChange?.();
       },
       onHoverEnd: (event: any) => {
-        event?.view?.setCursor?.('default');
         callbacks.onOfficialStateChange?.();
       },
     },
@@ -3617,16 +3963,6 @@ function buildGraphBehaviors(
       degree: ONE_HOP_NEIGHBORHOOD_DEGREE,
       animation: false,
       ...(callbacks.onOfficialStateChange ? { onClick: callbacks.onOfficialStateChange } : {}),
-    },
-    {
-      type: 'drag-element',
-      key: 'case-graph-drag-node',
-      dropEffect: 'none',
-      hideEdge: 'none',
-      enable: (event: any) => callbacks.canDragElement?.() !== false
-        && (event?.targetType == null || event?.targetType === 'node')
-        && isLeftPointer(event),
-      onFinish: callbacks.onDragFinish,
     },
     'zoom-canvas',
   ];
@@ -3673,14 +4009,9 @@ async function syncInvestigationGroupCollapseState(graph: G6Graph, groups: CaseG
   for (const group of groups ?? []) {
     if (!group?.id) continue;
     try {
-      if (group.collapsed) {
-        await Promise.resolve((graph as any).collapseElement?.(group.id));
-      } else {
-        await Promise.resolve((graph as any).expandElement?.(group.id));
-      }
+      await Promise.resolve((graph as any).expandElement?.(group.id));
     } catch {
-      // G6 may ignore collapse calls before a combo is fully mounted. The next render cycle
-      // will retry from the persisted group state.
+      // G6 may ignore expand calls before a combo is fully mounted.
     }
   }
 }
@@ -3715,16 +4046,169 @@ async function expandRenderedInvestigationGroups(graph: G6Graph, groupIds: strin
   }
 }
 
-function collectRenderedNodePositions(graph: G6Graph): Record<string, { x: number; y: number }> {
+function collectRenderedNodePositions(
+  graph: G6Graph,
+  ignoredNodeIds: Set<string> = new Set(),
+): Record<string, { x: number; y: number }> {
   const positions: Record<string, { x: number; y: number }> = {};
   for (const node of graph.getNodeData()) {
     const nodeId = String(node.id || '').trim();
-    const x = finiteNumber((node as any)?.style?.x);
-    const y = finiteNumber((node as any)?.style?.y);
-    if (!nodeId || x == null || y == null) continue;
-    positions[nodeId] = { x, y };
+    if (!nodeId || ignoredNodeIds.has(nodeId)) continue;
+    const position = resolveGraphElementPosition(graph, nodeId);
+    if (!position) continue;
+    positions[nodeId] = position;
   }
   return positions;
+}
+
+function resolveCollapsedInvestigationGroupLayoutState(
+  groups: CaseGraphData['investigationGroups'] | undefined,
+  layout: Map<string, { x: number; y: number }>,
+  nodeLookup: Map<string, CaseGraphData['nodes'][number]>,
+): {
+  anchorPositions: Map<string, { x: number; y: number }>;
+  hiddenNodeIds: Set<string>;
+  memberNodeIds: Set<string>;
+  dragIgnoredNodeIds: Set<string>;
+} {
+  const anchorPositions = new Map<string, { x: number; y: number }>();
+  const hiddenNodeIds = new Set<string>();
+  const collapsedMemberNodeIds = new Set<string>();
+  const dragIgnoredNodeIds = new Set<string>();
+  for (const group of groups ?? []) {
+    if (!group?.collapsed || !group.id) {
+      continue;
+    }
+    const groupMemberNodeIds = (group.memberNodeIds ?? [])
+      .map((nodeId) => String(nodeId || '').trim())
+      .filter((nodeId) => nodeId && nodeLookup.has(nodeId));
+    if (groupMemberNodeIds.length < 2) {
+      continue;
+    }
+    const anchorNodeId = groupMemberNodeIds[0]!;
+    const groupX = finiteNumber(group.x);
+    const groupY = finiteNumber(group.y);
+    const anchor = groupX != null && groupY != null ? { x: groupX, y: groupY } : layout.get(anchorNodeId);
+    if (anchor) {
+      anchorPositions.set(group.id, anchor);
+    }
+    for (const nodeId of groupMemberNodeIds) {
+      collapsedMemberNodeIds.add(nodeId);
+      dragIgnoredNodeIds.add(nodeId);
+    }
+    for (const nodeId of groupMemberNodeIds.slice(1)) {
+      hiddenNodeIds.add(nodeId);
+    }
+  }
+  return { anchorPositions, hiddenNodeIds, memberNodeIds: collapsedMemberNodeIds, dragIgnoredNodeIds };
+}
+
+function compactLayoutAfterVisibleNodeRemoval(
+  layout: Map<string, { x: number; y: number }>,
+  nodes: CaseGraphData['nodes'],
+  previous: GraphRenderSnapshot,
+  options: { hiddenNodeIds?: Set<string>; nodeHeight: number; rowGap: number },
+): Map<string, { x: number; y: number }> {
+  const hiddenNodeIds = options.hiddenNodeIds ?? new Set<string>();
+  if (!layout.size || (!hiddenNodeIds.size && previous.nodePositions.size <= nodes.length)) {
+    return layout;
+  }
+
+  const currentNodeIds = new Set(nodes.map((node) => node.id));
+  const visibleNodeIds = new Set(nodes.map((node) => node.id).filter((nodeId) => !hiddenNodeIds.has(nodeId)));
+  const previousPositions = previous.nodePositions.size ? previous.nodePositions : layout;
+  const removedNodeIds = [...previousPositions.keys()].filter((nodeId) => !visibleNodeIds.has(nodeId));
+  if (!removedNodeIds.length && !hiddenNodeIds.size) {
+    return layout;
+  }
+
+  const previousColumns = groupLayoutColumns(previousPositions);
+  const compacted = new Map(layout);
+  const compactedColumnXs: number[] = [];
+  let changed = false;
+
+  for (const previousColumn of previousColumns) {
+    const removedInColumn = previousColumn.items.some((item) => !visibleNodeIds.has(item.nodeId));
+    if (!removedInColumn) continue;
+    const currentItems = nodes
+      .map((node) => {
+        if (hiddenNodeIds.has(node.id)) {
+          return null;
+        }
+        const point = layout.get(node.id);
+        if (!point || Math.abs(point.x - previousColumn.x) > LOCAL_COMPACTION_COLUMN_TOLERANCE) {
+          return null;
+        }
+        const previousIndex = previousColumn.items.findIndex((item) => item.nodeId === node.id);
+        return previousIndex >= 0
+          ? { nodeId: node.id, point, previousIndex }
+          : null;
+      })
+      .filter((item): item is { nodeId: string; point: { x: number; y: number }; previousIndex: number } => Boolean(item))
+      .sort((left, right) => left.previousIndex - right.previousIndex);
+    if (!currentItems.length) continue;
+
+    currentItems.forEach((item, index) => {
+      const targetSlot = previousColumn.items[index];
+      if (!targetSlot) return;
+      const compactedPoint = {
+        x: item.point.x,
+        y: targetSlot.y,
+      };
+      if (Math.abs(compactedPoint.y - item.point.y) <= GRAPH_POSITION_EPSILON) {
+        return;
+      }
+      compacted.set(item.nodeId, compactedPoint);
+      changed = true;
+      if (!compactedColumnXs.some((x) => Math.abs(x - previousColumn.x) <= LOCAL_COMPACTION_COLUMN_TOLERANCE)) {
+        compactedColumnXs.push(previousColumn.x);
+      }
+    });
+  }
+
+  if (changed) {
+    const minimumGap = options.nodeHeight + Math.max(12, Math.min(options.rowGap, 24));
+    const visibleCompacted = new Map(
+      [...compacted.entries()].filter(([nodeId]) => !hiddenNodeIds.has(nodeId)),
+    );
+    for (const column of groupLayoutColumns(visibleCompacted)) {
+      if (!compactedColumnXs.some((x) => Math.abs(x - column.x) <= LOCAL_COMPACTION_COLUMN_TOLERANCE)) {
+        continue;
+      }
+      for (let index = 1; index < column.items.length; index += 1) {
+        const previousItem = column.items[index - 1]!;
+        const item = column.items[index]!;
+        if (item.y - previousItem.y >= minimumGap) continue;
+        const point = compacted.get(item.nodeId);
+        if (!point) continue;
+        compacted.set(item.nodeId, { x: point.x, y: previousItem.y + minimumGap });
+      }
+    }
+  }
+
+  return changed ? compacted : layout;
+}
+
+function groupLayoutColumns(layout: Map<string, { x: number; y: number }>): Array<{
+  x: number;
+  items: Array<{ nodeId: string; x: number; y: number }>;
+}> {
+  const columns: Array<{
+    x: number;
+    items: Array<{ nodeId: string; x: number; y: number }>;
+  }> = [];
+  for (const [nodeId, point] of layout.entries()) {
+    let column = columns.find((item) => Math.abs(item.x - point.x) <= LOCAL_COMPACTION_COLUMN_TOLERANCE);
+    if (!column) {
+      column = { x: point.x, items: [] };
+      columns.push(column);
+    }
+    column.items.push({ nodeId, x: point.x, y: point.y });
+  }
+  for (const column of columns) {
+    column.items.sort((left, right) => left.y - right.y);
+  }
+  return columns;
 }
 
 function createEmptyGraphRenderSnapshot(): GraphRenderSnapshot {
@@ -3987,6 +4471,19 @@ function clearG6HtmlNodeStateClasses(root: HTMLElement | null): void {
     });
 }
 
+function resetGraphCursor(graph: G6Graph | null, root: HTMLElement | null): void {
+  try {
+    (graph as any)?.setCursor?.('default');
+  } catch {
+    // Some G6 renderers expose cursor control only on the event view.
+  }
+  if (!root) return;
+  root.style.cursor = '';
+  root.querySelectorAll<HTMLElement>('canvas, .g6-canvas, .g6-container').forEach((element) => {
+    element.style.cursor = '';
+  });
+}
+
 function syncG6HtmlNodeWrapperStyle(
   nodeElement: HTMLElement,
   style: { opacity: string; zIndex: string },
@@ -4079,15 +4576,23 @@ function resolveMenuPosition(
 }
 
 function renderNodeMarkup(data: GraphNodeRenderData): string {
-  return `
-    <div class="case-graph-g6-node role-${escapeClassName(data.role)}${data.isSeed ? ' is-seed' : ''}${data.isFocus ? ' is-focus' : ''}${data.isActive ? ' is-active' : ''}${data.isRelationHighlighted ? ' is-relation-highlight' : ''}${data.isSelected ? ' is-selected' : ''}${data.isDimmed ? ' is-dimmed' : ''}${data.isExcluded ? ' is-excluded' : ''}" data-node-id="${escapeHtml(data.nodeId)}">
+  const badgeLabel = data.isExcluded ? '排' : data.roleBadge;
+  const badgeMarkup = badgeLabel
+    ? `
       <div class="case-graph-g6-node-badge">
-        <span>${escapeHtml(data.isExcluded ? '排' : data.roleBadge)}</span>
-      </div>
+        <span>${escapeHtml(badgeLabel)}</span>
+      </div>`
+    : '';
+  const roleMarkup = data.roleLabel
+    ? `<span class="case-graph-g6-node-role">${escapeHtml(data.roleLabel)}</span>`
+    : '';
+  return `
+    <div class="case-graph-g6-node role-${escapeClassName(data.role)}${data.isInvestigationGroup ? ' is-investigation-group' : ''}${badgeLabel ? '' : ' has-no-badge'}${data.isSeed ? ' is-seed' : ''}${data.isFocus ? ' is-focus' : ''}${data.isActive ? ' is-active' : ''}${data.isRelationHighlighted ? ' is-relation-highlight' : ''}${data.isSelected ? ' is-selected' : ''}${data.isDimmed ? ' is-dimmed' : ''}${data.isExcluded ? ' is-excluded' : ''}" data-node-id="${escapeHtml(data.nodeId)}">
+      ${badgeMarkup}
       <div class="case-graph-g6-node-copy">
         <div class="case-graph-g6-node-head">
           <strong>${escapeHtml(data.isExcluded ? `已排除 · ${data.title}` : data.title)}</strong>
-          <span class="case-graph-g6-node-role">${escapeHtml(data.roleLabel)}</span>
+          ${roleMarkup}
         </div>
         <p>${escapeHtml(data.subtitle)}</p>
         <div class="case-graph-g6-node-meta">
@@ -4125,23 +4630,6 @@ function escapeHtml(value: string): string {
     .replaceAll("'", '&#39;');
 }
 
-function resolveRoleBadge(role: string | undefined): string {
-  switch (role) {
-    case 'core':
-      return '核';
-    case 'bridge':
-      return '桥';
-    case 'upstream':
-      return '来';
-    case 'downstream':
-      return '去';
-    case 'transit':
-      return '转';
-    default:
-      return '外';
-  }
-}
-
 function getMoneyEdgeStyle(
   amount: number,
   data?: {
@@ -4150,6 +4638,8 @@ function getMoneyEdgeStyle(
     isActive?: boolean;
     isDimmed?: boolean;
     isExcluded?: boolean;
+    flowColor?: string;
+    isFlowAnimated?: boolean;
   },
 ): { stroke: string; lineWidth: number; opacity: number } {
   if (data?.edgeKind === 'reality') {
@@ -4162,23 +4652,27 @@ function getMoneyEdgeStyle(
   if (data?.isExcluded) {
     return { stroke: '#9aa4b2', lineWidth: 1.6, opacity: 0.38 };
   }
+  if (data?.isFlowAnimated && data.flowColor) {
+    return {
+      stroke: data.flowColor,
+      lineWidth: 4.2,
+      opacity: 1,
+    };
+  }
   const strength = data?.strength ?? 'medium';
-  let stroke = '#6b7ea6';
+  let stroke = '#4f6fbd';
   let lineWidth = 2.4;
   let opacity = 0.82;
 
   if (strength === 'strong') {
-    stroke = amount >= 100_000 ? '#3658b5' : '#4b6fd4';
     lineWidth = amount >= 100_000 ? 5.3 : 4.1;
     opacity = 0.94;
   } else if (strength === 'weak') {
-    stroke = '#9eaec9';
     lineWidth = 1.6;
     opacity = 0.34;
   }
 
   if (data?.isActive) {
-    stroke = '#1d4ed8';
     lineWidth += 0.8;
     opacity = 1;
   } else if (data?.isDimmed) {

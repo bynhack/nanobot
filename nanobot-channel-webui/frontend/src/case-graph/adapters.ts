@@ -135,12 +135,14 @@ export function originDataToCanvasData(originData: CaseGraphOriginData | null): 
 export function graphStateToCanvasData(state: CaseGraphStateSnapshot | null | undefined): CaseGraphData | null {
   if (!state) return null;
   const positions = state.graph.layout?.nodePositions ?? {};
+  const nodes = Array.isArray(state.graph.nodes) ? state.graph.nodes : [];
+  const edges = Array.isArray(state.graph.edges) ? state.graph.edges : [];
   return {
-    nodes: state.graph.nodes.map((node) => {
+    nodes: nodes.map((node) => {
       const point = positions[node.id];
       return point ? { ...node, x: point.x, y: point.y } : node;
     }),
-    edges: state.graph.edges.map((edge) => normalizeMoneyEdge(edge)),
+    edges: edges.map((edge) => normalizeMoneyEdge(edge)),
     tradeFacts: { ...(state.graph.tradeFacts ?? {}) },
     excludedNodes: [...(state.graph.excludedNodes ?? [])],
     realityRelations: [...(state.graph.realityRelations ?? [])],
@@ -151,10 +153,11 @@ export function graphStateToCanvasData(state: CaseGraphStateSnapshot | null | un
 export function graphStateToOriginData(state: CaseGraphStateSnapshot | null | undefined): CaseGraphOriginData | null {
   if (!state) return null;
   const canvasData = graphStateToCanvasData(state);
+  const edges = Array.isArray(state.graph.edges) ? state.graph.edges : [];
   return {
     graphId: state.graphId,
     nodes: canvasData?.nodes ?? [],
-    money: state.graph.edges.map((edge) => normalizeMoneyEdge(edge)),
+    money: edges.map((edge) => normalizeMoneyEdge(edge)),
     phone: [],
     groups: normalizeCaseGraphGroupMap(state.graph.groupMap),
     investigationGroups: [...(state.graph.investigationGroups ?? [])],

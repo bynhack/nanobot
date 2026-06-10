@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { loadSettingsSkills, loadSettingsSkillDetail, loadSettingsSkillFile, toggleSettingsSkill } from '../../../api';
 import type { SettingsSkillSummary, SettingsSkillDetail, SettingsSkillFile } from '../../../types';
+import { Modal } from '../../ui/modal';
 import { resolveSkillEnabled, buildSkillTree, SkillTree } from '../utils/skillUtils';
 import { MarkdownPreview } from '../ui/MarkdownPreview';
 import { SettingsSectionTitle } from '../ui/SettingsRow';
@@ -271,42 +272,40 @@ export function SkillsTab({
         )}
       </div>
       {selectedKey ? (
-        <div className="settings-skill-modal-overlay" onClick={() => setSelectedKey('')}>
-          <div className="settings-skill-modal-shell" onClick={(event) => event.stopPropagation()}>
+        <Modal
+          open={Boolean(selectedKey)}
+          onClose={() => setSelectedKey('')}
+          size="lg"
+          className="settings-skill-modal-shell"
+          bodyClassName="settings-skill-modal-body-wrapper"
+          title={detail ? (
+            <span className="settings-skill-modal-title-inline">
+              <span className="settings-skill-icon-avatar" aria-hidden="true">
+                {detail.name.charAt(0).toUpperCase()}
+              </span>
+              <span>
+                <b>{detail.name}</b>
+                <small>技能 · 作者：{detail.source === 'workspace' ? '工作区' : '内置'}</small>
+              </span>
+            </span>
+          ) : '技能详情'}
+          description={detailLoading ? '加载详情中...' : undefined}
+          headerActions={detail?.can_toggle ? (
+            <button
+              type="button"
+              className={`settings-modern-toggle${detailEnabled ? ' active' : ''}`}
+              disabled={toggling && togglingKey === selectedKey}
+              onClick={() => void handleToggleSkill(detail)}
+              aria-label={detailEnabled ? '禁用技能' : '启用技能'}
+            >
+              <div className="toggle-thumb" />
+            </button>
+          ) : undefined}
+        >
             {detailLoading ? (
               <div className="flex-1 flex items-center justify-center text-sm text-muted-foreground italic">加载详情中...</div>
             ) : detail ? (
               <>
-                <div className="settings-skill-modal-header">
-                  <div className="flex items-center gap-4">
-                    <div className="settings-skill-icon-avatar" aria-hidden="true">
-                      {detail.name.charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <h4 className="text-lg font-semibold leading-tight">{detail.name}</h4>
-                      <div className="text-xs text-muted-foreground mt-0.5">
-                        技能 · 作者：{detail.source === 'workspace' ? '工作区' : '内置'}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    {detail.can_toggle && (
-                      <button
-                        type="button"
-                        className={`settings-modern-toggle${detailEnabled ? ' active' : ''}`}
-                        disabled={toggling && togglingKey === selectedKey}
-                        onClick={() => void handleToggleSkill(detail)}
-                      >
-                        <div className="toggle-thumb" />
-                      </button>
-                    )}
-                    <button type="button" className="close-btn" aria-label="关闭" onClick={() => setSelectedKey('')}>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                </div>
                 <div className="settings-skill-modal-body">
                   <aside className="settings-skill-sidebar w-[240px] shrink-0 overflow-y-auto pt-6 px-3">
                     <div className="flex flex-col gap-0.5">
@@ -363,8 +362,7 @@ export function SkillsTab({
                 </div>
               </>
             ) : null}
-          </div>
-        </div>
+        </Modal>
       ) : null}
     </section>
   );

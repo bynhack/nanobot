@@ -16,6 +16,10 @@ case-graph 事实文档为准。
   - 当前长期设计基线
 - [product-capabilities.md](./product-capabilities.md)
   - 当前已经实现的产品功能说明
+- [case-audit-amount-recognition.md](./case-audit-amount-recognition.md)
+  - 涉诈资金审计金额认定逻辑、最低可认定、余额可包含和排除关联的通俗说明
+- [case-audit/README.md](./case-audit/README.md)
+  - 涉诈资金审计独立功能的当前状态、待办问题和组件化跟踪入口
 - [case-graph/README.md](./case-graph/README.md)
   - 经侦上图分析器相关事实文档入口
 

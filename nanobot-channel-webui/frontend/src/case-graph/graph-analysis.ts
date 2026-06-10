@@ -74,23 +74,10 @@ interface MutableNodeStats {
   outgoingNeighbors: Set<string>;
 }
 
-const ROLE_LABELS: Record<CaseGraphNodeRole, string> = {
-  core: '核心',
-  bridge: '桥接',
-  upstream: '来款',
-  downstream: '去向',
-  transit: '中转',
-  peripheral: '外围',
-};
-
-const ROLE_PRIORITY: Record<CaseGraphNodeRole, number> = {
-  core: 0,
-  bridge: 1,
-  upstream: 2,
-  downstream: 2,
-  transit: 3,
-  peripheral: 4,
-};
+const DEFAULT_NODE_ROLE: CaseGraphNodeRole = 'peripheral';
+const DEFAULT_NODE_ROLE_LABEL = '主体';
+const DEFAULT_NODE_ROLE_PRIORITY = 4;
+const MAX_EXPLICIT_FOCUS_HINTS = 6;
 
 export function buildCaseGraphViewModel(
   graphData: CaseGraphData | null,
@@ -192,15 +179,6 @@ export function buildCaseGraphViewModel(
     });
   }
 
-  const importanceThreshold = percentile(
-    [...draftMetrics.values()].map((item) => item.importanceScore),
-    0.78,
-  );
-  const bridgeThreshold = percentile(
-    [...draftMetrics.values()].map((item) => item.bridgeScore),
-    0.72,
-  );
-
   const nodeMetricsById = new Map<string, CaseGraphNodeMetrics>();
   const roleCounts: Record<CaseGraphNodeRole, number> = {
     core: 0,
@@ -212,39 +190,14 @@ export function buildCaseGraphViewModel(
   };
 
   for (const draft of draftMetrics.values()) {
-    const hasBidirectionalFlow = draft.sentAmount > 0 && draft.receivedAmount > 0;
-    let role: CaseGraphNodeRole;
-    if (draft.isFocus) {
-      role = 'core';
-    } else if (
-      hasBidirectionalFlow &&
-      (draft.connectedFocusCount >= 2 ||
-        (draft.degree >= 4 && draft.bridgeScore >= bridgeThreshold) ||
-        (draft.degree >= 3 && draft.bridgeScore >= bridgeThreshold && draft.importanceScore >= importanceThreshold))
-    ) {
-      role = 'bridge';
-    } else if (draft.sentAmount > 0 && draft.receivedAmount === 0) {
-      role = 'upstream';
-    } else if (draft.receivedAmount > 0 && draft.sentAmount === 0) {
-      role = 'downstream';
-    } else if (draft.sentAmount >= draft.receivedAmount * 1.25 && draft.sentAmount > 0) {
-      role = 'upstream';
-    } else if (draft.receivedAmount >= draft.sentAmount * 1.25 && draft.receivedAmount > 0) {
-      role = 'downstream';
-    } else if (hasBidirectionalFlow) {
-      role = 'transit';
-    } else {
-      role = 'peripheral';
-    }
-
     const metrics: CaseGraphNodeMetrics = {
       ...draft,
-      role,
-      roleLabel: ROLE_LABELS[role],
-      rolePriority: ROLE_PRIORITY[role],
+      role: DEFAULT_NODE_ROLE,
+      roleLabel: DEFAULT_NODE_ROLE_LABEL,
+      rolePriority: DEFAULT_NODE_ROLE_PRIORITY,
     };
     nodeMetricsById.set(metrics.nodeId, metrics);
-    roleCounts[role] += 1;
+    roleCounts[DEFAULT_NODE_ROLE] += 1;
   }
 
   const amounts = edges.map((edge) => Number(edge.tradeAmount || 0));
@@ -310,36 +263,36 @@ function buildSummaryCards(
   nodeMetricsById: Map<string, CaseGraphNodeMetrics>,
 ): CaseGraphSummaryCard[] {
   const nodes = [...nodeMetricsById.values()];
-  const topUpstream = [...nodes]
-    .filter((item) => item.role === 'upstream' && item.sentAmount > 0)
-    .sort((left, right) => right.sentAmount - left.sentAmount || right.importanceScore - left.importanceScore)[0];
-  const topDownstream = [...nodes]
-    .filter((item) => item.role === 'downstream' && item.receivedAmount > 0)
-    .sort((left, right) => right.receivedAmount - left.receivedAmount || right.importanceScore - left.importanceScore)[0];
-  const topBridge = [...nodes]
-    .filter((item) => item.role === 'bridge' || item.role === 'transit')
-    .sort((left, right) => right.bridgeScore - left.bridgeScore || right.importanceScore - left.importanceScore)[0];
+  const topPayer = [...nodes]
+    .filter((item) => item.sentAmount > 0)
+    .sort((left, right) => right.sentAmount - left.sentAmount || right.sentCount - left.sentCount)[0];
+  const topReceiver = [...nodes]
+    .filter((item) => item.receivedAmount > 0)
+    .sort((left, right) => right.receivedAmount - left.receivedAmount || right.receivedCount - left.receivedCount)[0];
+  const topConnected = [...nodes]
+    .filter((item) => item.degree > 0)
+    .sort((left, right) => right.degree - left.degree || right.totalAmount - left.totalAmount)[0];
   const strongestEdge = [...(graphData?.edges ?? [])]
     .sort((left, right) => Number(right.tradeAmount || 0) - Number(left.tradeAmount || 0))[0];
 
   return [
     {
       key: 'upstream',
-      label: '最大来款源',
-      primary: topUpstream?.displayName || '-',
-      secondary: topUpstream ? `转出 ${formatCompactAmount(topUpstream.sentAmount)} 元` : '暂无数据',
+      label: '转出最多主体',
+      primary: topPayer?.displayName || '-',
+      secondary: topPayer ? `转出 ${formatCompactAmount(topPayer.sentAmount)} 元` : '暂无数据',
     },
     {
       key: 'downstream',
-      label: '最大去向点',
-      primary: topDownstream?.displayName || '-',
-      secondary: topDownstream ? `转入 ${formatCompactAmount(topDownstream.receivedAmount)} 元` : '暂无数据',
+      label: '收款最多主体',
+      primary: topReceiver?.displayName || '-',
+      secondary: topReceiver ? `收款 ${formatCompactAmount(topReceiver.receivedAmount)} 元` : '暂无数据',
     },
     {
       key: 'bridge',
-      label: '关键桥接',
-      primary: topBridge?.displayName || '-',
-      secondary: topBridge ? `${topBridge.degree} 个关联对象` : '暂无数据',
+      label: '关联最多主体',
+      primary: topConnected?.displayName || '-',
+      secondary: topConnected ? `${topConnected.degree} 个关联对象` : '暂无数据',
     },
     {
       key: 'edge',
@@ -407,13 +360,17 @@ function resolveFocusNodeIds(
     }
   };
 
-  appendMatches(options.focusIds);
-  appendMatches(options.focusAccounts);
+  if (options.focusIds.length <= MAX_EXPLICIT_FOCUS_HINTS) {
+    appendMatches(options.focusIds);
+  }
+  if (options.focusAccounts.length <= MAX_EXPLICIT_FOCUS_HINTS) {
+    appendMatches(options.focusAccounts);
+  }
   if (orderedNodeIds.length) {
     return orderedNodeIds;
   }
 
-  if (options.focusLabels.length && options.focusLabels.length <= 6) {
+  if (options.focusLabels.length && options.focusLabels.length <= MAX_EXPLICIT_FOCUS_HINTS) {
     appendMatches(options.focusLabels);
   }
   return orderedNodeIds;

@@ -39,12 +39,12 @@ describe('case graph analysis', () => {
     });
 
     expect(viewModel.focusNodeIds).toEqual(['focus']);
-    expect(viewModel.nodeMetricsById.get('focus')?.role).toBe('core');
-    expect(viewModel.nodeMetricsById.get('source')?.role).toBe('upstream');
-    expect(viewModel.nodeMetricsById.get('sink')?.role).toBe('downstream');
+    expect(viewModel.nodeMetricsById.get('focus')?.role).toBe('peripheral');
+    expect(viewModel.nodeMetricsById.get('focus')?.roleLabel).toBe('主体');
+    expect(viewModel.roleCounts.peripheral).toBe(3);
   });
 
-  it('does not promote non-focus bidirectional hubs to core when explicit focus exists', () => {
+  it('keeps bidirectional hubs as ordinary subjects when explicit focus exists', () => {
     const graphData: CaseGraphData = {
       nodes: [
         { id: 'focus', accountId: 'focus-account', label: '目标主体' },
@@ -65,10 +65,11 @@ describe('case graph analysis', () => {
       focusLabels: ['目标主体'],
     });
 
-    expect(viewModel.nodeMetricsById.get('focus')?.role).toBe('core');
-    expect(viewModel.nodeMetricsById.get('bridge')?.role).not.toBe('core');
-    expect(viewModel.nodeMetricsById.get('upstream')?.role).toBe('upstream');
-    expect(viewModel.nodeMetricsById.get('downstream')?.role).toBe('downstream');
+    expect(viewModel.nodeMetricsById.get('focus')?.role).toBe('peripheral');
+    expect(viewModel.nodeMetricsById.get('bridge')?.role).toBe('peripheral');
+    expect(viewModel.nodeMetricsById.get('upstream')?.role).toBe('peripheral');
+    expect(viewModel.nodeMetricsById.get('downstream')?.role).toBe('peripheral');
+    expect(viewModel.roleCounts.peripheral).toBe(4);
   });
 
   it('ignores broad label lists as focus fallbacks and infers a single core instead', () => {
@@ -97,7 +98,36 @@ describe('case graph analysis', () => {
     });
 
     expect(viewModel.focusNodeIds).toEqual(['hub']);
-    expect(viewModel.roleCounts.core).toBe(1);
-    expect(viewModel.nodeMetricsById.get('hub')?.role).toBe('core');
+    expect(viewModel.roleCounts.core).toBe(0);
+    expect(viewModel.roleCounts.peripheral).toBe(7);
+    expect(viewModel.nodeMetricsById.get('hub')?.role).toBe('peripheral');
+  });
+
+  it('does not treat a broad restored account selection as all core nodes', () => {
+    const nodes: CaseGraphData['nodes'] = [
+      { id: 'hub', accountId: 'account-hub', label: '中心账户' },
+      ...Array.from({ length: 28 }, (_, index) => ({
+        id: `node-${index}`,
+        accountId: `account-${index}`,
+        label: `主体${index}`,
+      })),
+    ];
+    const edges: CaseGraphData['edges'] = Array.from({ length: 28 }, (_, index) => ({
+      id: index % 2 === 0 ? `node-${index}->hub` : `hub->node-${index}`,
+      from: index % 2 === 0 ? `node-${index}` : 'hub',
+      to: index % 2 === 0 ? 'hub' : `node-${index}`,
+      source: index % 2 === 0 ? `node-${index}` : 'hub',
+      target: index % 2 === 0 ? 'hub' : `node-${index}`,
+      tradeAmount: 10_000 + index * 1_000,
+      tradeCount: 1 + (index % 4),
+    }));
+
+    const viewModel = buildCaseGraphViewModel({ nodes, edges }, {
+      focusAccountIds: nodes.map((node) => String(node.accountId || '')).filter(Boolean),
+    });
+
+    expect(viewModel.roleCounts.core).toBe(0);
+    expect(viewModel.roleCounts.peripheral).toBe(29);
+    expect(viewModel.nodeMetricsById.get('hub')?.role).toBe('peripheral');
   });
 });

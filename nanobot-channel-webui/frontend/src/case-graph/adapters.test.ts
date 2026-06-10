@@ -118,4 +118,35 @@ describe('case graph adapters', () => {
     expect(state?.graphName).toBe('图1');
     expect(graphStateToCanvasData(state)?.nodes[0]).toMatchObject({ id: 'wu', x: 320, y: 240 });
   });
+
+  it('tolerates legacy state snapshots without an edges array', () => {
+    const canvasData = graphStateToCanvasData({
+      schemaVersion: 'case-graph.state.v1',
+      caseId: 'case-1',
+      graphId: 'graph-1',
+      graphName: '图1',
+      revision: 1,
+      updatedAt: '',
+      lastStepId: '',
+      graph: {
+        nodes: [{ id: 'wu', label: '伍华中' }],
+        tradeCards: [],
+        groupMap: {},
+        sourceSelectId: [],
+        summarySelectedAccountId: [],
+        summarySelectedAccountName: [],
+        excludedTrades: [],
+        excludedAccountId: [],
+        excludedAccountName: [],
+        layout: { nodePositions: {}, viewport: { x: 0, y: 0, zoom: 1 } },
+        filters: { minAmount: null, maxAmount: null, startTime: '', endTime: '' },
+        excludedNodes: [],
+        manualEdges: [],
+        annotations: [],
+      } as unknown as Parameters<typeof graphStateToCanvasData>[0]['graph'],
+    });
+
+    expect(canvasData?.nodes).toHaveLength(1);
+    expect(canvasData?.edges).toEqual([]);
+  });
 });

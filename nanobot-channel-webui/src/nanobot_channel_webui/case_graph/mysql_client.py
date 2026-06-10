@@ -22,6 +22,10 @@ class CaseGraphQueryClient(Protocol):
 
     def list_accounts(self, case_id: str, keyword: str = "") -> list[dict[str, Any]]: ...
 
+    def case_audit_overview(self, case_id: str) -> dict[str, Any]: ...
+
+    def query_case_audit_trades(self, payload: QueryPayload) -> list[dict[str, Any]]: ...
+
     def query_graph(self, payload: QueryPayload) -> QueryResult: ...
 
     def drill_down(self, payload: QueryPayload) -> TradeCardsResult: ...
@@ -44,12 +48,24 @@ class DelegatingCaseGraphQueryClient:
     drill_up_handler: Callable[[QueryPayload], TradeCardsResult]
     drill_handler: Callable[[QueryPayload], TradeCardsResult]
     target_detail_handler: Callable[[QueryPayload], TradeDetailResult]
+    case_audit_overview_handler: Callable[[str], dict[str, Any]] | None = None
+    query_case_audit_trades_handler: Callable[[QueryPayload], list[dict[str, Any]]] | None = None
 
     def list_cases(self) -> list[dict[str, Any]]:
         return self.list_cases_handler()
 
     def list_accounts(self, case_id: str, keyword: str = "") -> list[dict[str, Any]]:
         return self.list_accounts_handler(case_id, keyword)
+
+    def case_audit_overview(self, case_id: str) -> dict[str, Any]:
+        if self.case_audit_overview_handler is None:
+            return {}
+        return self.case_audit_overview_handler(case_id)
+
+    def query_case_audit_trades(self, payload: QueryPayload) -> list[dict[str, Any]]:
+        if self.query_case_audit_trades_handler is None:
+            return []
+        return self.query_case_audit_trades_handler(payload)
 
     def query_graph(self, payload: QueryPayload) -> QueryResult:
         return self.query_graph_handler(payload)
@@ -236,6 +252,73 @@ class PyMySQLCaseGraphQueryClient:
                 }
             )
         return items
+
+    def case_audit_overview(self, case_id: str) -> dict[str, Any]:
+        parsed_case_id = self._parse_case_id(case_id)
+        rows = self._query(
+            f"""
+            SELECT
+                COUNT(*) AS trade_count,
+                COUNT(DISTINCT file_id) AS source_file_count,
+                SUM(CASE WHEN jd_flag = '借' AND payer_trade_balance IS NULL THEN 1 ELSE 0 END) AS balance_missing_count,
+                MIN(trade_time) AS min_trade_time,
+                MAX(trade_time) AS max_trade_time,
+                COALESCE(SUM(trade_amount), 0) AS total_trade_amount
+            FROM ga_trade_{parsed_case_id}
+            """,
+            (),
+        )
+        row = rows[0] if rows else {}
+        return {
+            "tradeCount": row.get("trade_count") or 0,
+            "sourceFileCount": row.get("source_file_count") or 0,
+            "balanceMissingCount": row.get("balance_missing_count") or 0,
+            "minTradeTime": _json_safe_scalar(row.get("min_trade_time")),
+            "maxTradeTime": _json_safe_scalar(row.get("max_trade_time")),
+            "totalTradeAmount": row.get("total_trade_amount") or 0,
+        }
+
+    def query_case_audit_trades(self, payload: QueryPayload) -> list[dict[str, Any]]:
+        parsed_case_id = self._parse_case_id(payload.get("caseId"))
+        where_parts: list[str] = []
+        params: list[Any] = []
+
+        start_time = str(payload.get("startTime") or "").strip()
+        if start_time:
+            where_parts.append("trade_time >= %s")
+            params.append(start_time)
+        end_time = str(payload.get("endTime") or "").strip()
+        if end_time:
+            where_parts.append("trade_time <= %s")
+            params.append(end_time)
+        min_amount = str(payload.get("minAmount") or "").strip()
+        if min_amount:
+            where_parts.append("trade_amount >= %s")
+            params.append(min_amount)
+        max_amount = str(payload.get("maxAmount") or "").strip()
+        if max_amount:
+            where_parts.append("trade_amount <= %s")
+            params.append(max_amount)
+
+        limit = payload.get("limit")
+        try:
+            parsed_limit = int(limit)
+        except (TypeError, ValueError):
+            parsed_limit = 200_000
+        parsed_limit = min(max(parsed_limit, 1), 500_000)
+        where_sql = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        rows = self._query(
+            f"""
+            {self._case_audit_trade_info_cte(parsed_case_id)}
+            SELECT *
+            FROM audit_trade_info
+            {where_sql}
+            ORDER BY trade_time ASC, row_id ASC
+            LIMIT %s
+            """,
+            (*params, parsed_limit),
+        )
+        return rows
 
     def query_relation_one_hop(
         self,
@@ -1218,6 +1301,91 @@ class PyMySQLCaseGraphQueryClient:
         if match is None:
             raise ValueError(f"invalid caseId: {value}")
         return int(match.group(1))
+
+    @staticmethod
+    def _case_audit_trade_info_cte(case_id: int) -> str:
+        return f"""
+            WITH suspect_account AS (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY trade_card, account_name, account_time
+                    ORDER BY account_category
+                ) AS rn
+                FROM (
+                    SELECT
+                        u.id AS suspect_id,
+                        u.card_no AS suspect_id_number,
+                        u.suspect_name AS suspect_name,
+                        a.id AS account_id,
+                        a.trade_card AS trade_card,
+                        a.trade_account AS trade_account,
+                        a.account_name AS account_name,
+                        a.account_time AS account_time,
+                        a.cancel_time AS cancel_time,
+                        a.account_category AS account_category,
+                        a.account_bank AS account_bank,
+                        a.is_obtain AS is_obtain
+                    FROM ga_suspect_{case_id} u
+                    LEFT JOIN ga_account_{case_id} a
+                        ON u.card_no = a.id_number
+                    WHERE a.id_number IS NOT NULL
+                      AND a.id_number <> ''
+
+                    UNION
+
+                    SELECT
+                        u.id AS suspect_id,
+                        IFNULL(NULLIF(u.card_no, ''), a.id_number) AS suspect_id_number,
+                        u.suspect_name AS suspect_name,
+                        a.id AS account_id,
+                        a.trade_card AS trade_card,
+                        a.trade_account AS trade_account,
+                        a.account_name AS account_name,
+                        a.account_time AS account_time,
+                        a.cancel_time AS cancel_time,
+                        a.account_category AS account_category,
+                        a.account_bank AS account_bank,
+                        a.is_obtain AS is_obtain
+                    FROM ga_suspect_{case_id} u
+                    LEFT JOIN ga_account_{case_id} a
+                        ON (u.suspect_name = a.account_name OR u.suspect_name = a.trade_card)
+                    WHERE (a.id_number IS NULL OR a.id_number = '' OR u.card_no <> a.id_number)
+                ) suspect_account_raw
+            ),
+            audit_trade_info AS (
+                SELECT
+                    COALESCE(NULLIF(CAST(gt.order_no AS CHAR), ''), CAST(gt.id AS CHAR)) AS id,
+                    gt.id AS row_id,
+                    gt.file_id,
+                    COALESCE(NULLIF(fm.original_file_name, ''), NULLIF(fm.file_name, ''), CAST(gt.file_id AS CHAR), '') AS file_name,
+                    gt.serial_number,
+                    gt.trade_amount,
+                    gt.trade_time,
+                    gt.jd_flag,
+                    payee.suspect_id AS payee_suspect_id,
+                    COALESCE(NULLIF(gt.payee_account_name, ''), NULLIF(payee.account_name, ''), NULLIF(payee.suspect_name, ''), NULLIF(payee_account.account_name, ''), gt.payee_account_name) AS payee_account_name,
+                    IFNULL(NULLIF(payee.trade_card, ''), gt.payee_pay_account) AS payee_trade_card,
+                    gt.payee_account_id AS payee_account_id,
+                    payer.suspect_id AS payer_suspect_id,
+                    COALESCE(NULLIF(gt.payer_account_name, ''), NULLIF(payer.account_name, ''), NULLIF(payer.suspect_name, ''), NULLIF(payer_account.account_name, ''), gt.payer_account_name) AS payer_account_name,
+                    IFNULL(NULLIF(payer.trade_card, ''), gt.payer_pay_account) AS payer_trade_card,
+                    gt.payer_account_id AS payer_account_id,
+                    gt.trade_balance,
+                    gt.payer_trade_balance
+                FROM ga_trade_{case_id} gt
+                LEFT JOIN file_manager fm
+                    ON gt.file_id = fm.id
+                LEFT JOIN suspect_account payee
+                    ON gt.payee_account_id = payee.account_id
+                   AND payee.rn = 1
+                LEFT JOIN ga_account_{case_id} payee_account
+                    ON gt.payee_account_id = payee_account.id
+                LEFT JOIN suspect_account payer
+                    ON gt.payer_account_id = payer.account_id
+                   AND payer.rn = 1
+                LEFT JOIN ga_account_{case_id} payer_account
+                    ON gt.payer_account_id = payer_account.id
+            )
+        """
 
     @staticmethod
     def _extract_trade_card_seed(trade_cards: Any) -> dict[str, list[Any]]:

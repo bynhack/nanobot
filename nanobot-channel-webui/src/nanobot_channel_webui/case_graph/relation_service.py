@@ -307,6 +307,8 @@ class RelationGraphService:
         if not node_id:
             raise ValueError("nodeId")
         graph = self._storage.load_graph(case_id, graph_id)
+        options = dict(payload.get("options") or {}) if isinstance(payload.get("options"), dict) else {}
+        graph = self._apply_node_positions(graph, options)
         excluded_nodes = [
             item for item in graph.get("excludedNodes") or []
             if isinstance(item, dict) and str(item.get("nodeId") or "").strip() != node_id
@@ -317,7 +319,7 @@ class RelationGraphService:
             case_id=case_id,
             graph_id=graph_id,
             step_type="manual_restore_node",
-            request={"caseId": case_id, "graphId": graph_id, "nodeId": node_id},
+            request={"caseId": case_id, "graphId": graph_id, "nodeId": node_id, "options": options},
             graph=graph,
             delta={"addedNodes": [], "addedEdges": [], "updatedNodes": [{"nodeId": node_id}], "updatedEdges": []},
             summary={"excludedNodeCount": len(excluded_nodes)},
@@ -336,7 +338,20 @@ class RelationGraphService:
 
         graph = self._storage.load_graph(case_id, graph_id)
         options = dict(payload.get("options") or {}) if isinstance(payload.get("options"), dict) else {}
-        graph = self._apply_node_positions(graph, options)
+        node_ids = {
+            str(node.get("id") or "").strip()
+            for node in graph.get("nodes") or []
+            if isinstance(node, dict) and str(node.get("id") or "").strip()
+        }
+        groups = self._normalize_investigation_groups(graph.get("investigationGroups"), node_ids=node_ids)
+        ignored_position_node_ids = self._resolve_investigation_group_position_ignore_ids(
+            groups=groups,
+            operation=operation,
+            group_id=str(payload.get("groupId") or "").strip(),
+            payload=payload,
+        )
+        graph = self._apply_node_positions(graph, options, ignored_node_ids=ignored_position_node_ids)
+        group_position = self._normalize_group_position(payload.get("groupPosition"))
         node_ids = {
             str(node.get("id") or "").strip()
             for node in graph.get("nodes") or []
@@ -373,6 +388,9 @@ class RelationGraphService:
                 "createdAt": now,
                 "updatedAt": now,
             }
+            if group_position:
+                group["x"] = group_position["x"]
+                group["y"] = group_position["y"]
             groups.append(group)
             updated_groups = [group]
         else:
@@ -415,6 +433,9 @@ class RelationGraphService:
                         next_group["collapsed"] = bool(payload.get("collapsed"))
                 elif operation == "collapse":
                     next_group["collapsed"] = True
+                    if group_position:
+                        next_group["x"] = group_position["x"]
+                        next_group["y"] = group_position["y"]
                 elif operation == "expand":
                     next_group["collapsed"] = False
                 elif operation == "remove_member":
@@ -439,6 +460,9 @@ class RelationGraphService:
                     ])
                     if len(next_group["memberNodeIds"]) < 2:
                         raise ValueError("memberNodeIds")
+                    if group_position:
+                        next_group["x"] = group_position["x"]
+                        next_group["y"] = group_position["y"]
                 next_group["updatedAt"] = now
                 updated_groups.append(next_group)
                 next_groups.append(next_group)
@@ -475,6 +499,7 @@ class RelationGraphService:
             "groupType": str(payload.get("groupType") or "").strip() or None,
             "note": str(payload.get("note") or "").strip() or None,
             "collapsed": payload.get("collapsed") if "collapsed" in payload else None,
+            "groupPosition": group_position,
             "options": options,
         }
         return self._storage.save_step(
@@ -2003,19 +2028,35 @@ class RelationGraphService:
             member_node_ids = cls._unique_text_list(member_node_ids)
             if len(member_node_ids) < 2:
                 continue
+            group_x = cls._finite_number(item.get("x"))
+            group_y = cls._finite_number(item.get("y"))
+            group = {
+                "id": group_id,
+                "name": str(item.get("name") or "研判组").strip() or "研判组",
+                "memberNodeIds": member_node_ids,
+                "groupType": str(item.get("groupType") or "").strip(),
+                "note": str(item.get("note") or "").strip(),
+                "collapsed": bool(item.get("collapsed")),
+                "createdAt": str(item.get("createdAt") or "").strip(),
+                "updatedAt": str(item.get("updatedAt") or "").strip(),
+            }
+            if group_x is not None and group_y is not None:
+                group["x"] = group_x
+                group["y"] = group_y
             groups.append(
-                {
-                    "id": group_id,
-                    "name": str(item.get("name") or "研判组").strip() or "研判组",
-                    "memberNodeIds": member_node_ids,
-                    "groupType": str(item.get("groupType") or "").strip(),
-                    "note": str(item.get("note") or "").strip(),
-                    "collapsed": bool(item.get("collapsed")),
-                    "createdAt": str(item.get("createdAt") or "").strip(),
-                    "updatedAt": str(item.get("updatedAt") or "").strip(),
-                }
+                group
             )
         return groups
+
+    @classmethod
+    def _normalize_group_position(cls, value: Any) -> dict[str, float] | None:
+        if not isinstance(value, dict):
+            return None
+        x = cls._finite_number(value.get("x"))
+        y = cls._finite_number(value.get("y"))
+        if x is None or y is None:
+            return None
+        return {"x": x, "y": y}
 
     @classmethod
     def _remove_members_from_investigation_groups(
@@ -2359,17 +2400,26 @@ class RelationGraphService:
         }
 
     @classmethod
-    def _apply_node_positions(cls, graph: dict[str, Any], options: Any) -> dict[str, Any]:
+    def _apply_node_positions(
+        cls,
+        graph: dict[str, Any],
+        options: Any,
+        *,
+        ignored_node_ids: set[str] | None = None,
+    ) -> dict[str, Any]:
         if not graph or not isinstance(options, dict):
             return graph
         raw_positions = options.get("nodePositions")
         if not isinstance(raw_positions, dict):
             return graph
+        ignored_node_ids = ignored_node_ids or set()
         positions: dict[str, tuple[float, float]] = {}
         for raw_node_id, raw_point in raw_positions.items():
             if not isinstance(raw_point, dict):
                 continue
             node_id = str(raw_node_id or "").strip()
+            if node_id in ignored_node_ids:
+                continue
             x = cls._finite_number(raw_point.get("x"))
             y = cls._finite_number(raw_point.get("y"))
             if not node_id or x is None or y is None:
@@ -2393,6 +2443,29 @@ class RelationGraphService:
             **{node_id: {"x": x, "y": y} for node_id, (x, y) in positions.items()},
         }
         return {**graph, "nodes": nodes, "layout": layout}
+
+    @classmethod
+    def _resolve_investigation_group_position_ignore_ids(
+        cls,
+        *,
+        groups: list[dict[str, Any]],
+        operation: str,
+        group_id: str,
+        payload: dict[str, Any],
+    ) -> set[str]:
+        if operation not in {"expand", "ungroup", "remove_member"} or not group_id:
+            return set()
+        group = next((item for item in groups if str(item.get("id") or "").strip() == group_id), None)
+        if not group or not bool(group.get("collapsed")):
+            return set()
+        member_node_ids = cls._text_list(group.get("memberNodeIds"))
+        if operation in {"expand", "ungroup"}:
+            return set(member_node_ids)
+        requested_member_ids = cls._unique_text_list([
+            *cls._text_list(payload.get("memberNodeIds")),
+            str(payload.get("memberNodeId") or "").strip(),
+        ])
+        return {node_id for node_id in requested_member_ids if node_id in set(member_node_ids)}
 
     @staticmethod
     def _finite_number(value: Any) -> float | None:

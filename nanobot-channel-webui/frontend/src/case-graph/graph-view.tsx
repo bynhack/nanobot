@@ -45,6 +45,7 @@ interface GraphViewProps {
   onRemoveInvestigationGroupMember: (groupId: string, nodeId: string) => void;
   onRemoveInvestigationGroupMembers: (groupId: string, nodeIds: string[]) => void;
   onAddInvestigationGroupMembers: (groupId: string, nodeIds: string[]) => void;
+  onUpdateNodeNote: (nodeId: string, input: { note: string; sourceNote?: string }) => void;
   groupOperationLoading?: boolean;
   excluding: boolean;
   onOpenEdgeDetail: (edgeId: string, edgeFocus?: CaseGraphConversationFocus, edgeOverride?: CaseGraphData['edges'][number]) => void;
@@ -90,6 +91,7 @@ export function GraphView(props: GraphViewProps) {
       onRemoveInvestigationGroupMember={props.onRemoveInvestigationGroupMember}
       onRemoveInvestigationGroupMembers={props.onRemoveInvestigationGroupMembers}
       onAddInvestigationGroupMembers={props.onAddInvestigationGroupMembers}
+      onUpdateNodeNote={props.onUpdateNodeNote}
       groupOperationLoading={props.groupOperationLoading}
       onOpenEdgeDetail={props.onOpenEdgeDetail}
       onFocusChange={props.onFocusChange}

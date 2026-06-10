@@ -1,4 +1,5 @@
 import { appStore } from './app-state';
+import { Modal } from './components/ui/modal';
 import { STORAGE_KEYS } from './store';
 
 export function AuthTokenModal({
@@ -20,10 +21,20 @@ export function AuthTokenModal({
   };
 
   return (
-    <div className={`auth-modal${open ? '' : ' hidden'}`}>
-      <div className="auth-card">
-        <h2>需要认证</h2>
-        <p>请输入当前配置的访问令牌。</p>
+    <Modal
+      open={open}
+      title="需要认证"
+      description="请输入当前配置的访问令牌。"
+      onClose={onClose}
+      size="sm"
+      className="auth-card"
+      bodyClassName="auth-card-body"
+      footer={(
+        <button id="auth-save" type="button" onClick={saveToken}>
+          保存
+        </button>
+      )}
+    >
         <input
           type="password"
           placeholder="请输入访问令牌"
@@ -35,12 +46,6 @@ export function AuthTokenModal({
             }
           }}
         />
-        <div className="auth-actions">
-          <button id="auth-save" type="button" onClick={saveToken}>
-            保存
-          </button>
-        </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

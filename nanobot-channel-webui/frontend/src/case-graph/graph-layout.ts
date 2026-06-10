@@ -142,7 +142,7 @@ function buildDirectedFlowLayout(
   const orderedColumns = [...grouped.keys()].sort((left, right) => left - right);
   const orderedColumnNodes = orderDirectedFlowColumnNodes(orderedColumns, grouped, stats);
   const columnGap = Math.max(options.columnGap, 176);
-  const rowGap = Math.max(options.rowGap, 76);
+  const rowGap = Math.max(options.rowGap, 40);
   const totalWidth = orderedColumns.length
     ? orderedColumns.length * options.nodeWidth + (orderedColumns.length - 1) * columnGap
     : options.nodeWidth;
@@ -340,7 +340,7 @@ function resolveNonOverlappingPosition(
   options: LayoutOptions,
 ): GraphPoint {
   const stepX = options.nodeWidth + Math.max(80, options.columnGap * 0.6);
-  const stepY = options.nodeHeight + Math.max(40, options.rowGap * 0.6);
+  const stepY = options.nodeHeight + Math.max(24, options.rowGap * 0.6);
   const candidates: GraphPoint[] = [preferred];
   for (let ring = 1; ring <= 6; ring += 1) {
     candidates.push(

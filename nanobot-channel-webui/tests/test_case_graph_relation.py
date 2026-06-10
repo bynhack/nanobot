@@ -195,6 +195,98 @@ def test_relation_service_removes_multiple_investigation_group_members(tmp_path:
     assert result["step"]["type"] == "investigation_group_remove_member"
 
 
+def test_relation_service_persists_investigation_group_position(tmp_path: Path) -> None:
+    storage = RelationGraphStorage(tmp_path)
+    storage.save_step(
+        case_id="37",
+        graph_id="graph-1",
+        step_type="seed_one_hop",
+        request={"caseId": "37"},
+        graph={
+            "nodes": [{"id": "a"}, {"id": "b"}],
+            "edges": [],
+        },
+        delta={"addedNodes": [], "addedEdges": [], "updatedNodes": [], "updatedEdges": []},
+        summary={},
+    )
+    service = RelationGraphService(query_client=DummyRelationQueryClient(), storage=storage, workspace_root=tmp_path)
+
+    result = service.apply_investigation_group({
+        "caseId": "37",
+        "graphId": "graph-1",
+        "operation": "create",
+        "nodeIds": ["a", "b"],
+        "name": "研判组 1",
+        "collapsed": True,
+        "groupPosition": {"x": 320, "y": 120},
+    })
+
+    group = result["graph"]["investigationGroups"][0]
+    assert group["x"] == 320.0
+    assert group["y"] == 120.0
+    saved = storage._repository.load_current("37", "graph-1")
+    assert saved["graph"]["investigationGroups"][0]["x"] == 320.0
+    assert saved["graph"]["investigationGroups"][0]["y"] == 120.0
+
+
+def test_relation_service_ungroup_preserves_collapsed_member_positions(tmp_path: Path) -> None:
+    storage = RelationGraphStorage(tmp_path)
+    storage.save_step(
+        case_id="37",
+        graph_id="graph-1",
+        step_type="seed_one_hop",
+        request={"caseId": "37"},
+        graph={
+            "nodes": [
+                {"id": "a", "x": 500, "y": 100},
+                {"id": "b", "x": 500, "y": 220},
+                {"id": "c", "x": 500, "y": 340},
+            ],
+            "edges": [],
+            "layout": {
+                "nodePositions": {
+                    "a": {"x": 500, "y": 100},
+                    "b": {"x": 500, "y": 220},
+                    "c": {"x": 500, "y": 340},
+                },
+            },
+            "investigationGroups": [
+                {
+                    "id": "group-1",
+                    "name": "研判组 1",
+                    "memberNodeIds": ["a", "b", "c"],
+                    "collapsed": True,
+                    "x": 500,
+                    "y": 100,
+                },
+            ],
+        },
+        delta={"addedNodes": [], "addedEdges": [], "updatedNodes": [], "updatedEdges": []},
+        summary={},
+    )
+    service = RelationGraphService(query_client=DummyRelationQueryClient(), storage=storage, workspace_root=tmp_path)
+
+    result = service.apply_investigation_group({
+        "caseId": "37",
+        "graphId": "graph-1",
+        "operation": "ungroup",
+        "groupId": "group-1",
+        "options": {
+            "nodePositions": {
+                "a": {"x": 500, "y": 100},
+                "b": {"x": 500, "y": 100},
+                "c": {"x": 500, "y": 340},
+            },
+        },
+    })
+
+    positions = result["graph"]["layout"]["nodePositions"]
+    assert positions["a"] == {"x": 500.0, "y": 100.0}
+    assert positions["b"] == {"x": 500.0, "y": 220.0}
+    assert positions["c"] == {"x": 500.0, "y": 340.0}
+    assert result["graph"]["investigationGroups"] == []
+
+
 def test_relation_service_adds_members_to_investigation_group_and_detaches_other_group(tmp_path: Path) -> None:
     storage = RelationGraphStorage(tmp_path)
     storage.save_step(
@@ -266,6 +358,39 @@ def test_graph_repository_patches_latest_step_layout_without_new_step(tmp_path: 
         "b": {"x": 300.0, "y": 400.0},
     }
     assert steps[0]["graph"]["layout"]["nodePositions"] == current["graph"]["layout"]["nodePositions"]
+
+
+def test_graph_state_service_writes_investigation_group_layout_position(tmp_path: Path) -> None:
+    storage = RelationGraphStorage(tmp_path)
+    storage.save_step(
+        case_id="37",
+        graph_id="graph-1",
+        step_type="seed_one_hop",
+        request={"caseId": "37"},
+        graph={
+            "nodes": [{"id": "a"}, {"id": "b"}],
+            "edges": [],
+            "investigationGroups": [
+                {"id": "group-1", "name": "研判组 1", "memberNodeIds": ["a", "b"], "collapsed": True},
+            ],
+        },
+        delta={"addedNodes": [], "addedEdges": [], "updatedNodes": [], "updatedEdges": []},
+        summary={},
+    )
+    service = GraphStateService(tmp_path)
+
+    current = service.update_layout(
+        case_id="37",
+        graph_id="graph-1",
+        node_positions={
+            "a": {"x": 100, "y": 200},
+            "group-1": {"x": 320, "y": 240},
+        },
+    )
+
+    assert current["graph"]["layout"]["nodePositions"] == {"a": {"x": 100.0, "y": 200.0}}
+    assert current["graph"]["investigationGroups"][0]["x"] == 320.0
+    assert current["graph"]["investigationGroups"][0]["y"] == 240.0
 
 
 def test_graph_state_service_writes_current_context_from_relation_state(tmp_path: Path) -> None:

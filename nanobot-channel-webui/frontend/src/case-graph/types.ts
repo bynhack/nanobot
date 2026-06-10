@@ -53,6 +53,8 @@ export interface CaseGraphNode {
   accounts?: CaseGraphTradeCard[];
   source?: string;
   isManual?: boolean;
+  isCash?: boolean;
+  cashDirection?: 'deposit' | 'withdraw' | string;
   discoveryReason?: string;
   sourceNote?: string;
   note?: string;
@@ -156,6 +158,8 @@ export interface CaseGraphTradeFact {
   remark?: string;
   debitCreditFlag?: string;
   tradeType?: string;
+  cashFlag?: string;
+  isCash?: boolean;
   tradeChannel?: string;
   tradeChannelCode?: string;
   thirdPayType?: string;

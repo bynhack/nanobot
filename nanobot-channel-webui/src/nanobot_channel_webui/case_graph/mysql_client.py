@@ -14,6 +14,12 @@ QueryResult = dict[str, Any]
 TradeCardsResult = list[dict[str, Any]]
 TradeDetailResult = list[dict[str, Any]]
 
+CASH_NODE_LABELS = {
+    "deposit": "现金存入",
+    "withdraw": "现金取出",
+}
+CASH_TEXT_PATTERN = re.compile(r"ATM|卡取|卡存|柜台|现金|现金支取|现存|现取|现支|存现|取现|提现|柜面|取款|现金交易")
+
 
 class CaseGraphQueryClient(Protocol):
     """Boundary for graph-related reads from the case data source."""
@@ -380,6 +386,10 @@ class PyMySQLCaseGraphQueryClient:
                 payee_account_id,
                 payee_pay_account,
                 MAX(NULLIF(payee_account_name, '')) AS payee_account_name,
+                MAX(NULLIF(cash_flag, '')) AS cash_flag,
+                MAX(NULLIF(trade_type, '')) AS trade_type,
+                MAX(NULLIF(trade_abstract, '')) AS trade_abstract,
+                GROUP_CONCAT(DISTINCT jd_flag ORDER BY jd_flag SEPARATOR ',') AS jd_flags,
                 COUNT(*) AS trade_count,
                 SUM(trade_amount) AS trade_amount,
                 MIN(trade_time) AS start_time,
@@ -425,6 +435,10 @@ class PyMySQLCaseGraphQueryClient:
                 payee_account_id,
                 payee_pay_account,
                 MAX(NULLIF(payee_account_name, '')) AS payee_account_name,
+                MAX(NULLIF(cash_flag, '')) AS cash_flag,
+                MAX(NULLIF(trade_type, '')) AS trade_type,
+                MAX(NULLIF(trade_abstract, '')) AS trade_abstract,
+                GROUP_CONCAT(DISTINCT jd_flag ORDER BY jd_flag SEPARATOR ',') AS jd_flags,
                 COUNT(*) AS trade_count,
                 SUM(trade_amount) AS trade_amount,
                 MIN(trade_time) AS start_time,
@@ -1775,6 +1789,31 @@ class PyMySQLCaseGraphQueryClient:
         account_id = str(row.get(f"{prefix}_account_id") or "").strip()
         trade_card = str(row.get(f"{prefix}_pay_account") or "").strip()
         account_name = str(row.get(f"{prefix}_account_name") or "").strip()
+        cash_direction = cls._relation_cash_direction(row, prefix)
+        if cash_direction:
+            label = CASH_NODE_LABELS[cash_direction]
+            cash_key = account_id or trade_card or cash_direction
+            node_id = f"cash:{cash_direction}:{cash_key}"
+            return {
+                "id": node_id,
+                "type": "cash",
+                "role": "cash",
+                "label": label,
+                "accountId": account_id or None,
+                "accountIds": [account_id] if account_id else [],
+                "tradeCard": trade_card or label,
+                "accountName": account_name or label,
+                "accounts": [
+                    {
+                        "accountId": account_id or None,
+                        "tradeCard": trade_card or label,
+                        "accountName": account_name or label,
+                    }
+                ],
+                "cashDirection": cash_direction,
+                "isCash": True,
+                "depth": 1,
+            }
         node_id = f"account:{account_id}" if account_id else f"account:{trade_card}"
         label = account_name or trade_card or node_id
         return {
@@ -1795,6 +1834,34 @@ class PyMySQLCaseGraphQueryClient:
             ],
             "depth": 1,
         }
+
+    @classmethod
+    def _relation_cash_direction(cls, row: dict[str, Any], prefix: str) -> str | None:
+        account_id = str(row.get(f"{prefix}_account_id") or "").strip()
+        trade_card = str(row.get(f"{prefix}_pay_account") or "").strip()
+        account_name = str(row.get(f"{prefix}_account_name") or "").strip()
+        party_text = f"{trade_card} {account_name}".replace(" ", "")
+        transaction_text = " ".join(
+            str(row.get(key) or "")
+            for key in ("cash_flag", "trade_type", "trade_abstract")
+        ).replace(" ", "")
+        normalized_text = f"{party_text} {transaction_text}"
+        has_cash_text = bool(CASH_TEXT_PATTERN.search(party_text))
+        has_cash_endpoint = has_cash_text or ((not account_id and not trade_card) and bool(CASH_TEXT_PATTERN.search(transaction_text)))
+        if not has_cash_endpoint:
+            return None
+        if "存现" in normalized_text or "现金交易（存现）" in normalized_text or "现金存入" in normalized_text:
+            return "deposit"
+        if "取现" in normalized_text or "现金交易（取现）" in normalized_text or "现金取出" in normalized_text or "取款" in normalized_text:
+            return "withdraw"
+        jd_flags = {item.strip() for item in str(row.get("jd_flags") or "").split(",") if item.strip()}
+        if prefix == "payer" and ("贷" in jd_flags or "D" in jd_flags):
+            return "deposit"
+        if prefix == "payee" and ("借" in jd_flags or "J" in jd_flags):
+            return "withdraw"
+        if account_name.startswith("现金交易") or trade_card.startswith("现金交易"):
+            return "deposit" if prefix == "payer" else "withdraw"
+        return None
 
     @classmethod
     def _relation_graph_from_account_rows(cls, rows: list[dict[str, Any]], *, scope: str) -> QueryResult:
@@ -1912,8 +1979,10 @@ class PyMySQLCaseGraphQueryClient:
                     remark,
                     jd_flag,
                     trade_type,
+                    cash_flag,
                     trade_network_name,
                     trade_network_code,
+                    cash_flag,
                     third_pay_type,
                     third_pay_type_code,
                     ip_addr,
@@ -1954,6 +2023,13 @@ class PyMySQLCaseGraphQueryClient:
                     "remark": row.get("remark") or "",
                     "debitCreditFlag": row.get("jd_flag") or "",
                     "tradeType": row.get("trade_type") or "",
+                    "cashFlag": row.get("cash_flag") or "",
+                    "isCash": bool(row.get("cash_flag") or CASH_TEXT_PATTERN.search(
+                        " ".join(
+                            str(row.get(key) or "")
+                            for key in ("trade_type", "trade_abstract", "remark")
+                        )
+                    )),
                     "tradeChannel": row.get("trade_network_name") or row.get("third_pay_type") or "",
                     "tradeChannelCode": row.get("trade_network_code") or row.get("third_pay_type_code") or "",
                     "thirdPayType": row.get("third_pay_type") or "",
@@ -2426,6 +2502,7 @@ class PyMySQLCaseGraphQueryClient:
                     payer_account_time,
                     payer_cancel_time,
                     payer_bank_name,
+                    cash_flag,
                     data_flag
                 FROM (
                     SELECT
@@ -2438,6 +2515,7 @@ class PyMySQLCaseGraphQueryClient:
                         gt.trade_type,
                         gt.trade_network_name,
                         gt.trade_network_code,
+                        gt.cash_flag,
                         gt.third_pay_type,
                         gt.third_pay_type_code,
                         gt.ip_addr,

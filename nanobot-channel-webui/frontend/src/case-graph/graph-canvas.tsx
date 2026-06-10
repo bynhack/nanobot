@@ -122,6 +122,7 @@ interface GraphNodeRenderData {
   nodeId: string;
   title: string;
   subtitle: string;
+  isCash?: boolean;
   isInvestigationGroup?: boolean;
   memberCount?: number;
   externalEdgeCount?: number;
@@ -1328,8 +1329,8 @@ export function GraphCanvas({
               return buildNodeContextMenuItems({
                 selectedCount: Math.max(actionNodes.length, 1),
                 canRestore: Boolean(node.isExcluded) && !excludingRef.current,
-                canDrill: Boolean(resolveTradeCard(node, tradeCardByNodeIdRef.current)) && !node.isExcluded && !drilldownLoadingRef.current,
-                canSummaryAnalysis: !node.isExcluded && hasNodeAccountEvidence(node, tradeCardByNodeIdRef.current),
+                canDrill: Boolean(resolveTradeCard(node, tradeCardByNodeIdRef.current)) && !node.isExcluded && !isCashNode(node) && !drilldownLoadingRef.current,
+                canSummaryAnalysis: !node.isExcluded && !isCashNode(node) && hasNodeAccountEvidence(node, tradeCardByNodeIdRef.current),
                 canManualActions: !node.isExcluded,
                 canExclude: actionNodes.some((item) => !item.isExcluded) && !excludingRef.current,
               });
@@ -1340,7 +1341,7 @@ export function GraphCanvas({
               if (!node) return;
 
               if (value === 'drill:both' || value === 'drill:in' || value === 'drill:out') {
-                if (node.isExcluded || drilldownLoadingRef.current) return;
+                if (node.isExcluded || isCashNode(node) || drilldownLoadingRef.current) return;
                 const tradeCard = resolveTradeCard(node, tradeCardByNodeIdRef.current);
                 if (!tradeCard) return;
                 officialInteractionSuppressedRef.current = true;
@@ -1351,7 +1352,7 @@ export function GraphCanvas({
               }
 
               if (value === 'summary-analysis') {
-                if (node.isExcluded) return;
+                if (node.isExcluded || isCashNode(node)) return;
                 officialInteractionSuppressedRef.current = true;
                 clearFocusState();
                 void clearInteractionState();
@@ -1816,12 +1817,12 @@ export function GraphCanvas({
   }, [nodeLookup, selectedEdge, selectedNode]);
 
   const singleSelectedTradeCard = singleSelectedNode ? resolveTradeCard(singleSelectedNode, tradeCardByNodeId) : null;
-  const canRunSingleDrill = Boolean(singleSelectedNode && singleSelectedTradeCard && !singleSelectedNode.isExcluded && !drilldownLoading);
-  const canRunSingleSummaryAnalysis = Boolean(singleSelectedNode && !singleSelectedNode.isExcluded && hasNodeAccountEvidence(singleSelectedNode, tradeCardByNodeId));
+  const canRunSingleDrill = Boolean(singleSelectedNode && singleSelectedTradeCard && !singleSelectedNode.isExcluded && !isCashNode(singleSelectedNode) && !drilldownLoading);
+  const canRunSingleSummaryAnalysis = Boolean(singleSelectedNode && !singleSelectedNode.isExcluded && !isCashNode(singleSelectedNode) && hasNodeAccountEvidence(singleSelectedNode, tradeCardByNodeId));
   const selectedRestorableNode = singleSelectedNode?.isExcluded ? singleSelectedNode : null;
   const selectedNodesToExclude = selectedNodes.filter((node) => !node.isExcluded);
-  const selectedNodesToGroup = selectedNodes.filter((node) => !node.isExcluded);
-  const selectedNodesToAddToGroup = selectedNodes.filter((node) => !node.isExcluded);
+  const selectedNodesToGroup = selectedNodes.filter((node) => !node.isExcluded && !isCashNode(node));
+  const selectedNodesToAddToGroup = selectedNodes.filter((node) => !node.isExcluded && !isCashNode(node));
   const addableInvestigationGroups = useMemo(
     () => investigationGroups
       .map((group) => ({
@@ -1895,7 +1896,7 @@ export function GraphCanvas({
     setCanvasContextMenu(null);
 
     if (value === 'drill:both' || value === 'drill:in' || value === 'drill:out') {
-      if (!singleSelectedNode || singleSelectedNode.isExcluded || drilldownLoadingRef.current) return;
+      if (!singleSelectedNode || singleSelectedNode.isExcluded || isCashNode(singleSelectedNode) || drilldownLoadingRef.current) return;
       const tradeCard = resolveTradeCard(singleSelectedNode, tradeCardByNodeIdRef.current);
       if (!tradeCard) return;
       officialInteractionSuppressedRef.current = true;
@@ -1906,7 +1907,7 @@ export function GraphCanvas({
     }
 
     if (value === 'summary-analysis') {
-      if (!singleSelectedNode || singleSelectedNode.isExcluded) return;
+      if (!singleSelectedNode || singleSelectedNode.isExcluded || isCashNode(singleSelectedNode)) return;
       officialInteractionSuppressedRef.current = true;
       clearFocusState();
       void clearInteractionState();
@@ -3166,15 +3167,17 @@ function buildNodeRenderData(
     relatedEdgeIds: Set<string>;
   } | null,
 ) {
+  const cashNode = isCashNode(node);
   const isRelationHighlighted = Boolean(activeNeighborhood?.relatedNodeIds.has(node.id));
   const noteLabel = resolveNodeNoteLabel(node);
   return {
     nodeId: node.id,
     title: node.name || node.label || node.accountName || node.tradeCard || node.accountId || node.id,
-    subtitle: resolveNodeSubtitle(node),
-    role: 'peripheral',
-    roleLabel: noteLabel,
-    roleBadge: noteLabel ? '注' : '',
+    subtitle: cashNode ? resolveCashNodeSubtitle(node) : resolveNodeSubtitle(node),
+    isCash: cashNode,
+    role: cashNode ? 'cash' : 'peripheral',
+    roleLabel: cashNode ? '现金断点' : noteLabel,
+    roleBadge: cashNode ? '现' : noteLabel ? '注' : '',
     receivedText: `收 ${formatCompactAmount(metrics?.receivedAmount ?? 0)} 元`,
     sentText: `出 ${formatCompactAmount(metrics?.sentAmount ?? 0)} 元`,
     isSeed,
@@ -3880,6 +3883,9 @@ function hasNodeAccountEvidence(
   node: CaseGraphData['nodes'][number],
   tradeCardByNodeId: Map<string, CaseGraphTradeCard>,
 ): boolean {
+  if (isCashNode(node)) {
+    return false;
+  }
   const ownAccountId = String(node.accountId || '').trim();
   const ownTradeCard = String(node.tradeCard || '').trim();
   if (ownAccountId || ownTradeCard) {
@@ -3889,6 +3895,24 @@ function hasNodeAccountEvidence(
     return true;
   }
   return Boolean(tradeCardByNodeId.get(String(node.id || '').trim()));
+}
+
+function isCashNode(
+  node: Pick<CaseGraphData['nodes'][number], 'type' | 'isCash' | 'cashDirection' | 'label' | 'accountName' | 'tradeCard' | 'id'> | null | undefined,
+): boolean {
+  if (!node) return false;
+  if (node.isCash || node.type === 'cash' || node.cashDirection) return true;
+  const text = `${node.label || ''} ${node.accountName || ''} ${node.tradeCard || ''} ${node.id || ''}`;
+  return /现金交易[（(](存现|取现)[）)]|现金存入|现金取出/.test(text);
+}
+
+function resolveCashNodeSubtitle(node: CaseGraphData['nodes'][number]): string {
+  if (node.cashDirection === 'deposit') return '现金进入账户体系';
+  if (node.cashDirection === 'withdraw') return '资金离开账户体系';
+  const text = `${node.label || ''} ${node.accountName || ''} ${node.tradeCard || ''}`;
+  if (/存现|存入/.test(text)) return '现金进入账户体系';
+  if (/取现|取出|取款/.test(text)) return '资金离开账户体系';
+  return '线下现金断点';
 }
 
 function buildGraphBehaviors(
@@ -4587,7 +4611,7 @@ function renderNodeMarkup(data: GraphNodeRenderData): string {
     ? `<span class="case-graph-g6-node-role">${escapeHtml(data.roleLabel)}</span>`
     : '';
   return `
-    <div class="case-graph-g6-node role-${escapeClassName(data.role)}${data.isInvestigationGroup ? ' is-investigation-group' : ''}${badgeLabel ? '' : ' has-no-badge'}${data.isSeed ? ' is-seed' : ''}${data.isFocus ? ' is-focus' : ''}${data.isActive ? ' is-active' : ''}${data.isRelationHighlighted ? ' is-relation-highlight' : ''}${data.isSelected ? ' is-selected' : ''}${data.isDimmed ? ' is-dimmed' : ''}${data.isExcluded ? ' is-excluded' : ''}" data-node-id="${escapeHtml(data.nodeId)}">
+    <div class="case-graph-g6-node role-${escapeClassName(data.role)}${data.isCash ? ' is-cash-node' : ''}${data.isInvestigationGroup ? ' is-investigation-group' : ''}${badgeLabel ? '' : ' has-no-badge'}${data.isSeed ? ' is-seed' : ''}${data.isFocus ? ' is-focus' : ''}${data.isActive ? ' is-active' : ''}${data.isRelationHighlighted ? ' is-relation-highlight' : ''}${data.isSelected ? ' is-selected' : ''}${data.isDimmed ? ' is-dimmed' : ''}${data.isExcluded ? ' is-excluded' : ''}" data-node-id="${escapeHtml(data.nodeId)}">
       ${badgeMarkup}
       <div class="case-graph-g6-node-copy">
         <div class="case-graph-g6-node-head">

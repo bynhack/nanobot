@@ -1222,6 +1222,57 @@ def test_pymysql_list_accounts_returns_suspect_scoped_accounts() -> None:
     ]
 
 
+def test_pymysql_relation_party_node_marks_cash_breakpoints() -> None:
+    _load_service_module()
+    mysql_client_module = sys.modules["nanobot_channel_webui.case_graph.mysql_client"]
+
+    deposit_node = mysql_client_module.PyMySQLCaseGraphQueryClient._relation_party_node(
+        {
+            "payer_account_id": 239,
+            "payer_pay_account": "现金交易（存现）",
+            "payer_account_name": "现金交易（存现）",
+            "cash_flag": "现金",
+            "trade_type": "现金交易",
+            "trade_abstract": "现金存入",
+            "jd_flags": "贷",
+        },
+        "payer",
+    )
+    withdraw_node = mysql_client_module.PyMySQLCaseGraphQueryClient._relation_party_node(
+        {
+            "payee_account_id": "",
+            "payee_pay_account": "",
+            "payee_account_name": "",
+            "cash_flag": "现金",
+            "trade_type": "现金交易",
+            "trade_abstract": "现金取出",
+            "jd_flags": "借",
+        },
+        "payee",
+    )
+    account_node = mysql_client_module.PyMySQLCaseGraphQueryClient._relation_party_node(
+        {
+            "payee_account_id": 137,
+            "payee_pay_account": "17371521349",
+            "payee_account_name": "伍华中",
+            "cash_flag": "现金",
+            "trade_type": "现金交易",
+            "trade_abstract": "现金存入",
+            "jd_flags": "贷",
+        },
+        "payee",
+    )
+
+    assert deposit_node["type"] == "cash"
+    assert deposit_node["cashDirection"] == "deposit"
+    assert deposit_node["label"] == "现金存入"
+    assert withdraw_node["type"] == "cash"
+    assert withdraw_node["cashDirection"] == "withdraw"
+    assert withdraw_node["label"] == "现金取出"
+    assert account_node["type"] == "account"
+    assert account_node["label"] == "伍华中"
+
+
 def test_pymysql_target_detail_serializes_trade_time() -> None:
     _load_service_module()
     mysql_client_module = sys.modules["nanobot_channel_webui.case_graph.mysql_client"]

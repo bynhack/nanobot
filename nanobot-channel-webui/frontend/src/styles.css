@@ -3679,6 +3679,19 @@
     color: #7b8798;
     border-color: #d5deec;
   }
+  .case-graph-g6-node.is-cash-node {
+    color: #0f766e;
+    border-color: #7dd3c7;
+    background: linear-gradient(180deg, #f7fffc 0%, #ecfdf5 100%);
+    box-shadow: 0 12px 26px rgba(15, 118, 110, 0.12);
+  }
+  .case-graph-g6-node.is-cash-node .case-graph-g6-node-badge {
+    background: #ddfbef;
+    border-color: #99e7d6;
+  }
+  .case-graph-g6-node.is-cash-node .case-graph-g6-node-meta {
+    color: #4f6f69;
+  }
   .case-graph-g6-node.is-investigation-group {
     color: #2563eb;
     border-color: #7aa2ff;

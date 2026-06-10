@@ -297,7 +297,20 @@ export interface CaseGraphRelationResponse {
 }
 
 export interface CaseGraphLayoutState {
+  version?: 2;
   nodePositions: Record<string, { x: number; y: number }>;
+  positionMeta?: Record<string, {
+    source: 'initial' | 'generated' | 'manual' | 'group' | 'restored';
+    locked?: boolean;
+    anchorNodeIds?: string[];
+    updatedAt?: string;
+  }>;
+  groupLayout?: Record<string, {
+    groupId: string;
+    collapsedPosition: { x: number; y: number };
+    memberPositionsBeforeCollapse: Record<string, { x: number; y: number }>;
+    locked?: boolean;
+  }>;
   viewport: { x: number; y: number; zoom: number };
 }
 
@@ -493,6 +506,13 @@ export interface RestoreCaseGraphNodePayload {
   graphId: string;
   caseId: string;
   nodeId: string;
+  options?: Record<string, unknown>;
+}
+
+export interface RestoreCaseGraphNodesPayload {
+  graphId: string;
+  caseId: string;
+  nodeIds: string[];
   options?: Record<string, unknown>;
 }
 

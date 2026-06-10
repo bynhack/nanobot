@@ -22,6 +22,7 @@ import type {
   QueryCaseGraphRelationPayload,
   QueryCaseGraphSummaryCandidatesPayload,
   RestoreCaseGraphNodePayload,
+  RestoreCaseGraphNodesPayload,
   UpdateCaseGraphConfigPayload,
   UpdateCaseGraphNodeNotePayload,
 } from './types';
@@ -155,6 +156,8 @@ export function saveCaseGraphLayoutOperation(
   payload: {
     graphName?: string;
     nodePositions: Record<string, { x: number; y: number }>;
+    positionMeta?: Record<string, unknown>;
+    groupLayout?: Record<string, unknown>;
     viewport?: { x: number; y: number; zoom: number };
   },
   token: string,
@@ -172,6 +175,8 @@ export function saveCaseGraphLatestStepLayout(
   graphId: string,
   payload: {
     nodePositions: Record<string, { x: number; y: number }>;
+    positionMeta?: Record<string, unknown>;
+    groupLayout?: Record<string, unknown>;
     viewport?: { x: number; y: number; zoom: number };
   },
   token: string,
@@ -238,6 +243,13 @@ export function restoreCaseGraphNode(
   token: string,
 ): Promise<CaseGraphRelationResponse> {
   return postJson('/api/case-graph/relation/restore-node', payload, token, '恢复节点失败');
+}
+
+export function restoreCaseGraphNodes(
+  payload: RestoreCaseGraphNodesPayload,
+  token: string,
+): Promise<CaseGraphRelationResponse> {
+  return postJson('/api/case-graph/relation/restore-nodes', payload, token, '恢复节点失败');
 }
 
 export function applyCaseGraphInvestigationGroup(

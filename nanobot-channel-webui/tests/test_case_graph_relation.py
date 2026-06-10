@@ -348,6 +348,14 @@ def test_graph_repository_patches_latest_step_layout_without_new_step(tmp_path: 
         case_id="37",
         graph_id="graph-1",
         node_positions={"a": {"x": 100, "y": 200}, "b": {"x": 300, "y": 400}},
+        position_meta={"a": {"source": "manual", "locked": True}, "b": {"source": "generated", "anchorNodeIds": ["a"]}},
+        group_layout={
+            "group-1": {
+                "groupId": "group-1",
+                "collapsedPosition": {"x": 200, "y": 300},
+                "memberPositionsBeforeCollapse": {"a": {"x": 100, "y": 200}, "b": {"x": 300, "y": 400}},
+            }
+        },
     )
     steps = storage._repository.list_steps("37", "graph-1")
 
@@ -357,7 +365,14 @@ def test_graph_repository_patches_latest_step_layout_without_new_step(tmp_path: 
         "a": {"x": 100.0, "y": 200.0},
         "b": {"x": 300.0, "y": 400.0},
     }
+    assert current["graph"]["layout"]["version"] == 2
+    assert current["graph"]["layout"]["positionMeta"] == {
+        "a": {"source": "manual", "locked": True},
+        "b": {"source": "generated", "anchorNodeIds": ["a"]},
+    }
+    assert current["graph"]["layout"]["groupLayout"]["group-1"]["collapsedPosition"] == {"x": 200.0, "y": 300.0}
     assert steps[0]["graph"]["layout"]["nodePositions"] == current["graph"]["layout"]["nodePositions"]
+    assert steps[0]["graph"]["layout"]["positionMeta"] == current["graph"]["layout"]["positionMeta"]
 
 
 def test_graph_state_service_writes_investigation_group_layout_position(tmp_path: Path) -> None:
@@ -2089,6 +2104,79 @@ def test_relation_service_excludes_and_restores_manual_node(tmp_path: Path) -> N
     assert restored["graph"]["nodes"][1].get("isExcluded") is False
     assert restored["graph"]["edges"][0].get("isExcluded") is False
     assert restored["graph"]["excludedNodes"] == []
+
+
+def test_relation_service_restores_multiple_nodes_in_one_step_without_moving_layout(tmp_path: Path) -> None:
+    class StubClient:
+        def query_relation_one_hop(self, **_kwargs: object) -> dict[str, object]:
+            return {"nodes": [], "edges": []}
+
+        def query_relation_between_accounts(self, **_kwargs: object) -> dict[str, object]:
+            return {"nodes": [], "edges": []}
+
+    storage = RelationGraphStorage(tmp_path)
+    storage.save_step(
+        case_id="37",
+        graph_id="graph-1",
+        step_type="seed_one_hop",
+        request={"caseId": "37"},
+        graph={
+            "nodes": [
+                {"id": "account:35", "accountId": "35", "label": "冯燕青", "x": 100, "y": 100, "isExcluded": True},
+                {"id": "account:55", "accountId": "55", "label": "待恢复A", "x": 300, "y": 100, "isExcluded": True},
+                {"id": "account:59", "accountId": "59", "label": "待恢复B", "x": 300, "y": 220, "isExcluded": True},
+                {"id": "account:90", "accountId": "90", "label": "保留节点", "x": 500, "y": 220},
+            ],
+            "edges": [
+                {"id": "money:35->55", "from": "account:35", "to": "account:55", "isExcluded": True},
+                {"id": "money:35->59", "from": "account:35", "to": "account:59", "isExcluded": True},
+            ],
+            "excludedNodes": [
+                {"nodeId": "account:55", "label": "待恢复A"},
+                {"nodeId": "account:59", "label": "待恢复B"},
+            ],
+            "layout": {
+                "nodePositions": {
+                    "account:35": {"x": 100, "y": 100},
+                    "account:55": {"x": 300, "y": 100},
+                    "account:59": {"x": 300, "y": 220},
+                    "account:90": {"x": 500, "y": 220},
+                }
+            },
+        },
+        delta={"addedNodes": [], "addedEdges": [], "updatedNodes": [], "updatedEdges": []},
+        summary={},
+    )
+
+    service = RelationGraphService(storage=storage, query_client=StubClient())
+    result = service.restore_nodes(
+        {
+            "caseId": "37",
+            "graphId": "graph-1",
+            "nodeIds": ["account:55", "account:59"],
+            "options": {
+                "nodePositions": {
+                    "account:35": {"x": 100, "y": 100},
+                    "account:55": {"x": 300, "y": 100},
+                    "account:59": {"x": 300, "y": 220},
+                    "account:90": {"x": 500, "y": 220},
+                }
+            },
+        }
+    )
+
+    assert result["queryMode"] == "manual_restore_node"
+    assert result["step"]["stepId"] == "0002"
+    assert result["graph"]["excludedNodes"] == []
+    assert result["graph"]["layout"]["nodePositions"] == {
+        "account:35": {"x": 100.0, "y": 100.0},
+        "account:55": {"x": 300.0, "y": 100.0},
+        "account:59": {"x": 300.0, "y": 220.0},
+        "account:90": {"x": 500.0, "y": 220.0},
+    }
+    steps = storage.list_steps("37", "graph-1")
+    assert [step["stepId"] for step in steps] == ["0001", "0002"]
+    assert steps[-1]["operation"]["params"]["nodeIds"] == ["account:55", "account:59"]
 
 
 def test_relation_service_excludes_multiple_nodes_in_one_step(tmp_path: Path) -> None:

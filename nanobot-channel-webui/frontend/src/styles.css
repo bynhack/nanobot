@@ -1825,7 +1825,18 @@
     height: min(860px, calc(100vh - 64px));
     max-height: calc(100vh - 64px);
   }
+  .case-graph-excluded-modal-body {
+    padding: 0;
+    overflow: hidden;
+  }
+  .case-graph-excluded-content {
+    min-height: 0;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
   .case-graph-excluded-tabs {
+    flex: 0 0 auto;
     display: flex;
     gap: 6px;
     padding: 12px 28px 0;
@@ -1862,6 +1873,7 @@
     font-size: 12px;
   }
   .case-graph-excluded-tools {
+    flex: 0 0 auto;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1881,6 +1893,7 @@
     height: 16px;
   }
   .case-graph-excluded-list {
+    flex: 1 1 auto;
     min-height: 0;
     max-height: none;
     overflow-y: auto;
@@ -1891,8 +1904,8 @@
     font-size: 13px;
   }
   .case-graph-excluded-trade-table-wrap {
+    flex: 1 1 auto;
     min-height: 0;
-    height: 100%;
     margin: 14px 28px 28px;
     overflow: auto;
     border: 1px solid var(--color-border-subtle);
@@ -2283,10 +2296,6 @@
   .case-graph-form-modal-body {
     display: grid;
     gap: 16px;
-  }
-  .case-graph-excluded-modal .app-modal-body {
-    display: grid;
-    gap: 12px;
   }
   .case-graph-investigation-group-modal .app-modal-body {
     display: grid;
@@ -3331,9 +3340,13 @@
     flex-direction: column;
     border: 1px solid var(--color-border-subtle);
     border-radius: var(--r-sm);
+    background-color: var(--color-bg-sunken);
     background:
+      linear-gradient(color-mix(in srgb, var(--color-border-subtle) 42%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in srgb, var(--color-border-subtle) 42%, transparent) 1px, transparent 1px),
       radial-gradient(circle at top, color-mix(in srgb, var(--color-accent) 8%, transparent), transparent 46%),
       linear-gradient(180deg, color-mix(in srgb, var(--color-bg-page) 90%, white), var(--color-bg-page));
+    background-size: 24px 24px, 24px 24px, auto, auto;
     overflow: hidden;
   }
   .case-graph-canvas-stage--full {

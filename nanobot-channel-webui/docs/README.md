@@ -16,6 +16,10 @@ case-graph 事实文档为准。
   - 当前长期设计基线
 - [product-capabilities.md](./product-capabilities.md)
   - 当前已经实现的产品功能说明
+- [product-requirements.md](./product-requirements.md)
+  - 结合当前产品文档、附件需求表和原版通用需求重新整理后的当前需求口径
+- [public-security-business-requirements.md](./public-security-business-requirements.md)
+  - 面向公安局信息科负责人和业务领导的正式建设需求说明，包含建设背景、业务目标和创新点凝练
 - [case-audit-amount-recognition.md](./case-audit-amount-recognition.md)
   - 涉诈资金审计金额认定逻辑、最低可认定、余额可包含和排除关联的通俗说明
 - [case-audit/README.md](./case-audit/README.md)

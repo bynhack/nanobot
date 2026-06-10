@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any, Mapping
 
-from .graph_state_types import STEP_SCHEMA_VERSION, legacy_graph_to_document, normalize_graph_document, now_iso
+from .graph_state_types import STEP_SCHEMA_VERSION, legacy_graph_to_document, normalize_graph_document, normalize_layout, now_iso
 
 
 class GraphRepository:
@@ -125,16 +126,40 @@ class GraphRepository:
         case_id: str,
         graph_id: str,
         node_positions: dict[str, Any],
+        position_meta: dict[str, Any] | None = None,
+        group_layout: dict[str, Any] | None = None,
         viewport: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         graph_dir = self.graph_dir(case_id, graph_id)
         current = self.load_current(case_id, graph_id)
         graph = dict(current["graph"])
         previous_layout = dict(graph.get("layout") or {})
-        graph["layout"] = {
+        next_group_layout = dict(group_layout or previous_layout.get("groupLayout") or {})
+        next_groups = []
+        for group in graph.get("investigationGroups") or []:
+            if not isinstance(group, dict):
+                continue
+            group_id = str(group.get("id") or "").strip()
+            group_state = next_group_layout.get(group_id) if group_id else None
+            collapsed_position = group_state.get("collapsedPosition") if isinstance(group_state, dict) else None
+            if isinstance(collapsed_position, dict):
+                try:
+                    x = float(collapsed_position.get("x"))
+                    y = float(collapsed_position.get("y"))
+                except (TypeError, ValueError):
+                    x = math.nan
+                    y = math.nan
+                if math.isfinite(x) and math.isfinite(y):
+                    next_groups.append({**group, "x": x, "y": y})
+                    continue
+            next_groups.append(group)
+        graph["investigationGroups"] = next_groups
+        graph["layout"] = normalize_layout({
             "nodePositions": dict(node_positions),
+            "positionMeta": dict(position_meta or previous_layout.get("positionMeta") or {}),
+            "groupLayout": next_group_layout,
             "viewport": dict(viewport or previous_layout.get("viewport") or {}),
-        }
+        }, graph.get("nodes") or [])
         stored_facts = self._merge_trade_facts(case_id, graph_id, self._trade_facts_from_graph(graph))
         next_current = normalize_graph_document({
             **current,

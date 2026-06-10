@@ -490,6 +490,7 @@ class WebUIChannel(BaseChannel):
         app.router.add_post("/api/case-graph/relation/summary-selection", self._handle_case_graph_relation_summary_selection)
         app.router.add_post("/api/case-graph/relation/exclude-node", self._handle_case_graph_relation_exclude_node)
         app.router.add_post("/api/case-graph/relation/restore-node", self._handle_case_graph_relation_restore_node)
+        app.router.add_post("/api/case-graph/relation/restore-nodes", self._handle_case_graph_relation_restore_nodes)
         app.router.add_post("/api/case-graph/relation/investigation-group", self._handle_case_graph_relation_investigation_group)
         app.router.add_post("/api/case-graph/relation/manual-node", self._handle_case_graph_relation_manual_node)
         app.router.add_post("/api/case-graph/relation/manual-trade", self._handle_case_graph_relation_manual_trade)
@@ -1511,6 +1512,41 @@ class WebUIChannel(BaseChannel):
             return web.json_response({"error": f"恢复节点失败: {exc}"}, status=502)
         return web.json_response(result)
 
+    async def _handle_case_graph_relation_restore_nodes(self, request: Any) -> Any:
+        from aiohttp import web
+
+        allowed, resp, _user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+
+        payload, error = await _read_json_object(request)
+        if error is not None:
+            return error
+        assert payload is not None
+
+        try:
+            _require_text_field(payload, "graphId")
+            _require_text_field(payload, "caseId")
+            if not isinstance(payload.get("nodeIds"), list) or not [
+                str(node_id or "").strip() for node_id in payload.get("nodeIds") if str(node_id or "").strip()
+            ]:
+                raise ValueError("nodeIds")
+        except ValueError as exc:
+            return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
+
+        try:
+            result = await asyncio.to_thread(
+                self._case_graph_relation_service.restore_nodes,
+                dict(payload),
+            )
+        except ValueError as exc:
+            return web.json_response({"error": f"缺少或无效的必要字段: {exc.args[0]}"}, status=400)
+        except FileNotFoundError:
+            return web.json_response({"error": "图不存在或还没有可恢复的图数据"}, status=404)
+        except Exception as exc:
+            return web.json_response({"error": f"恢复节点失败: {exc}"}, status=502)
+        return web.json_response(result)
+
     async def _handle_case_graph_relation_investigation_group(self, request: Any) -> Any:
         from aiohttp import web
 
@@ -1728,6 +1764,8 @@ class WebUIChannel(BaseChannel):
         if not isinstance(node_positions, dict):
             return web.json_response({"error": "nodePositions 必须是对象"}, status=400)
         viewport = payload.get("viewport") if isinstance(payload.get("viewport"), dict) else {}
+        position_meta = payload.get("positionMeta") if isinstance(payload.get("positionMeta"), dict) else {}
+        group_layout = payload.get("groupLayout") if isinstance(payload.get("groupLayout"), dict) else {}
         graph_name = str(payload.get("graphName") or "").strip()
         try:
             graph = await asyncio.to_thread(
@@ -1736,6 +1774,8 @@ class WebUIChannel(BaseChannel):
                 graph_id=graph_id,
                 graph_name=graph_name,
                 node_positions=dict(node_positions),
+                position_meta=dict(position_meta),
+                group_layout=dict(group_layout),
                 viewport=dict(viewport),
             )
         except FileNotFoundError:
@@ -1763,12 +1803,16 @@ class WebUIChannel(BaseChannel):
         if not isinstance(node_positions, dict):
             return web.json_response({"error": "nodePositions 必须是对象"}, status=400)
         viewport = payload.get("viewport") if isinstance(payload.get("viewport"), dict) else {}
+        position_meta = payload.get("positionMeta") if isinstance(payload.get("positionMeta"), dict) else {}
+        group_layout = payload.get("groupLayout") if isinstance(payload.get("groupLayout"), dict) else {}
         try:
             graph = await asyncio.to_thread(
                 self._case_graph_state_service.update_latest_step_layout,
                 case_id=case_id,
                 graph_id=graph_id,
                 node_positions=dict(node_positions),
+                position_meta=dict(position_meta),
+                group_layout=dict(group_layout),
                 viewport=dict(viewport),
             )
         except FileNotFoundError:

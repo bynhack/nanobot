@@ -309,9 +309,42 @@ class RelationGraphService:
         graph = self._storage.load_graph(case_id, graph_id)
         options = dict(payload.get("options") or {}) if isinstance(payload.get("options"), dict) else {}
         graph = self._apply_node_positions(graph, options)
+        return self._restore_node_ids(case_id, graph_id, graph, [node_id], payload, options)
+
+    def restore_nodes(self, payload: dict[str, Any]) -> dict[str, Any]:
+        case_id = str(payload.get("caseId") or "").strip()
+        graph_id = str(payload.get("graphId") or "").strip()
+        raw_node_ids = payload.get("nodeIds")
+        node_ids = [
+            str(node_id or "").strip()
+            for node_id in raw_node_ids
+            if str(node_id or "").strip()
+        ] if isinstance(raw_node_ids, list) else []
+        if not case_id:
+            raise ValueError("caseId")
+        if not graph_id:
+            raise ValueError("graphId")
+        if not node_ids:
+            raise ValueError("nodeIds")
+        graph = self._storage.load_graph(case_id, graph_id)
+        options = dict(payload.get("options") or {}) if isinstance(payload.get("options"), dict) else {}
+        graph = self._apply_node_positions(graph, options)
+        request = {**payload, "caseId": case_id, "graphId": graph_id, "nodeIds": node_ids}
+        return self._restore_node_ids(case_id, graph_id, graph, node_ids, request, options)
+
+    def _restore_node_ids(
+        self,
+        case_id: str,
+        graph_id: str,
+        graph: dict[str, Any],
+        node_ids: list[str],
+        request: dict[str, Any],
+        options: dict[str, Any],
+    ) -> dict[str, Any]:
+        restore_set = {node_id for node_id in node_ids if node_id}
         excluded_nodes = [
             item for item in graph.get("excludedNodes") or []
-            if isinstance(item, dict) and str(item.get("nodeId") or "").strip() != node_id
+            if isinstance(item, dict) and str(item.get("nodeId") or "").strip() not in restore_set
         ]
         graph = self._apply_excluded_nodes(graph, excluded_nodes)
         self._sync_snapshot_graph(graph_id, graph, trade_cards=self._accounts_from_graph(graph))
@@ -319,9 +352,9 @@ class RelationGraphService:
             case_id=case_id,
             graph_id=graph_id,
             step_type="manual_restore_node",
-            request={"caseId": case_id, "graphId": graph_id, "nodeId": node_id, "options": options},
+            request={**request, "options": options},
             graph=graph,
-            delta={"addedNodes": [], "addedEdges": [], "updatedNodes": [{"nodeId": node_id}], "updatedEdges": []},
+            delta={"addedNodes": [], "addedEdges": [], "updatedNodes": [{"nodeId": node_id} for node_id in node_ids], "updatedEdges": []},
             summary={"excludedNodeCount": len(excluded_nodes)},
         )
 

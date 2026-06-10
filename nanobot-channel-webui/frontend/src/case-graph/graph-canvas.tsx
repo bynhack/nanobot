@@ -6,7 +6,7 @@ import type { Graph as G6Graph } from '@antv/g6';
 import { Modal } from '../components/ui/modal';
 import { Select } from '../components/ui/select';
 import { buildCaseGraphViewModel, formatCompactAmount } from './graph-analysis';
-import { computeCaseGraphLayout, type CaseGraphLayoutMode } from './graph-layout';
+import { computeCaseGraphLayout } from './graph-layout';
 import { detectCaseGraphCluePatterns, type CaseGraphCluePatternMatch } from './clue-patterns';
 import type { CaseGraphConversationFocus, CaseGraphData, CaseGraphExcludedNode, CaseGraphNode, CaseGraphReplayTimeline, CaseGraphTradeCard } from './types';
 
@@ -24,7 +24,7 @@ interface GraphCanvasProps {
   replayTimeline?: CaseGraphReplayTimeline;
   showCanvasTools?: boolean;
   preferPersistedPositions?: boolean;
-  layoutMode?: CaseGraphLayoutMode;
+  layoutMode?: string;
   emptyMessage?: string;
   onChooseInvestigationOrigin: () => void;
   onCompleteGraphRelations: () => void;
@@ -52,7 +52,7 @@ interface GraphCanvasProps {
   onNodePositionsChange?: (positions: Record<string, { x: number; y: number }>, reason: NodePositionsChangeReason) => void;
 }
 
-type NodePositionsChangeReason = 'layout' | 'drag';
+type NodePositionsChangeReason = 'drag';
 
 interface CanvasContextMenuState {
   x: number;
@@ -100,6 +100,14 @@ interface GraphRenderTransition {
   newNodeIds: Set<string>;
   newEdgeIds: Set<string>;
   movedNodeIds: Set<string>;
+}
+
+interface GraphEdgeLaneStyle {
+  laneIndex: number;
+  laneCount: number;
+  curveOffset: number;
+  curvePosition: number | number[];
+  labelOffsetY: number;
 }
 
 interface ExportBounds {
@@ -210,6 +218,8 @@ const LOCAL_COMPACTION_COLUMN_TOLERANCE = 48;
 const NODE_RIGHT_CLICK_CONTEXT_MENU_ENABLED = false;
 const EXPORT_PNG_PADDING = 40;
 const EXPORT_PNG_BACKGROUND = '#ffffff';
+const EXPORT_GRID_SIZE = 24;
+const EXPORT_GRID_STROKE = 'rgba(203, 213, 225, 0.42)';
 const CLUE_PATTERN_HULL_STYLES = [
   { fill: '#2563eb', stroke: '#2563eb' },
   { fill: '#0f766e', stroke: '#0f766e' },
@@ -264,14 +274,7 @@ const GRAPH_EDGE_ANIMATION = {
   update: 'path-in',
   exit: 'fade',
 };
-const EXPORT_NODE_ROLE_PALETTE: Record<string, { color: string; border: string; fill: string }> = {
-  core: { color: '#315fd1', border: '#8fb0ff', fill: '#eef4ff' },
-  bridge: { color: '#147867', border: '#79c6b7', fill: '#edf8f6' },
-  upstream: { color: '#476aa9', border: '#90abd8', fill: '#f0f5ff' },
-  downstream: { color: '#a4662b', border: '#d7b086', fill: '#fff5ea' },
-  transit: { color: '#64748b', border: '#b8c3d3', fill: '#f4f6f9' },
-  peripheral: { color: '#7b8798', border: '#d5deec', fill: '#ffffff' },
-};
+const EXPORT_NODE_SHADOW_PADDING = 24;
 export function GraphCanvas({
   graphData,
   graphContent,
@@ -286,7 +289,7 @@ export function GraphCanvas({
   replayTimeline,
   showCanvasTools = true,
   preferPersistedPositions = true,
-  layoutMode = 'investigation',
+  layoutMode = 'incremental',
   emptyMessage,
   onChooseInvestigationOrigin,
   onCompleteGraphRelations,
@@ -439,6 +442,7 @@ export function GraphCanvas({
     [graphData?.realityRelations],
   );
   const renderEdges = useMemo(() => [...renderMoneyEdges, ...realityEdges], [realityEdges, renderMoneyEdges]);
+  const renderEdgeLaneStyles = useMemo(() => buildParallelEdgeLaneStyles(renderEdges), [renderEdges]);
   const edgeLookup = useMemo(() => new Map(renderEdges.map((edge) => [resolveEdgeId(edge), edge])), [renderEdges]);
   const renderNodeLookup = useMemo(
     () => buildRenderNodeLookup(nodeLookup, investigationGroups),
@@ -519,14 +523,7 @@ export function GraphCanvas({
   useEffect(() => {
     collapsedGroupDragIgnoredNodeIdsRef.current = collapsedGroupLayoutState.dragIgnoredNodeIds;
   }, [collapsedGroupLayoutState.dragIgnoredNodeIds]);
-  const displayGraphLayout = useMemo(
-    () => compactLayoutAfterVisibleNodeRemoval(graphLayout, nodes, graphRenderSnapshotRef.current, {
-      hiddenNodeIds: collapsedGroupLayoutState.hiddenNodeIds,
-      nodeHeight: NODE_HEIGHT,
-      rowGap: ROW_GAP,
-    }),
-    [collapsedGroupLayoutState, graphLayout, nodes],
-  );
+  const displayGraphLayout = graphLayout;
 
   const activeNeighborhood = useMemo(() => {
     if (cluePatternsVisible && selectedCluePattern) {
@@ -686,17 +683,6 @@ export function GraphCanvas({
   useEffect(() => {
     replayTimelineRef.current = replayTimeline;
   }, [replayTimeline]);
-
-  useEffect(() => {
-    if (!onNodePositionsChange || !displayGraphLayout.size) {
-      return;
-    }
-    const positions: Record<string, { x: number; y: number }> = {};
-    for (const [nodeId, point] of displayGraphLayout) {
-      positions[nodeId] = { x: point.x, y: point.y };
-    }
-    onNodePositionsChange(positions, 'layout');
-  }, [displayGraphLayout, onNodePositionsChange]);
 
   useEffect(() => {
     nodesLengthRef.current = nodes.length;
@@ -876,8 +862,9 @@ export function GraphCanvas({
             neighborhood,
             nextFlowNodeId,
             nextActiveEdgeId,
+            renderEdgeLaneStyles.get(edgeId),
           ),
-          style: buildEdgeFlowStyle(edge, nextFlowNodeId),
+          style: buildEdgeFlowStyle(edge, nextFlowNodeId, renderEdgeLaneStyles.get(edgeId)),
         };
       })
       .filter((update): update is { id: string; type: string; data: ReturnType<typeof buildEdgeRenderData>; style: ReturnType<typeof buildEdgeFlowStyle> } => Boolean(update));
@@ -1158,6 +1145,8 @@ export function GraphCanvas({
             lineWidth: (datum: any) => getMoneyEdgeStyle(Number(datum?.data?.tradeAmount ?? 0), datum?.data).lineWidth,
             opacity: (datum: any) => getMoneyEdgeStyle(Number(datum?.data?.tradeAmount ?? 0), datum?.data).opacity,
             lineDash: (datum: any) => (datum?.data?.edgeKind === 'reality' ? [6, 7] : datum?.data?.isExcluded ? [8, 6] : []),
+            curveOffset: (datum: any) => datum?.data?.curveOffset ?? 0,
+            curvePosition: (datum: any) => datum?.data?.curvePosition ?? 0.5,
             flowEnabled: (datum: any) => Boolean(datum?.data?.isFlowAnimated),
             flowGlowColor: (datum: any) => datum?.data?.flowGlowColor ?? FLOW_GLOW_OUT_COLOR,
             sourcePort: NODE_OUT_PORT,
@@ -1169,6 +1158,7 @@ export function GraphCanvas({
             label: true,
             labelAutoRotate: false,
             labelPlacement: 'center',
+            labelOffsetY: (datum: any) => datum?.data?.labelOffsetY ?? 0,
             labelText: (datum: any) => buildEdgeLabel(datum.data),
             labelFontSize: 11,
             labelFontWeight: 700,
@@ -1546,7 +1536,7 @@ export function GraphCanvas({
       onSelectionChange: syncSelectedNodeIdsFromGraph,
       onOfficialStateChange: syncOfficialStateClasses,
       isInteractionSuppressed: () => officialInteractionSuppressedRef.current,
-      canDragElement: (event: any) => !replayModeRef.current && !investigationGroupLookupRef.current.has(resolveEventId(event) ?? ''),
+      canDragElement: () => !replayModeRef.current,
       canBrushSelect: () => !replayModeRef.current,
       onDragFinish: () => {
         suppressNextCanvasClickRef.current = true;
@@ -1638,12 +1628,14 @@ export function GraphCanvas({
           target: edge.target,
           type: FLOW_EDGE_TYPE,
           ...(revealStates ? { states: revealStates } : {}),
-          style: buildEdgeFlowStyle(edge, hoverFlowNodeIdRef.current),
+          style: buildEdgeFlowStyle(edge, hoverFlowNodeIdRef.current, renderEdgeLaneStyles.get(edgeId)),
           data: buildEdgeRenderData(
             edge,
             renderEdgeMetricsById.get(edgeId),
             activeNeighborhoodRef.current,
             hoverFlowNodeIdRef.current,
+            null,
+            renderEdgeLaneStyles.get(edgeId),
           ),
         };
       }),
@@ -1693,6 +1685,7 @@ export function GraphCanvas({
       ) {
         return;
       }
+      removeStaleInvestigationGroupCombos(graph, graphPayload.combos.map((combo) => combo.id));
       await expandRenderedInvestigationGroups(graph, groupsWithMemberChanges);
       graph.setData(graphPayload);
       await graph.render();
@@ -2797,8 +2790,7 @@ async function mergeGraphPngWithHtmlNodes(graph: G6Graph, graphDataUrl: string):
   if (!context) {
     return graphDataUrl;
   }
-  context.fillStyle = EXPORT_PNG_BACKGROUND;
-  context.fillRect(0, 0, width, height);
+  drawExportBackgroundGrid(context, width, height, scale);
   context.drawImage(
     image,
     (graphBounds.minX - totalBounds.minX) * scale,
@@ -2807,10 +2799,30 @@ async function mergeGraphPngWithHtmlNodes(graph: G6Graph, graphDataUrl: string):
   context.save();
   context.scale(scale, scale);
   for (const card of nodeCards) {
-    drawExportNodeCard(context, card, totalBounds);
+    await drawExportNodeCard(context, card, totalBounds);
   }
   context.restore();
   return canvas.toDataURL('image/png');
+}
+
+function drawExportBackgroundGrid(context: CanvasRenderingContext2D, width: number, height: number, scale: number): void {
+  context.fillStyle = EXPORT_PNG_BACKGROUND;
+  context.fillRect(0, 0, width, height);
+  const step = Math.max(1, EXPORT_GRID_SIZE * scale);
+  context.save();
+  context.strokeStyle = EXPORT_GRID_STROKE;
+  context.lineWidth = Math.max(1, scale);
+  context.beginPath();
+  for (let x = 0; x <= width; x += step) {
+    context.moveTo(Math.round(x) + 0.5, 0);
+    context.lineTo(Math.round(x) + 0.5, height);
+  }
+  for (let y = 0; y <= height; y += step) {
+    context.moveTo(0, Math.round(y) + 0.5);
+    context.lineTo(width, Math.round(y) + 0.5);
+  }
+  context.stroke();
+  context.restore();
 }
 
 function loadImageFromDataUrl(dataUrl: string): Promise<HTMLImageElement> {
@@ -2917,145 +2929,187 @@ function createBounds(minX: number, minY: number, maxX: number, maxY: number): E
   };
 }
 
-function drawExportNodeCard(context: CanvasRenderingContext2D, card: ExportNodeCard, exportBounds: ExportBounds): void {
-  const data = card.data;
+async function drawExportNodeCard(context: CanvasRenderingContext2D, card: ExportNodeCard, exportBounds: ExportBounds): Promise<void> {
   const x = card.x - exportBounds.minX - NODE_WIDTH / 2;
   const y = card.y - exportBounds.minY - NODE_HEIGHT / 2;
-  const roleStyle = data.isExcluded
-    ? { color: '#8a94a6', border: '#b8c0cc', fill: '#f4f6f9' }
-    : EXPORT_NODE_ROLE_PALETTE.peripheral;
-  context.save();
-  context.globalAlpha = data.isDimmed && !data.isRelationHighlighted && !data.isActive && !data.isSelected ? 0.24 : data.isExcluded ? 0.58 : 1;
-  drawRoundedRect(context, x, y, NODE_WIDTH, NODE_HEIGHT, 8, roleStyle.fill, roleStyle.border, data.isExcluded ? [6, 5] : undefined);
-  if (data.isSelected || data.isActive || data.isRelationHighlighted || data.isFocus || data.isSeed) {
-    context.setLineDash([]);
-    context.strokeStyle = data.isSelected ? '#2563eb' : '#1d4ed8';
-    context.lineWidth = data.isSelected ? 2.5 : 1.8;
-    drawRoundedPath(context, x - 1.5, y - 1.5, NODE_WIDTH + 3, NODE_HEIGHT + 3, 9);
-    context.stroke();
-  }
-
-  const badgeLabel = data.isExcluded ? '排' : data.roleBadge;
-  const hasBadge = Boolean(badgeLabel);
-  if (hasBadge) {
-    const badgeX = x + 12;
-    const badgeY = y + 10;
-    drawRoundedRect(context, badgeX, badgeY, 34, 34, 6, mixWithWhite(roleStyle.color, 0.88), mixWithWhite(roleStyle.color, 0.74));
-    context.fillStyle = roleStyle.color;
-    context.font = '800 12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    context.fillText(badgeLabel, badgeX + 17, badgeY + 17);
-  }
-
-  const copyX = hasBadge ? x + 58 : x + 14;
-  const titleY = y + 20;
-  context.textAlign = 'left';
-  context.textBaseline = 'alphabetic';
-  context.fillStyle = '#111827';
-  context.font = '700 12px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  const roleWidth = data.roleLabel ? measureRolePillWidth(context, data.roleLabel) : 0;
-  const titleWidth = NODE_WIDTH - (copyX - x) - 12 - (roleWidth ? roleWidth + 8 : 0);
-  drawEllipsisText(context, data.isExcluded ? `已排除 · ${data.title}` : data.title, copyX, titleY, titleWidth);
-  if (data.roleLabel) {
-    drawRolePill(context, x + NODE_WIDTH - 12 - roleWidth, y + 9, roleWidth, data.roleLabel, roleStyle.color);
-  }
-
-  context.fillStyle = '#667085';
-  context.font = '10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  drawEllipsisText(context, data.subtitle, copyX, y + 40, NODE_WIDTH - (copyX - x) - 12);
-  context.fillStyle = '#8a94a6';
-  drawEllipsisText(context, data.receivedText, copyX, y + 62, 74);
-  drawEllipsisText(context, data.sentText, copyX + 86, y + 62, 74);
-  context.restore();
+  const image = await loadImageFromDataUrl(buildExportNodeSvgDataUrl(card.data));
+  context.drawImage(
+    image,
+    x - EXPORT_NODE_SHADOW_PADDING,
+    y - EXPORT_NODE_SHADOW_PADDING,
+    NODE_WIDTH + EXPORT_NODE_SHADOW_PADDING * 2,
+    NODE_HEIGHT + EXPORT_NODE_SHADOW_PADDING * 2,
+  );
 }
 
-function drawRolePill(context: CanvasRenderingContext2D, x: number, y: number, width: number, label: string, color: string): void {
-  drawRoundedRect(context, x, y, width, 18, 9, mixWithWhite(color, 0.88));
-  context.fillStyle = color;
-  context.font = '700 10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  context.textAlign = 'center';
-  context.textBaseline = 'middle';
-  context.fillText(label, x + width / 2, y + 9);
+function buildExportNodeSvgDataUrl(data: GraphNodeRenderData): string {
+  const padding = EXPORT_NODE_SHADOW_PADDING;
+  const width = NODE_WIDTH + padding * 2;
+  const height = NODE_HEIGHT + padding * 2;
+  const markup = renderNodeMarkup(data);
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <foreignObject x="${padding}" y="${padding}" width="${NODE_WIDTH}" height="${NODE_HEIGHT}">
+        <div xmlns="http://www.w3.org/1999/xhtml">
+          <style>${exportNodeCss()}</style>
+          ${markup}
+        </div>
+      </foreignObject>
+    </svg>
+  `;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-function measureRolePillWidth(context: CanvasRenderingContext2D, label: string): number {
-  context.save();
-  context.font = '700 10px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-  const width = Math.ceil(context.measureText(label).width) + 14;
-  context.restore();
-  return Math.max(34, width);
-}
-
-function drawEllipsisText(context: CanvasRenderingContext2D, text: string, x: number, y: number, maxWidth: number): void {
-  if (context.measureText(text).width <= maxWidth) {
-    context.fillText(text, x, y);
-    return;
-  }
-  let next = text;
-  while (next.length > 1 && context.measureText(`${next}...`).width > maxWidth) {
-    next = next.slice(0, -1);
-  }
-  context.fillText(`${next}...`, x, y);
-}
-
-function drawRoundedRect(
-  context: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  radius: number,
-  fill: string,
-  stroke?: string,
-  lineDash?: number[],
-): void {
-  context.save();
-  context.setLineDash(lineDash ?? []);
-  drawRoundedPath(context, x, y, width, height, radius);
-  context.fillStyle = fill;
-  context.fill();
-  if (stroke) {
-    context.strokeStyle = stroke;
-    context.lineWidth = 1;
-    context.stroke();
-  }
-  context.restore();
-}
-
-function drawRoundedPath(context: CanvasRenderingContext2D, x: number, y: number, width: number, height: number, radius: number): void {
-  const safeRadius = Math.min(radius, width / 2, height / 2);
-  context.beginPath();
-  context.moveTo(x + safeRadius, y);
-  context.lineTo(x + width - safeRadius, y);
-  context.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
-  context.lineTo(x + width, y + height - safeRadius);
-  context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
-  context.lineTo(x + safeRadius, y + height);
-  context.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
-  context.lineTo(x, y + safeRadius);
-  context.quadraticCurveTo(x, y, x + safeRadius, y);
-  context.closePath();
-}
-
-function mixWithWhite(hexColor: string, whiteRatio: number): string {
-  const rgb = parseHexColor(hexColor);
-  if (!rgb) return hexColor;
-  const ratio = clampNumber(whiteRatio, 0, 1);
-  const red = Math.round(rgb.red * (1 - ratio) + 255 * ratio);
-  const green = Math.round(rgb.green * (1 - ratio) + 255 * ratio);
-  const blue = Math.round(rgb.blue * (1 - ratio) + 255 * ratio);
-  return `rgb(${red}, ${green}, ${blue})`;
-}
-
-function parseHexColor(hexColor: string): { red: number; green: number; blue: number } | null {
-  const normalized = hexColor.trim().replace(/^#/, '');
-  if (!/^[0-9a-fA-F]{6}$/.test(normalized)) return null;
-  return {
-    red: Number.parseInt(normalized.slice(0, 2), 16),
-    green: Number.parseInt(normalized.slice(2, 4), 16),
-    blue: Number.parseInt(normalized.slice(4, 6), 16),
-  };
+function exportNodeCss(): string {
+  return `
+    .case-graph-g6-node {
+      position: relative;
+      box-sizing: border-box;
+      width: 248px;
+      height: 84px;
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr);
+      gap: 12px;
+      align-items: start;
+      padding: 10px 12px;
+      border: 1px solid #d5deec;
+      border-radius: 8px;
+      background: #ffffff;
+      box-shadow: 0 8px 22px rgba(15, 23, 42, 0.1);
+      color: #64748b;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .case-graph-g6-node.role-peripheral {
+      color: #7b8798;
+      border-color: #d5deec;
+    }
+    .case-graph-g6-node.is-cash-node {
+      color: #0f766e;
+      border-color: #7dd3c7;
+      background: linear-gradient(180deg, #f7fffc 0%, #ecfdf5 100%);
+      box-shadow: 0 12px 26px rgba(15, 118, 110, 0.12);
+    }
+    .case-graph-g6-node.is-cash-node .case-graph-g6-node-badge {
+      background: #ddfbef;
+      border-color: #99e7d6;
+    }
+    .case-graph-g6-node.is-cash-node .case-graph-g6-node-meta {
+      color: #4f6f69;
+    }
+    .case-graph-g6-node.is-investigation-group {
+      color: #2563eb;
+      border-color: #7aa2ff;
+      background: linear-gradient(180deg, #f8fbff 0%, #eef6ff 100%);
+      box-shadow: 0 12px 28px rgba(37, 99, 235, 0.14);
+    }
+    .case-graph-g6-node.is-investigation-group .case-graph-g6-node-badge {
+      background: #e8f1ff;
+      border-color: #b8cdfd;
+    }
+    .case-graph-g6-node.is-investigation-group .case-graph-g6-node-meta {
+      color: #52637d;
+    }
+    .case-graph-g6-node.has-no-badge {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .case-graph-g6-node.is-focus,
+    .case-graph-g6-node.is-seed {
+      box-shadow: 0 14px 32px rgba(15, 23, 42, 0.16);
+    }
+    .case-graph-g6-node.is-active,
+    .case-graph-g6-node.is-relation-highlight,
+    .case-graph-g6-node.is-g6-highlight {
+      opacity: 1;
+      border-color: #1d4ed8;
+      box-shadow: 0 0 0 2px rgba(29, 78, 216, 0.18), 0 12px 28px rgba(15, 23, 42, 0.14);
+      transform: translateY(-1px);
+    }
+    .case-graph-g6-node.is-selected {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.22), 0 0 0 1px #2563eb inset, 0 14px 30px rgba(15, 23, 42, 0.14);
+      transform: translateY(-1px);
+    }
+    .case-graph-g6-node.is-dimmed,
+    .case-graph-g6-node.is-g6-dim:not(.is-g6-highlight) {
+      opacity: 0.24;
+    }
+    .case-graph-g6-node.is-excluded {
+      color: #8a94a6;
+      border-style: dashed;
+      border-color: #b8c0cc;
+      background: #f4f6f9;
+      box-shadow: none;
+      opacity: 0.58;
+    }
+    .case-graph-g6-node.is-excluded .case-graph-g6-node-role,
+    .case-graph-g6-node.is-excluded .case-graph-g6-node-meta {
+      color: #8a94a6;
+    }
+    .case-graph-g6-node-badge {
+      width: 34px;
+      height: 34px;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: color-mix(in srgb, currentColor 12%, white);
+      border: 1px solid color-mix(in srgb, currentColor 26%, white);
+    }
+    .case-graph-g6-node-badge span {
+      color: currentColor;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .case-graph-g6-node-copy {
+      min-width: 0;
+    }
+    .case-graph-g6-node-head {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .case-graph-g6-node-copy strong {
+      flex: 1 1 auto;
+      min-width: 0;
+      color: #111827;
+      font-size: 12px;
+      line-height: 1.35;
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .case-graph-g6-node-role {
+      flex: 0 0 auto;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: color-mix(in srgb, currentColor 12%, white);
+      color: currentColor;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .case-graph-g6-node-copy p {
+      margin: 4px 0 0;
+      color: #475569;
+      font-size: 10px;
+      line-height: 1.35;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .case-graph-g6-node-meta {
+      display: flex;
+      gap: 12px;
+      margin-top: 7px;
+      color: #8a94a6;
+      font-size: 10px;
+      line-height: 1.35;
+    }
+  `;
 }
 
 function downloadDataUrl(dataUrl: string, filename: string): void {
@@ -3233,12 +3287,15 @@ function buildEdgeRenderData(
   } | null,
   flowNodeId: string | null = null,
   activeEdgeId: string | null = null,
+  laneStyle: GraphEdgeLaneStyle = DEFAULT_EDGE_LANE_STYLE,
 ) {
   const edgeId = resolveEdgeId(edge);
   const flowDirection = resolveNodeFlowDirection(edge, flowNodeId);
+  const laneData = buildEdgeLaneRenderData(laneStyle);
   if (edge.edgeKind === 'reality') {
     return {
       edgeKind: 'reality',
+      ...laneData,
       tradeCount: 0,
       tradeAmount: 0,
       relationType: edge.relationType,
@@ -3253,6 +3310,7 @@ function buildEdgeRenderData(
   }
   return {
     edgeKind: 'money',
+    ...laneData,
     flowDirection,
     flowColor: flowDirection === 'in' ? FLOW_EDGE_IN_COLOR : flowDirection === 'out' ? FLOW_EDGE_OUT_COLOR : undefined,
     flowGlowColor: flowDirection === 'in' ? FLOW_GLOW_IN_COLOR : flowDirection === 'out' ? FLOW_GLOW_OUT_COLOR : undefined,
@@ -3270,11 +3328,36 @@ function buildEdgeRenderData(
   };
 }
 
-function buildEdgeFlowStyle(edge: CaseGraphData['edges'][number], flowNodeId: string | null = null) {
+function buildEdgeFlowStyle(
+  edge: CaseGraphData['edges'][number],
+  flowNodeId: string | null = null,
+  laneStyle: GraphEdgeLaneStyle = DEFAULT_EDGE_LANE_STYLE,
+) {
   const flowDirection = resolveNodeFlowDirection(edge, flowNodeId);
   return {
+    curveOffset: laneStyle.curveOffset,
+    curvePosition: laneStyle.curvePosition,
+    labelOffsetY: laneStyle.labelOffsetY,
     flowEnabled: Boolean(flowDirection),
     flowGlowColor: flowDirection === 'in' ? FLOW_GLOW_IN_COLOR : FLOW_GLOW_OUT_COLOR,
+  };
+}
+
+const DEFAULT_EDGE_LANE_STYLE: GraphEdgeLaneStyle = {
+  laneIndex: 0,
+  laneCount: 1,
+  curveOffset: 0,
+  curvePosition: 0.5,
+  labelOffsetY: 0,
+};
+
+function buildEdgeLaneRenderData(laneStyle: GraphEdgeLaneStyle) {
+  return {
+    laneIndex: laneStyle.laneIndex,
+    laneCount: laneStyle.laneCount,
+    curveOffset: laneStyle.curveOffset,
+    curvePosition: laneStyle.curvePosition,
+    labelOffsetY: laneStyle.labelOffsetY,
   };
 }
 
@@ -3588,6 +3671,10 @@ export function buildRenderedEdgeMetricsForTest(
   }).edgeMetricsById;
 }
 
+export function buildParallelEdgeLaneStylesForTest(edges: CaseGraphData['edges']): Map<string, GraphEdgeLaneStyle> {
+  return buildParallelEdgeLaneStyles(edges);
+}
+
 export function resolveGraphEdgeTypeForTest(): string {
   return FLOW_EDGE_TYPE;
 }
@@ -3714,6 +3801,10 @@ export function shouldEmitFocusChangeForTest(previous: unknown, next: unknown): 
   return focusIdentityKey(previous as CaseGraphConversationFocus | null) !== focusIdentityKey(next as CaseGraphConversationFocus | null);
 }
 
+export function removeStaleInvestigationGroupCombosForTest(graph: G6Graph, nextComboIds: string[]): void {
+  removeStaleInvestigationGroupCombos(graph, nextComboIds);
+}
+
 export function resolveNodeSubtitleForTest(node: Partial<CaseGraphData['nodes'][number]>): string {
   return resolveNodeSubtitle(node as CaseGraphData['nodes'][number]);
 }
@@ -3782,6 +3873,63 @@ function collectNodeAccountIds(node: CaseGraphData['nodes'][number]): string[] {
 
 function resolveEdgeId(edge: CaseGraphData['edges'][number]): string {
   return String(edge.id || `${edge.source}->${edge.target}`).trim();
+}
+
+function buildParallelEdgeLaneStyles(edges: CaseGraphData['edges']): Map<string, GraphEdgeLaneStyle> {
+  const lanes = new Map<string, GraphEdgeLaneStyle>();
+  const edgesByPair = new Map<string, CaseGraphData['edges']>();
+  for (const edge of edges) {
+    const source = String(edge.source ?? edge.from ?? '').trim();
+    const target = String(edge.target ?? edge.to ?? '').trim();
+    if (!source || !target) continue;
+    const pairKey = source < target ? `${source}\u0000${target}` : `${target}\u0000${source}`;
+    const bucket = edgesByPair.get(pairKey) ?? [];
+    bucket.push(edge);
+    edgesByPair.set(pairKey, bucket);
+  }
+
+  for (const bucket of edgesByPair.values()) {
+    if (bucket.length === 1) {
+      lanes.set(resolveEdgeId(bucket[0]), DEFAULT_EDGE_LANE_STYLE);
+      continue;
+    }
+    const sortedEdges = [...bucket].sort(compareParallelEdges);
+    const offsets = buildParallelCurveOffsets(sortedEdges);
+    sortedEdges.forEach((edge, index) => {
+      const offset = offsets[index] ?? 0;
+      lanes.set(resolveEdgeId(edge), {
+        laneIndex: index,
+        laneCount: sortedEdges.length,
+        curveOffset: offset,
+        curvePosition: offset === 0 ? 0.5 : [0.28, 0.72],
+        labelOffsetY: offset === 0 ? 0 : offset > 0 ? -18 : 18,
+      });
+    });
+  }
+  return lanes;
+}
+
+function compareParallelEdges(left: CaseGraphData['edges'][number], right: CaseGraphData['edges'][number]): number {
+  const leftRank = left.edgeKind === 'reality' ? 1 : 0;
+  const rightRank = right.edgeKind === 'reality' ? 1 : 0;
+  if (leftRank !== rightRank) return leftRank - rightRank;
+  return resolveEdgeId(left).localeCompare(resolveEdgeId(right), 'zh-Hans-CN');
+}
+
+function buildParallelCurveOffsets(edges: CaseGraphData['edges']): number[] {
+  const hasMoneyEdge = edges.some((edge) => edge.edgeKind !== 'reality');
+  const offsets: number[] = [];
+  const outerOffsets = [38, -38, 64, -64, 90, -90];
+  let outerIndex = 0;
+  for (const edge of edges) {
+    if (hasMoneyEdge && edge.edgeKind !== 'reality' && !offsets.includes(0)) {
+      offsets.push(0);
+      continue;
+    }
+    offsets.push(outerOffsets[outerIndex] ?? (outerIndex % 2 === 0 ? 38 + outerIndex * 14 : -38 - outerIndex * 14));
+    outerIndex += 1;
+  }
+  return offsets;
 }
 
 function buildEdgeFocusPayload(
@@ -4037,6 +4185,21 @@ async function syncInvestigationGroupCollapseState(graph: G6Graph, groups: CaseG
     } catch {
       // G6 may ignore expand calls before a combo is fully mounted.
     }
+  }
+}
+
+function removeStaleInvestigationGroupCombos(graph: G6Graph, nextComboIds: string[]): void {
+  const nextComboIdSet = new Set(nextComboIds.map((id) => String(id || '').trim()).filter(Boolean));
+  const staleComboIds = ((graph as any).getComboData?.() ?? [])
+    .map((combo: { id?: string }) => String(combo.id || '').trim())
+    .filter((comboId: string) => comboId && !nextComboIdSet.has(comboId));
+  if (!staleComboIds.length) {
+    return;
+  }
+  try {
+    (graph as any).removeComboData?.(staleComboIds);
+  } catch {
+    // G6 setData will still receive the full next graph payload below.
   }
 }
 

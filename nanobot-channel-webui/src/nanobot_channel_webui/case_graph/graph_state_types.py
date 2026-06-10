@@ -55,7 +55,11 @@ def positive_int(value: Any, *, default: int) -> int:
 def normalize_layout(value: Any, nodes: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     raw = dict_value(value)
     raw_positions = dict_value(raw.get("nodePositions"))
+    raw_meta = dict_value(raw.get("positionMeta"))
+    raw_group_layout = dict_value(raw.get("groupLayout"))
     positions: dict[str, dict[str, float]] = {}
+    position_meta: dict[str, dict[str, Any]] = {}
+    group_layout: dict[str, dict[str, Any]] = {}
     allowed_node_ids = {
         node_id for node_id in (text(node.get("id")) for node in nodes or []) if node_id
     }
@@ -74,15 +78,66 @@ def normalize_layout(value: Any, nodes: list[dict[str, Any]] | None = None) -> d
         y = finite_number(node.get("y"))
         if node_id and x is not None and y is not None:
             positions.setdefault(node_id, {"x": x, "y": y})
+    for node_id, meta in raw_meta.items():
+        normalized_node_id = text(node_id)
+        if allowed_node_ids and normalized_node_id not in allowed_node_ids:
+            continue
+        raw_item = dict_value(meta)
+        source = text(raw_item.get("source"))
+        if normalized_node_id and source in {"initial", "generated", "manual", "group", "restored"}:
+            item: dict[str, Any] = {"source": source}
+            if bool(raw_item.get("locked")):
+                item["locked"] = True
+            anchor_node_ids = text_list(raw_item.get("anchorNodeIds"))
+            if anchor_node_ids:
+                item["anchorNodeIds"] = anchor_node_ids
+            updated_at = text(raw_item.get("updatedAt"))
+            if updated_at:
+                item["updatedAt"] = updated_at
+            position_meta[normalized_node_id] = item
+    for group_id, group_state in raw_group_layout.items():
+        normalized_group_id = text(group_id)
+        raw_state = dict_value(group_state)
+        collapsed_position = normalize_point(raw_state.get("collapsedPosition"))
+        raw_member_positions = dict_value(raw_state.get("memberPositionsBeforeCollapse"))
+        member_positions: dict[str, dict[str, float]] = {}
+        for node_id, point in raw_member_positions.items():
+            normalized_node_id = text(node_id)
+            if allowed_node_ids and normalized_node_id not in allowed_node_ids:
+                continue
+            normalized_point = normalize_point(point)
+            if normalized_node_id and normalized_point:
+                member_positions[normalized_node_id] = normalized_point
+        if normalized_group_id and collapsed_position:
+            item = {
+                "groupId": text(raw_state.get("groupId")) or normalized_group_id,
+                "collapsedPosition": collapsed_position,
+                "memberPositionsBeforeCollapse": member_positions,
+            }
+            if bool(raw_state.get("locked")):
+                item["locked"] = True
+            group_layout[normalized_group_id] = item
     viewport = dict_value(raw.get("viewport"))
     return {
+        "version": 2,
         "nodePositions": positions,
+        "positionMeta": position_meta,
+        "groupLayout": group_layout,
         "viewport": {
             "x": finite_number(viewport.get("x")) or 0.0,
             "y": finite_number(viewport.get("y")) or 0.0,
             "zoom": finite_number(viewport.get("zoom")) or 1.0,
         },
     }
+
+
+def normalize_point(value: Any) -> dict[str, float] | None:
+    raw = dict_value(value)
+    x = finite_number(raw.get("x"))
+    y = finite_number(raw.get("y"))
+    if x is None or y is None:
+        return None
+    return {"x": x, "y": y}
 
 
 def normalize_filters(value: Any) -> dict[str, Any]:

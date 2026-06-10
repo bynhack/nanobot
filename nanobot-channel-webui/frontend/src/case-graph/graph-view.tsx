@@ -12,7 +12,7 @@ import type {
   CaseGraphTradeCard,
 } from './types';
 
-type NodePositionsChangeReason = 'layout' | 'drag';
+type NodePositionsChangeReason = 'drag';
 
 interface GraphViewProps {
   graphData: CaseGraphData | null;

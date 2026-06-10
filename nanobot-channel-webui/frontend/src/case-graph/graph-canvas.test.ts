@@ -11,6 +11,7 @@ import {
   createGraphRenderSnapshotForTest,
   buildCollapsedInvestigationGroupRenderEdgesForTest,
   buildCollapsedInvestigationGroupRenderNodesForTest,
+  buildParallelEdgeLaneStylesForTest,
   buildInvestigationGroupSummariesForTest,
   buildRenderedEdgeMetricsForTest,
   compactLayoutAfterVisibleNodeRemovalForTest,
@@ -25,6 +26,7 @@ import {
   mergeExportBoundsForTest,
   resolveMenuPositionForTest,
   resolveNodeSubtitleForTest,
+  removeStaleInvestigationGroupCombosForTest,
   dataUrlToBlobForTest,
   shouldSuppressNativeContextMenuForTest,
   shouldStopNativeContextMenuPropagationForTest,
@@ -33,6 +35,72 @@ import {
 import type { CaseGraphData } from './types';
 
 describe('graph canvas parallel edge offsets', () => {
+  it('separates money and reality relations between the same subjects into lanes', () => {
+    const lanes = buildParallelEdgeLaneStylesForTest([
+      {
+        id: 'money:a->b',
+        from: 'a',
+        to: 'b',
+        source: 'a',
+        target: 'b',
+        tradeCount: 2,
+        tradeAmount: 2000,
+      },
+      {
+        id: 'reality:a->b:relative',
+        from: 'a',
+        to: 'b',
+        source: 'a',
+        target: 'b',
+        tradeCount: 0,
+        tradeAmount: 0,
+        edgeKind: 'reality',
+        relationType: '亲属',
+        label: '亲属',
+      },
+    ]);
+
+    expect(lanes.get('money:a->b')).toMatchObject({
+      laneCount: 2,
+      curveOffset: 0,
+      labelOffsetY: 0,
+    });
+    expect(lanes.get('reality:a->b:relative')).toMatchObject({
+      laneCount: 2,
+      curveOffset: 38,
+      labelOffsetY: -18,
+    });
+  });
+
+  it('treats reverse-direction edges between the same subjects as parallel lanes', () => {
+    const lanes = buildParallelEdgeLaneStylesForTest([
+      {
+        id: 'money:b->a',
+        from: 'b',
+        to: 'a',
+        source: 'b',
+        target: 'a',
+        tradeCount: 1,
+        tradeAmount: 1000,
+      },
+      {
+        id: 'reality:a->b:friend',
+        from: 'a',
+        to: 'b',
+        source: 'a',
+        target: 'b',
+        tradeCount: 0,
+        tradeAmount: 0,
+        edgeKind: 'reality',
+        relationType: '朋友',
+        label: '朋友',
+      },
+    ]);
+
+    expect(lanes.get('money:b->a')?.laneCount).toBe(2);
+    expect(lanes.get('reality:a->b:friend')?.curveOffset).not.toBe(0);
+  });
+
   it('builds an investigation-friendly PNG export filename', () => {
     expect(buildGraphPngFilenameForTest(new Date('2026-06-04T09:08:07'))).toBe('资金关系图-20260604090807.png');
   });
@@ -305,6 +373,18 @@ describe('graph canvas parallel edge offsets', () => {
         type: 'group',
       }),
     ]);
+  });
+
+  it('removes stale expanded combos before rendering collapsed group nodes', () => {
+    const removed: string[][] = [];
+    const graph = {
+      getComboData: () => [{ id: 'group-1' }, { id: 'group-2' }],
+      removeComboData: (ids: string[]) => removed.push(ids),
+    };
+
+    removeStaleInvestigationGroupCombosForTest(graph as any, ['group-2']);
+
+    expect(removed).toEqual([['group-1']]);
   });
 
   it('computes edge strength from collapsed investigation group render edges', () => {

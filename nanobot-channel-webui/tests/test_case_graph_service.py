@@ -377,6 +377,8 @@ class FakeCaseGraphService:
         graph_id: str,
         graph_name: str = "",
         node_positions: dict[str, Any],
+        position_meta: dict[str, Any] | None = None,
+        group_layout: dict[str, Any] | None = None,
         viewport: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         self.state_layout_calls.append(
@@ -385,6 +387,8 @@ class FakeCaseGraphService:
                 "graph_id": graph_id,
                 "graph_name": graph_name,
                 "node_positions": node_positions,
+                "position_meta": position_meta or {},
+                "group_layout": group_layout or {},
                 "viewport": viewport or {},
             }
         )
@@ -1801,6 +1805,14 @@ async def test_http_relation_state_routes_call_state_service() -> None:
             json={
                 "graphName": "图1",
                 "nodePositions": {"a": {"x": 100, "y": 200}},
+                "positionMeta": {"a": {"source": "manual", "locked": True}},
+                "groupLayout": {
+                    "group-1": {
+                        "groupId": "group-1",
+                        "collapsedPosition": {"x": 100, "y": 200},
+                        "memberPositionsBeforeCollapse": {"a": {"x": 100, "y": 200}},
+                    }
+                },
                 "viewport": {"x": 0, "y": 0, "zoom": 1},
             },
         )
@@ -1829,6 +1841,14 @@ async def test_http_relation_state_routes_call_state_service() -> None:
                 "graph_id": "graph-1",
                 "graph_name": "图1",
                 "node_positions": {"a": {"x": 100, "y": 200}},
+                "position_meta": {"a": {"source": "manual", "locked": True}},
+                "group_layout": {
+                    "group-1": {
+                        "groupId": "group-1",
+                        "collapsedPosition": {"x": 100, "y": 200},
+                        "memberPositionsBeforeCollapse": {"a": {"x": 100, "y": 200}},
+                    }
+                },
                 "viewport": {"x": 0, "y": 0, "zoom": 1},
             }
         ]

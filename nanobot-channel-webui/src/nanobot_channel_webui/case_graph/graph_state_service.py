@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .graph_repository import GraphRepository
+from .graph_state_types import normalize_layout
 from .graph_state_types import now_iso
 
 
@@ -41,6 +42,8 @@ class GraphStateService:
         graph_id: str,
         graph_name: str = "",
         node_positions: dict[str, Any],
+        position_meta: dict[str, Any] | None = None,
+        group_layout: dict[str, Any] | None = None,
         viewport: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         current = self._repository.load_current(case_id, graph_id)
@@ -82,10 +85,12 @@ class GraphStateService:
             next_groups.append({**group, **position} if position else group)
 
         previous_layout = dict(graph.get("layout") or {})
-        next_layout = {
+        next_layout = normalize_layout({
             "nodePositions": graph_node_positions,
+            "positionMeta": dict(position_meta or previous_layout.get("positionMeta") or {}),
+            "groupLayout": dict(group_layout or previous_layout.get("groupLayout") or {}),
             "viewport": dict(viewport or previous_layout.get("viewport") or {}),
-        }
+        }, graph.get("nodes") or [])
         if previous_layout == next_layout and next_groups == list(graph.get("investigationGroups") or []):
             return current
         graph["layout"] = next_layout
@@ -171,12 +176,16 @@ class GraphStateService:
         case_id: str,
         graph_id: str,
         node_positions: dict[str, Any],
+        position_meta: dict[str, Any] | None = None,
+        group_layout: dict[str, Any] | None = None,
         viewport: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return self._repository.update_latest_step_layout(
             case_id=case_id,
             graph_id=graph_id,
             node_positions=node_positions,
+            position_meta=position_meta,
+            group_layout=group_layout,
             viewport=viewport,
         )
 

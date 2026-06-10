@@ -49,6 +49,7 @@ import {
   loadSavedCaseGraphs,
   queryCaseGraphRelation,
   restoreCaseGraphNode,
+  restoreCaseGraphNodes,
   saveCaseGraphLatestStepLayout,
   saveCaseGraphLayoutOperation,
   saveCaseGraphNodeNote,
@@ -59,6 +60,7 @@ import { CaseRail } from './case-rail';
 import { EdgeDetailDrawer, filterEdgeDetailItemsForGraphEdge, type EdgeDetailPartyContext } from './edge-detail-drawer';
 import { GraphView } from './graph-view';
 import { buildMergedNetworkGraph, isGroupNodeId, parseGroupEdgeId } from './graph-view-adapters';
+import { computeCaseGraphLayoutPlan, computeInitialG6LayoutPlan, type LayoutEvent, type LayoutPlan } from './layout-engine';
 import { CaseGraphDateInput } from './date-input';
 import {
   NodeDetailAnalysisDrawer,
@@ -79,6 +81,7 @@ import type {
   CaseGraphSavedGraph,
   CaseGraphSelectableAccount,
   CaseGraphSnapshot,
+  CaseGraphLayoutState,
   CaseGraphReplayTimeline,
   CaseGraphReplayTimelineStep,
   CaseGraphStateBody,
@@ -133,6 +136,7 @@ interface GraphTabState {
   appliedFilters: CaseGraphFilterState;
   chatId: string;
   loaded: boolean;
+  layout: CaseGraphLayoutState;
 }
 
 type CaseGraphChatPrompt = {
@@ -170,12 +174,14 @@ interface MergeGraphOptions {
   anchorNodeId?: string;
 }
 
-const DRILL_NODE_COLUMN_GAP = 374;
-const DRILL_NODE_ROW_GAP = 112;
-const DRILL_NODE_WIDTH = 248;
-const DRILL_NODE_HEIGHT = 84;
-const DRILL_NODE_COLLISION_PADDING_X = 32;
-const DRILL_NODE_COLLISION_PADDING_Y = 28;
+const LAYOUT_ENGINE_DIMENSIONS = {
+  graphWidth: 1028,
+  graphHeight: 620,
+  nodeWidth: 248,
+  nodeHeight: 84,
+  columnGap: 126,
+  rowGap: 40,
+};
 
 function clampDetailWidth(width: number, viewportWidth: number, immersive: boolean): number {
   if (!immersive) {
@@ -314,7 +320,6 @@ export function CaseGraphWorkbench({
     creatingForGraphId: null,
   });
   const graphNodePositionsRef = useRef<Record<string, GraphNodePoint>>({});
-  const pendingStepLayoutRef = useRef<{ caseId: string; graphId: string } | null>(null);
   const layoutPersistenceInFlightRef = useRef(0);
   const layoutContextSuppressedUntilRef = useRef(0);
   const caseGraphChatContextRef = useRef<ChatWorkspaceRenderContext | null>(null);
@@ -1048,11 +1053,32 @@ export function CaseGraphWorkbench({
     loadCaseGraph(graphId, token)
       .then(async (graph) => {
         const state = await loadCaseGraphState(graph.caseId, graph.graph_id, token).catch(() => null);
-        const nextTab = state ? graphStateToTab(state, graph) : graphToTab(graph);
+        const nextTab = state ? graphStateToTab(state, graph, { repairGeneratedLayout: true }) : graphToTab(graph);
         setGraphTabs((current) => [...current.filter((item) => item.graphId !== nextTab.graphId), nextTab]);
         setActiveTabId(nextTab.graphId);
         setCaseIdDraft(graph.caseId);
         void refreshGraphSteps(nextTab);
+        if (state && hasLayoutPositionsChanged(state.graph.layout?.nodePositions ?? {}, nextTab.layout.nodePositions)) {
+          void saveCaseGraphLatestStepLayout(
+            nextTab.caseId,
+            nextTab.graphId,
+            {
+              nodePositions: nextTab.layout.nodePositions,
+              positionMeta: nextTab.layout.positionMeta,
+              groupLayout: nextTab.layout.groupLayout,
+            },
+            token,
+          ).then((savedState) => {
+            setGraphTabs((current) => current.map((tab) => (
+              tab.graphId === nextTab.graphId
+                ? { ...tab, ...graphStateToTab(savedState, tab), graphContent: tab.graphContent, chatId: tab.chatId }
+                : tab
+            )));
+            void refreshGraphSteps(nextTab);
+          }).catch((err: unknown) => {
+            console.warn('保存自动吸附后的图谱布局失败', err);
+          });
+        }
         setError(null);
         appStore.dispatch({ type: 'caseGraph.graph.loaded', graph });
       })
@@ -1076,21 +1102,40 @@ export function CaseGraphWorkbench({
   const persistGraphLayout = useCallback((
     tab: GraphTabState,
     positions: Record<string, GraphNodePoint>,
-    reason: 'layout' | 'drag',
+    reason: 'drag',
   ) => {
     if (!shouldPersistGraphPositions(tab.graphData, positions, reason)) {
       return;
     }
     const positionedGraphData = applyNodePositions(tab.graphData, positions);
-    const positionedOriginData = tab.originData && positionedGraphData
-      ? { ...tab.originData, nodes: positionedGraphData.nodes, money: positionedGraphData.edges }
+    const layout = normalizeLayoutState(tab.layout);
+    const groupPositions = resolveInvestigationGroupDragPositions(positionedGraphData, positions);
+    const nextGroupLayout = applyGroupDragPositionsToLayout(layout.groupLayout, positionedGraphData, groupPositions);
+    const positionedGraphDataWithGroups = applyInvestigationGroupPositions(positionedGraphData, groupPositions);
+    const positionedOriginData = tab.originData && positionedGraphDataWithGroups
+      ? { ...tab.originData, nodes: positionedGraphDataWithGroups.nodes, money: positionedGraphDataWithGroups.edges, investigationGroups: positionedGraphDataWithGroups.investigationGroups ?? [] }
       : tab.originData;
-    if (!positionedGraphData || !positionedOriginData) {
+    if (!positionedGraphDataWithGroups || !positionedOriginData) {
       return;
     }
+    const plan = computeCaseGraphLayoutPlan({
+      graphData: positionedGraphDataWithGroups,
+      previousLayout: {
+        ...layout,
+        groupLayout: nextGroupLayout,
+      },
+      event: { type: 'manual_move', movedPositions: positions },
+      ...LAYOUT_ENGINE_DIMENSIONS,
+    });
+    const nextLayout = layoutStateFromPlan(plan, tab.layout);
+    const snappedGroupPositions = resolveMovedGroupLayoutPositions(nextLayout.groupLayout, groupPositions);
+    const nextPositionedGraphDataWithGroups = applyInvestigationGroupPositions(positionedGraphDataWithGroups, snappedGroupPositions);
+    const nextPositionedOriginData = positionedOriginData && nextPositionedGraphDataWithGroups
+      ? { ...positionedOriginData, nodes: nextPositionedGraphDataWithGroups.nodes, money: nextPositionedGraphDataWithGroups.edges, investigationGroups: nextPositionedGraphDataWithGroups.investigationGroups ?? [] }
+      : positionedOriginData;
     updateActiveTab((current) => (
       current.graphId === tab.graphId
-        ? { ...current, graphData: positionedGraphData, originData: positionedOriginData }
+        ? { ...current, graphData: nextPositionedGraphDataWithGroups, originData: nextPositionedOriginData, layout: nextLayout }
         : current
     ));
     layoutPersistenceInFlightRef.current += 1;
@@ -1098,7 +1143,12 @@ export function CaseGraphWorkbench({
     void saveCaseGraphLayoutOperation(
       tab.caseId,
       tab.graphId,
-      { graphName: tab.graphName, nodePositions: positions },
+      {
+        graphName: tab.graphName,
+        nodePositions: { ...nextLayout.nodePositions, ...snappedGroupPositions },
+        positionMeta: nextLayout.positionMeta,
+        groupLayout: nextLayout.groupLayout,
+      },
       token,
     ).then((state) => {
       updateActiveTab((current) => (
@@ -1115,28 +1165,19 @@ export function CaseGraphWorkbench({
     });
   }, [refreshGraphSteps, token, updateActiveTab]);
 
-  const markPendingStepLayout = useCallback((tab: Pick<GraphTabState, 'caseId' | 'graphId'>) => {
-    pendingStepLayoutRef.current = { caseId: tab.caseId, graphId: tab.graphId };
-  }, []);
-
-  const persistLatestStepLayout = useCallback((
+  const persistBusinessLayoutPlan = useCallback((
     tab: GraphTabState,
-    positions: Record<string, GraphNodePoint>,
+    plan: LayoutPlan,
   ) => {
-    const pending = pendingStepLayoutRef.current;
-    if (!pending || pending.caseId !== tab.caseId || pending.graphId !== tab.graphId) {
-      return;
-    }
-    const options = buildRelationOptions(tab.graphData, positions);
-    const nodePositions = options.nodePositions as Record<string, GraphNodePoint> | undefined;
-    if (!nodePositions || !Object.keys(nodePositions).length) {
-      return;
-    }
-    pendingStepLayoutRef.current = null;
+    const layout = layoutStateFromPlan(plan, tab.layout);
     void saveCaseGraphLatestStepLayout(
       tab.caseId,
       tab.graphId,
-      { nodePositions },
+      {
+        nodePositions: layout.nodePositions,
+        positionMeta: layout.positionMeta,
+        groupLayout: layout.groupLayout,
+      },
       token,
     ).then((state) => {
       updateActiveTab((current) => (
@@ -1203,16 +1244,24 @@ export function CaseGraphWorkbench({
       },
       token,
     )
-      .then((result) => {
-        const nextFromState = result.graphState ? graphStateToTab(result.graphState, activeTab) : null;
+      .then(async (result) => {
+        const nextFromState = result.graphState ? graphStateToTab(result.graphState, activeTab, { repairGeneratedLayout: true }) : null;
         const originData = nextFromState?.originData ?? normalizeCaseGraphOriginData(result);
+        const baseGraphData = nextFromState?.graphData ?? originDataToCanvasData(originData);
+        const layoutPatch = await applyInitialLayoutEventToTabPatch(
+          activeTab,
+          baseGraphData,
+          originData,
+          { type: 'initial_graph', primaryAnchorIds: resolvePrimaryNodeIdsForAccounts(baseGraphData, activeTab.selectedAccountIds) },
+        );
         updateActiveTab((tab) => ({
           ...tab,
           ...(nextFromState ? { ...nextFromState, graphContent: tab.graphContent, chatId: tab.chatId } : {}),
           loaded: true,
           graphContent: tab.graphContent,
-          graphData: nextFromState?.graphData ?? originDataToCanvasData(originData),
-          originData,
+          graphData: layoutPatch.graphData,
+          originData: layoutPatch.originData,
+          layout: layoutPatch.layout,
           tradeFacts: nextFromState?.tradeFacts ?? originData?.tradeFacts ?? tab.tradeFacts,
           tradeCards: nextTradeCards,
           queryBaselineTradeCards: nextTradeCards,
@@ -1223,7 +1272,7 @@ export function CaseGraphWorkbench({
           excludedNodes: nextFromState?.excludedNodes ?? originData?.excludedNodes ?? [],
           appliedFilters: currentFilterState(tab),
         }));
-        markPendingStepLayout(activeTab);
+        persistBusinessLayoutPlan(activeTab, layoutPatch.plan);
         setOriginPanelOpen(false);
         setError(null);
         requestGraphStepInsight(result, activeTab);
@@ -1234,7 +1283,7 @@ export function CaseGraphWorkbench({
       .finally(() => {
         setRequests((current) => ({ ...current, querying: false }));
       });
-  }, [activeTab, selectedTradeCards, token, updateActiveTab, requestGraphStepInsight]);
+  }, [activeTab, selectedTradeCards, token, updateActiveTab, requestGraphStepInsight, persistBusinessLayoutPlan]);
 
   const handleDrill = useCallback((direction: DrillDirection, node: CaseGraphNode, tradeCard: CaseGraphTradeCard | null) => {
     if (!activeTab) return;
@@ -1259,7 +1308,7 @@ export function CaseGraphWorkbench({
       token,
     )
       .then((result) => {
-        const nextFromState = result.graphState ? graphStateToTab(result.graphState, activeTab) : null;
+        const nextFromState = result.graphState ? graphStateToTab(result.graphState, activeTab, { repairGeneratedLayout: true }) : null;
         const originData = nextFromState?.originData ?? normalizeCaseGraphOriginData(result);
         const mergedGraphData = mergeGraphData(positionedCurrent, originDataToCanvasData(originData), {
           mode: 'drill',
@@ -1271,18 +1320,25 @@ export function CaseGraphWorkbench({
           direction,
           anchorNodeId: node.id,
         });
+        const layoutPatch = applyLayoutEventToTabPatch(
+          activeTab,
+          mergedGraphData,
+          mergedOriginData,
+          { type: 'relation_drill', anchorNodeIds: [node.id], addedNodeIds: addedNodeIdsFromResult(result) },
+        );
         updateActiveTab((tab) => ({
           ...tab,
           ...(nextFromState ? { ...nextFromState, graphContent: tab.graphContent, chatId: tab.chatId } : {}),
           loaded: true,
           graphContent: tab.graphContent,
-          graphData: mergedGraphData,
-          originData: mergedOriginData,
+          graphData: layoutPatch.graphData,
+          originData: layoutPatch.originData,
+          layout: layoutPatch.layout,
           tradeFacts: nextFromState?.tradeFacts ?? tab.tradeFacts,
           groupMap: nextFromState?.groupMap ?? {},
           excludedNodes: nextFromState?.excludedNodes ?? originData?.excludedNodes ?? tab.excludedNodes,
         }));
-        markPendingStepLayout(activeTab);
+        persistBusinessLayoutPlan(activeTab, layoutPatch.plan);
         setError(null);
         requestGraphStepInsight(result, activeTab);
       })
@@ -1292,7 +1348,7 @@ export function CaseGraphWorkbench({
       .finally(() => {
         setRequests((current) => ({ ...current, drilling: false }));
       });
-  }, [activeTab, token, updateActiveTab, requestGraphStepInsight]);
+  }, [activeTab, token, updateActiveTab, requestGraphStepInsight, persistBusinessLayoutPlan]);
 
   const handleCompleteGraphRelations = useCallback(() => {
     if (!activeTab) return;
@@ -1315,20 +1371,29 @@ export function CaseGraphWorkbench({
       token,
     )
       .then((result) => {
-        const nextFromState = result.graphState ? graphStateToTab(result.graphState, activeTab) : null;
+        const nextFromState = result.graphState ? graphStateToTab(result.graphState, activeTab, { repairGeneratedLayout: true }) : null;
         const originData = nextFromState?.originData ?? normalizeCaseGraphOriginData(result);
+        const baseGraphData = nextFromState?.graphData ?? mergeGraphData(positionedCurrent, originDataToCanvasData(originData), { mode: 'complete' });
+        const baseOriginData = nextFromState?.originData ?? mergeOriginData(activeTab.originData, originData, { mode: 'complete' });
+        const layoutPatch = applyLayoutEventToTabPatch(
+          activeTab,
+          baseGraphData,
+          baseOriginData,
+          { type: 'relation_complete', anchorNodeIds: accounts.map((account) => String(account.accountId || account.tradeCard || '').trim()).filter(Boolean), addedNodeIds: addedNodeIdsFromResult(result) },
+        );
         updateActiveTab((tab) => ({
           ...tab,
           ...(nextFromState ? { ...nextFromState, graphContent: tab.graphContent, chatId: tab.chatId } : {}),
           loaded: true,
           graphContent: tab.graphContent,
-          graphData: nextFromState?.graphData ?? mergeGraphData(positionedCurrent, originDataToCanvasData(originData), { mode: 'complete' }),
-          originData: nextFromState?.originData ?? mergeOriginData(tab.originData, originData, { mode: 'complete' }),
+          graphData: layoutPatch.graphData,
+          originData: layoutPatch.originData,
+          layout: layoutPatch.layout,
           tradeFacts: nextFromState?.tradeFacts ?? tab.tradeFacts,
           groupMap: nextFromState?.groupMap ?? {},
           excludedNodes: nextFromState?.excludedNodes ?? originData?.excludedNodes ?? tab.excludedNodes,
         }));
-        markPendingStepLayout(activeTab);
+        persistBusinessLayoutPlan(activeTab, layoutPatch.plan);
         setError(null);
         requestGraphStepInsight(result, activeTab);
       })
@@ -1338,7 +1403,7 @@ export function CaseGraphWorkbench({
       .finally(() => {
         setRequests((current) => ({ ...current, drilling: false }));
       });
-  }, [activeTab, token, updateActiveTab, requestGraphStepInsight]);
+  }, [activeTab, token, updateActiveTab, requestGraphStepInsight, persistBusinessLayoutPlan]);
 
   const handleFilterFieldChange = useCallback((field: keyof CaseGraphFilterState, value: string) => {
     if (!activeTabId) return;
@@ -1374,14 +1439,22 @@ export function CaseGraphWorkbench({
       token,
     )
       .then((result) => {
-        const nextFromState = result.graphState ? graphStateToTab(result.graphState, activeTab) : null;
+        const nextFromState = result.graphState ? graphStateToTab(result.graphState, activeTab, { repairGeneratedLayout: true }) : null;
         const originData = nextFromState?.originData ?? normalizeCaseGraphOriginData(result);
+        const baseGraphData = nextFromState?.graphData ?? originDataToCanvasData(originData);
+        const layoutPatch = applyLayoutEventToTabPatch(
+          activeTab,
+          baseGraphData,
+          originData,
+          { type: 'relation_filter', addedNodeIds: addedNodeIdsFromResult(result) },
+        );
         updateActiveTab((tab) => ({
           ...tab,
           ...(nextFromState ? { ...nextFromState, graphContent: tab.graphContent, chatId: tab.chatId } : {}),
           loaded: true,
-          graphData: nextFromState?.graphData ?? originDataToCanvasData(originData),
-          originData,
+          graphData: layoutPatch.graphData,
+          originData: layoutPatch.originData,
+          layout: layoutPatch.layout,
           tradeFacts: nextFromState?.tradeFacts ?? originData?.tradeFacts ?? tab.tradeFacts,
           groupMap: nextFromState?.groupMap ?? {},
           excludedNodes: nextFromState?.excludedNodes ?? originData?.excludedNodes ?? tab.excludedNodes,
@@ -1391,7 +1464,7 @@ export function CaseGraphWorkbench({
           endTime: filterState.endTime,
           appliedFilters: filterState,
         }));
-        markPendingStepLayout(activeTab);
+        persistBusinessLayoutPlan(activeTab, layoutPatch.plan);
         setError(null);
         requestGraphStepInsight(result, activeTab);
       })
@@ -1432,20 +1505,30 @@ export function CaseGraphWorkbench({
     }));
   }, [activeTabId, updateActiveTab]);
 
-  const applyRelationResultToActiveTab = useCallback((result: { graph: CaseGraphData; graphState?: CaseGraphStateSnapshot }) => {
-    const nextFromState = result.graphState ? graphStateToTab(result.graphState, activeTab ?? undefined) : null;
+  const applyRelationResultToActiveTab = useCallback((result: { graph: CaseGraphData; graphState?: CaseGraphStateSnapshot; delta?: CaseGraphRelationResponse['delta'] }, event?: LayoutEvent) => {
+    if (!activeTab) return;
+    const nextFromState = result.graphState ? graphStateToTab(result.graphState, activeTab ?? undefined, { repairGeneratedLayout: true }) : null;
     const originData = nextFromState?.originData ?? normalizeCaseGraphOriginData(result as any);
+    const baseGraphData = nextFromState?.graphData ?? originDataToCanvasData(originData);
+    const layoutPatch = applyLayoutEventToTabPatch(
+      activeTab,
+      baseGraphData,
+      originData,
+      event ?? { type: 'layout_refresh', addedNodeIds: addedNodeIdsFromResult({ delta: result.delta ?? {} }) },
+    );
     updateActiveTab((tab) => ({
       ...tab,
       ...(nextFromState ? { ...nextFromState, graphContent: tab.graphContent, chatId: tab.chatId } : {}),
       loaded: true,
-      graphData: nextFromState?.graphData ?? originDataToCanvasData(originData),
-      originData,
+      graphData: layoutPatch.graphData,
+      originData: layoutPatch.originData,
+      layout: layoutPatch.layout,
       tradeFacts: nextFromState?.tradeFacts ?? originData?.tradeFacts ?? tab.tradeFacts,
       groupMap: nextFromState?.groupMap ?? {},
       excludedNodes: nextFromState?.excludedNodes ?? originData?.excludedNodes ?? [],
     }));
-  }, [activeTab, updateActiveTab]);
+    persistBusinessLayoutPlan(activeTab, layoutPatch.plan);
+  }, [activeTab, persistBusinessLayoutPlan, updateActiveTab]);
 
   const handleExcludeNode = useCallback((node: CaseGraphExcludedNode) => {
     if (!activeTab) return;
@@ -1508,16 +1591,12 @@ export function CaseGraphWorkbench({
         caseId: activeTab.caseId,
         graphId: activeTab.graphId,
         nodeId,
-        options: buildRestoreNodesRelationOptions(
-          activeTab.graphData,
-          graphNodePositionsRef.current,
-          [nodeId],
-        ),
+        options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
       },
       token,
     )
       .then((result) => {
-        applyRelationResultToActiveTab(result);
+        applyRelationResultToActiveTab(result, { type: 'restore_node', restoredNodeIds: [nodeId] });
         void refreshGraphSteps(activeTab);
         setError(null);
         requestGraphStepInsight(result, activeTab);
@@ -1534,24 +1613,19 @@ export function CaseGraphWorkbench({
     if (!activeTab || !activeTab.excludedNodes.length) return;
     setReplaySelection(null);
     setRequests((current) => ({ ...current, excluding: true }));
-    activeTab.excludedNodes.reduce(
-      (chain, node) => chain.then(() => restoreCaseGraphNode({
+    const restoredNodeIds = activeTab.excludedNodes.map((item) => item.nodeId).filter(Boolean);
+    restoreCaseGraphNodes(
+      {
         caseId: activeTab.caseId,
         graphId: activeTab.graphId,
-        nodeId: node.nodeId,
-        options: buildRestoreNodesRelationOptions(
-          activeTab.graphData,
-          graphNodePositionsRef.current,
-          activeTab.excludedNodes.map((item) => item.nodeId),
-        ),
-      }, token)),
-      Promise.resolve(null as unknown as Awaited<ReturnType<typeof restoreCaseGraphNode>>),
+        nodeIds: restoredNodeIds,
+        options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+      },
+      token,
     )
       .then((result) => {
-        if (result) {
-          applyRelationResultToActiveTab(result);
-          requestGraphStepInsight(result, activeTab);
-        }
+        applyRelationResultToActiveTab(result, { type: 'restore_node', restoredNodeIds });
+        requestGraphStepInsight(result, activeTab);
         void refreshGraphSteps(activeTab);
         setError(null);
       })
@@ -2406,11 +2480,7 @@ export function CaseGraphWorkbench({
     setReplaySelection(null);
     setGroupOperationApplying(true);
     const positionedGraphData = applyNodePositions(activeTab.graphData, graphNodePositionsRef.current);
-    const relationOptions = buildInvestigationGroupRelationOptions(
-      positionedGraphData,
-      graphNodePositionsRef.current,
-      operationPayload,
-    );
+    const relationOptions = buildRelationOptions(positionedGraphData, graphNodePositionsRef.current);
     applyCaseGraphInvestigationGroup(
       {
         caseId: activeTab.caseId,
@@ -2423,7 +2493,8 @@ export function CaseGraphWorkbench({
       token,
     )
       .then((result) => {
-        applyRelationResultToActiveTab(result);
+        const groupEvent = investigationGroupLayoutEvent(result.graph, operationPayload);
+        applyRelationResultToActiveTab(result, groupEvent);
         void refreshGraphSteps(activeTab);
         setError(null);
         if (operationPayload.operation === 'create') {
@@ -3400,9 +3471,6 @@ export function CaseGraphWorkbench({
                 }
                 graphNodePositionsRef.current = positions;
                 if (activeTab) {
-                  if (reason === 'layout') {
-                    persistLatestStepLayout(activeTab, positions);
-                  }
                   persistGraphLayout(activeTab, positions, reason);
                 }
               }}
@@ -3690,7 +3758,9 @@ export function CaseGraphWorkbench({
         onClose={() => setExcludedDialogOpen(false)}
         size="lg"
         className="case-graph-excluded-modal"
+        bodyClassName="case-graph-excluded-modal-body"
       >
+        <div className="case-graph-excluded-content">
             <div className="case-graph-excluded-tabs" role="tablist" aria-label="排除项类型">
               <button
                 type="button"
@@ -3830,6 +3900,7 @@ export function CaseGraphWorkbench({
                 </div>
               </>
             )}
+        </div>
       </Modal>
 
       <Modal
@@ -4147,12 +4218,28 @@ function graphToTab(graph: CaseGraphSnapshot): GraphTabState {
     }),
     chatId: graph.chatId || '',
     loaded: true,
+    layout: emptyLayoutState(),
   };
 }
 
-function graphStateToTab(state: CaseGraphStateSnapshot, fallback?: Partial<GraphTabState> | CaseGraphSnapshot): GraphTabState {
-  const graphData = graphStateToCanvasData(state);
+interface GraphStateToTabOptions {
+  repairGeneratedLayout?: boolean;
+}
+
+function graphStateToTab(
+  state: CaseGraphStateSnapshot,
+  fallback?: Partial<GraphTabState> | CaseGraphSnapshot,
+  options: GraphStateToTabOptions = {},
+): GraphTabState {
+  const rawGraphData = graphStateToCanvasData(state);
+  const layout = options.repairGeneratedLayout
+    ? repairGeneratedLayoutState(rawGraphData, normalizeLayoutState(state.graph.layout))
+    : normalizeLayoutState(state.graph.layout);
+  const graphData = applyGraphLayoutPositions(rawGraphData, layout);
   const originData = graphStateToOriginData(state);
+  const positionedOriginData = originData && graphData
+    ? { ...originData, nodes: graphData.nodes, money: graphData.edges }
+    : originData;
   const fallbackSnapshot = fallback && 'graph_id' in fallback ? fallback : null;
   const fallbackTab = fallback && 'graphId' in fallback ? fallback : null;
   const tradeCards = state.graph.tradeCards.length
@@ -4168,7 +4255,7 @@ function graphStateToTab(state: CaseGraphStateSnapshot, fallback?: Partial<Graph
     tradeCards,
     queryBaselineTradeCards: tradeCards,
     graphData,
-    originData,
+    originData: positionedOriginData,
     tradeFacts: { ...(state.graph.tradeFacts ?? {}) },
     groupMap: normalizeCaseGraphGroupMap(state.graph.groupMap),
     sourceSelectId: [...(state.graph.sourceSelectId ?? [])],
@@ -4190,11 +4277,12 @@ function graphStateToTab(state: CaseGraphStateSnapshot, fallback?: Partial<Graph
     }),
     chatId: fallbackTab?.chatId || fallbackSnapshot?.chatId || '',
     loaded: true,
+    layout,
   };
 }
 
-export function graphStateToTabForTest(state: CaseGraphStateSnapshot): GraphTabState {
-  return graphStateToTab(state);
+export function graphStateToTabForTest(state: CaseGraphStateSnapshot, options: GraphStateToTabOptions = {}): GraphTabState {
+  return graphStateToTab(state, undefined, options);
 }
 
 function emptyFilterState(overrides: Partial<CaseGraphFilterState> = {}): CaseGraphFilterState {
@@ -4204,6 +4292,118 @@ function emptyFilterState(overrides: Partial<CaseGraphFilterState> = {}): CaseGr
     startTime: overrides.startTime || '',
     endTime: overrides.endTime || '',
   };
+}
+
+function emptyLayoutState(): CaseGraphLayoutState {
+  return {
+    version: 2,
+    nodePositions: {},
+    positionMeta: {},
+    groupLayout: {},
+    viewport: { x: 0, y: 0, zoom: 1 },
+  };
+}
+
+function normalizeLayoutState(layout: Partial<CaseGraphLayoutState> | null | undefined): CaseGraphLayoutState {
+  return {
+    version: 2,
+    nodePositions: { ...(layout?.nodePositions ?? {}) },
+    positionMeta: { ...(layout?.positionMeta ?? {}) },
+    groupLayout: { ...(layout?.groupLayout ?? {}) },
+    viewport: layout?.viewport ?? { x: 0, y: 0, zoom: 1 },
+  };
+}
+
+function repairGeneratedLayoutState(
+  graphData: CaseGraphData | null,
+  layout: CaseGraphLayoutState,
+): CaseGraphLayoutState {
+  if (!graphData) {
+    return layout;
+  }
+  const repairNodeIds = resolveGeneratedLayoutRepairNodeIds(graphData, layout);
+  if (!repairNodeIds.length) {
+    return layout;
+  }
+  const repairNodeIdSet = new Set(repairNodeIds);
+  const graphDataForRepair: CaseGraphData = {
+    ...graphData,
+    nodes: graphData.nodes.map((node) => {
+      if (!repairNodeIdSet.has(node.id)) {
+        return node;
+      }
+      const { x: _x, y: _y, fx: _fx, fy: _fy, ...rest } = node as CaseGraphData['nodes'][number] & {
+        fx?: number;
+        fy?: number;
+      };
+      return rest;
+    }),
+  };
+  const previousLayout: CaseGraphLayoutState = {
+    ...layout,
+    nodePositions: Object.fromEntries(
+      Object.entries(layout.nodePositions).filter(([nodeId]) => !repairNodeIdSet.has(nodeId)),
+    ),
+  };
+  const anchorNodeIds = [
+    ...new Set(
+      repairNodeIds.flatMap((nodeId) => layout.positionMeta[nodeId]?.anchorNodeIds ?? []),
+    ),
+  ];
+  const plan = computeCaseGraphLayoutPlan({
+    graphData: graphDataForRepair,
+    previousLayout,
+    event: {
+      type: 'layout_refresh',
+      addedNodeIds: repairNodeIds,
+      anchorNodeIds,
+    },
+    ...LAYOUT_ENGINE_DIMENSIONS,
+  });
+  return layoutStateFromPlan(plan, layout);
+}
+
+function resolveGeneratedLayoutRepairNodeIds(
+  graphData: CaseGraphData,
+  layout: CaseGraphLayoutState,
+): string[] {
+  const nodeIds = new Set(graphData.nodes.map((node) => node.id));
+  const generatedNodeIds = Object.entries(layout.positionMeta)
+    .filter(([nodeId, meta]) => nodeIds.has(nodeId) && meta?.source === 'generated' && !meta.locked)
+    .map(([nodeId]) => nodeId);
+  return generatedNodeIds.filter((nodeId) => {
+    const point = layout.nodePositions[nodeId];
+    if (!point) return true;
+    for (const [otherNodeId, otherPoint] of Object.entries(layout.nodePositions)) {
+      if (otherNodeId === nodeId || !nodeIds.has(otherNodeId)) {
+        continue;
+      }
+      if (layoutPointsOverlap(point, otherPoint)) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
+function layoutPointsOverlap(left: GraphNodePoint, right: GraphNodePoint): boolean {
+  const minDx = LAYOUT_ENGINE_DIMENSIONS.nodeWidth + 24;
+  const minDy = LAYOUT_ENGINE_DIMENSIONS.nodeHeight + 8;
+  return Math.abs(left.x - right.x) < minDx && Math.abs(left.y - right.y) < minDy;
+}
+
+function hasLayoutPositionsChanged(
+  previous: Record<string, GraphNodePoint>,
+  next: Record<string, GraphNodePoint>,
+): boolean {
+  const nodeIds = new Set([...Object.keys(previous), ...Object.keys(next)]);
+  for (const nodeId of nodeIds) {
+    const before = previous[nodeId];
+    const after = next[nodeId];
+    if (!before || !after) return true;
+    if (before.x !== after.x || before.y !== after.y) return true;
+  }
+  return false;
 }
 
 function currentFilterState(tab: GraphTabState | null): CaseGraphFilterState {
@@ -4558,13 +4758,11 @@ function mergeGraphData(
   if (!current) return incoming;
   if (!incoming) return current;
   const nodesById = new Map<string, CaseGraphData['nodes'][number]>();
-  const currentNodeIds = new Set<string>();
   const canonicalNodeIds = buildCanonicalNodeIdIndex(current.nodes);
   const endpointRemap = new Map<string, string>();
   for (const node of current.nodes) {
     const id = String(node.id || '').trim();
     if (!id) continue;
-    currentNodeIds.add(id);
     endpointRemap.set(id, id);
     nodesById.set(id, { ...node });
   }
@@ -4603,15 +4801,38 @@ function mergeGraphData(
       isExcluded: Boolean(existing?.isExcluded || edge.isExcluded),
     });
   }
-  if (options.mode === 'drill') {
-    assignDrillNodePositions(nodesById, currentNodeIds, [...edgesById.values()], options);
-  }
   return {
     nodes: [...nodesById.values()],
     edges: [...edgesById.values()],
     tradeFacts: { ...(current.tradeFacts ?? {}), ...(incoming.tradeFacts ?? {}) },
     realityRelations: [...(current.realityRelations ?? []), ...(incoming.realityRelations ?? [])],
+    excludedNodes: mergeExcludedNodes(current.excludedNodes, incoming.excludedNodes),
+    investigationGroups: mergeInvestigationGroups(current.investigationGroups, incoming.investigationGroups),
   };
+}
+
+function mergeInvestigationGroups(
+  current: CaseGraphData['investigationGroups'] | undefined,
+  incoming: CaseGraphData['investigationGroups'] | undefined,
+): CaseGraphData['investigationGroups'] {
+  const groupsById = new Map<string, CaseGraphData['investigationGroups'][number]>();
+  for (const group of current ?? []) {
+    if (!group?.id) continue;
+    groupsById.set(group.id, { ...group, memberNodeIds: [...(group.memberNodeIds ?? [])] });
+  }
+  for (const group of incoming ?? []) {
+    if (!group?.id) continue;
+    const existing = groupsById.get(group.id);
+    groupsById.set(group.id, {
+      ...existing,
+      ...group,
+      memberNodeIds: [...(group.memberNodeIds ?? existing?.memberNodeIds ?? [])],
+      collapsed: group.collapsed ?? existing?.collapsed ?? true,
+      x: finiteNumber(group.x) ?? finiteNumber(existing?.x) ?? undefined,
+      y: finiteNumber(group.y) ?? finiteNumber(existing?.y) ?? undefined,
+    });
+  }
+  return [...groupsById.values()];
 }
 
 function mergeOriginData(
@@ -4632,6 +4853,7 @@ function mergeOriginData(
     money: mergedCanvas?.edges ?? current.money,
     phone: [...current.phone, ...incoming.phone],
     groups: { ...current.groups, ...incoming.groups },
+    investigationGroups: mergeInvestigationGroups(current.investigationGroups, incoming.investigationGroups),
     excludedTrades: [...new Set([...current.excludedTrades, ...incoming.excludedTrades])],
     tradeFacts: { ...(current.tradeFacts ?? {}), ...(incoming.tradeFacts ?? {}) },
     excludedNodes: mergeExcludedNodes(current.excludedNodes, incoming.excludedNodes),
@@ -4716,7 +4938,8 @@ export function buildRestoreNodesRelationOptionsForTest(
   positions: Record<string, GraphNodePoint>,
   restoreNodeIds: string[],
 ): Record<string, unknown> {
-  return buildRestoreNodesRelationOptions(graphData, positions, restoreNodeIds);
+  void restoreNodeIds;
+  return buildRelationOptions(graphData, positions);
 }
 
 export function resolveInvestigationGroupOperationPositionForTest(
@@ -4729,7 +4952,7 @@ export function resolveInvestigationGroupOperationPositionForTest(
 export function shouldPersistGraphPositionsForTest(
   graphData: CaseGraphData | null,
   positions: Record<string, GraphNodePoint>,
-  reason: 'layout' | 'drag',
+  reason: 'drag',
 ): boolean {
   return shouldPersistGraphPositions(graphData, positions, reason);
 }
@@ -4740,142 +4963,6 @@ export function shouldPersistLatestStepLayoutForTest(
 ): boolean {
   const options = buildRelationOptions(graphData, positions);
   return Boolean((options.nodePositions as Record<string, GraphNodePoint> | undefined) && Object.keys(options.nodePositions as Record<string, GraphNodePoint>).length);
-}
-
-function assignDrillNodePositions(
-  nodesById: Map<string, CaseGraphData['nodes'][number]>,
-  currentNodeIds: Set<string>,
-  edges: CaseGraphData['edges'],
-  options: MergeGraphOptions,
-): void {
-  const anchorId = String(options.anchorNodeId || '').trim();
-  const anchor = anchorId ? nodesById.get(anchorId) : null;
-  const anchorX = finiteNumber(anchor?.x);
-  const anchorY = finiteNumber(anchor?.y);
-  if (!anchor || anchorX == null || anchorY == null) {
-    return;
-  }
-
-  const newNodes = [...nodesById.values()].filter((node) => {
-    const id = String(node.id || '').trim();
-    return id && !currentNodeIds.has(id) && (finiteNumber(node.x) == null || finiteNumber(node.y) == null);
-  });
-  const left: CaseGraphData['nodes'] = [];
-  const right: CaseGraphData['nodes'] = [];
-  for (const node of newNodes) {
-    const side = resolveDrillNodeSide(node.id, anchorId, edges, options.direction);
-    if (side === 'left') {
-      left.push(node);
-    } else {
-      right.push(node);
-    }
-  }
-  const occupied = buildOccupiedDrillSlots([...nodesById.values()], currentNodeIds);
-  placeDrillColumn(left, anchorX, anchorY, 'left', occupied);
-  placeDrillColumn(right, anchorX, anchorY, 'right', occupied);
-}
-
-function resolveDrillNodeSide(
-  nodeId: string,
-  anchorId: string,
-  edges: CaseGraphData['edges'],
-  direction: DrillDirection | undefined,
-): 'left' | 'right' {
-  const directEdge = edges.find((edge) => {
-    const source = String(edge.source || edge.from || '').trim();
-    const target = String(edge.target || edge.to || '').trim();
-    return (source === nodeId && target === anchorId) || (source === anchorId && target === nodeId);
-  });
-  if (directEdge) {
-    const source = String(directEdge.source || directEdge.from || '').trim();
-    return source === nodeId ? 'left' : 'right';
-  }
-  return direction === 'in' ? 'left' : 'right';
-}
-
-function placeDrillColumn(
-  nodes: CaseGraphData['nodes'],
-  anchorX: number,
-  anchorY: number,
-  side: 'left' | 'right',
-  occupied: DrillSlot[],
-): void {
-  const sorted = [...nodes].sort((left, right) => String(left.label || left.name || left.id).localeCompare(String(right.label || right.name || right.id), 'zh-Hans-CN'));
-  const middle = (sorted.length - 1) / 2;
-  sorted.forEach((node, index) => {
-    const preferredY = anchorY + (index - middle) * DRILL_NODE_ROW_GAP;
-    const point = findAvailableDrillSlot(anchorX, preferredY, side, occupied);
-    node.x = point.x;
-    node.y = point.y;
-    occupied.push(toDrillSlot(point.x, point.y));
-  });
-}
-
-type DrillSlot = { left: number; right: number; top: number; bottom: number };
-
-function buildOccupiedDrillSlots(
-  nodes: CaseGraphData['nodes'],
-  currentNodeIds: Set<string>,
-): DrillSlot[] {
-  return nodes
-    .filter((node) => currentNodeIds.has(String(node.id || '').trim()))
-    .map((node) => {
-      const x = finiteNumber(node.x);
-      const y = finiteNumber(node.y);
-      return x == null || y == null ? null : toDrillSlot(x, y);
-    })
-    .filter((slot): slot is DrillSlot => Boolean(slot));
-}
-
-function findAvailableDrillSlot(
-  anchorX: number,
-  preferredY: number,
-  side: 'left' | 'right',
-  occupied: DrillSlot[],
-): GraphNodePoint {
-  const direction = side === 'left' ? -1 : 1;
-  const yOffsets = buildDrillYOffsetCandidates();
-  for (let column = 1; column <= 8; column += 1) {
-    const x = anchorX + direction * DRILL_NODE_COLUMN_GAP * column;
-    for (const yOffset of yOffsets) {
-      const y = preferredY + yOffset;
-      if (!doesDrillSlotCollide(toDrillSlot(x, y), occupied)) {
-        return { x, y };
-      }
-    }
-  }
-  return {
-    x: anchorX + direction * DRILL_NODE_COLUMN_GAP * 9,
-    y: preferredY,
-  };
-}
-
-function buildDrillYOffsetCandidates(): number[] {
-  const offsets = [0];
-  for (let step = 1; step <= 12; step += 1) {
-    offsets.push(step * DRILL_NODE_ROW_GAP, -step * DRILL_NODE_ROW_GAP);
-  }
-  return offsets;
-}
-
-function toDrillSlot(x: number, y: number): DrillSlot {
-  const halfWidth = DRILL_NODE_WIDTH / 2 + DRILL_NODE_COLLISION_PADDING_X;
-  const halfHeight = DRILL_NODE_HEIGHT / 2 + DRILL_NODE_COLLISION_PADDING_Y;
-  return {
-    left: x - halfWidth,
-    right: x + halfWidth,
-    top: y - halfHeight,
-    bottom: y + halfHeight,
-  };
-}
-
-function doesDrillSlotCollide(candidate: DrillSlot, occupied: DrillSlot[]): boolean {
-  return occupied.some((slot) => (
-    candidate.left < slot.right &&
-    candidate.right > slot.left &&
-    candidate.top < slot.bottom &&
-    candidate.bottom > slot.top
-  ));
 }
 
 function finiteNumber(value: unknown): number | null {
@@ -4898,21 +4985,236 @@ function applyNodePositions(
   };
 }
 
+function applyGraphLayoutPositions(
+  graphData: CaseGraphData | null,
+  layout: CaseGraphLayoutState,
+): CaseGraphData | null {
+  const positionedGraphData = applyNodePositions(graphData, layout.nodePositions);
+  if (!positionedGraphData) {
+    return positionedGraphData;
+  }
+  const groupPositions = Object.fromEntries(
+    Object.entries(layout.groupLayout ?? {})
+      .filter(([, groupState]) => groupState?.collapsedPosition)
+      .map(([groupId, groupState]) => [groupId, groupState.collapsedPosition]),
+  );
+  return applyInvestigationGroupPositions(positionedGraphData, groupPositions);
+}
+
+function applyInvestigationGroupPositions(
+  graphData: CaseGraphData | null,
+  positions: Record<string, GraphNodePoint>,
+): CaseGraphData | null {
+  if (!graphData || !Object.keys(positions).length) {
+    return graphData;
+  }
+  return {
+    ...graphData,
+    investigationGroups: (graphData.investigationGroups ?? []).map((group) => {
+      const point = positions[group.id];
+      return point ? { ...group, x: point.x, y: point.y } : group;
+    }),
+  };
+}
+
+function resolveInvestigationGroupDragPositions(
+  graphData: CaseGraphData | null,
+  positions: Record<string, GraphNodePoint>,
+): Record<string, GraphNodePoint> {
+  const groupIds = new Set((graphData?.investigationGroups ?? []).map((group) => group.id));
+  return Object.fromEntries(
+    Object.entries(positions).filter(([nodeId, point]) => groupIds.has(nodeId) && finiteNumber(point.x) != null && finiteNumber(point.y) != null),
+  );
+}
+
+function applyGroupDragPositionsToLayout(
+  groupLayout: CaseGraphLayoutState['groupLayout'],
+  graphData: CaseGraphData | null,
+  positions: Record<string, GraphNodePoint>,
+): CaseGraphLayoutState['groupLayout'] {
+  if (!Object.keys(positions).length) {
+    return { ...(groupLayout ?? {}) };
+  }
+  const groupsById = new Map((graphData?.investigationGroups ?? []).map((group) => [group.id, group]));
+  const next = { ...(groupLayout ?? {}) };
+  for (const [groupId, point] of Object.entries(positions)) {
+    const group = groupsById.get(groupId);
+    if (!group) continue;
+    next[groupId] = {
+      groupId,
+      collapsedPosition: { x: point.x, y: point.y },
+      memberPositionsBeforeCollapse: next[groupId]?.memberPositionsBeforeCollapse ?? collectInvestigationGroupMemberPositions(graphData, group.memberNodeIds ?? []),
+      locked: true,
+    };
+  }
+  return next;
+}
+
+function resolveMovedGroupLayoutPositions(
+  groupLayout: CaseGraphLayoutState['groupLayout'],
+  movedPositions: Record<string, GraphNodePoint>,
+): Record<string, GraphNodePoint> {
+  return Object.fromEntries(
+    Object.keys(movedPositions)
+      .map((groupId) => {
+        const point = groupLayout?.[groupId]?.collapsedPosition;
+        return point ? [groupId, point] : null;
+      })
+      .filter((entry): entry is [string, GraphNodePoint] => Boolean(entry)),
+  );
+}
+
+function collectInvestigationGroupMemberPositions(
+  graphData: CaseGraphData | null,
+  memberNodeIds: string[],
+): Record<string, GraphNodePoint> {
+  const nodeById = new Map((graphData?.nodes ?? []).map((node) => [node.id, node]));
+  const positions: Record<string, GraphNodePoint> = {};
+  for (const nodeId of memberNodeIds) {
+    const point = resolveNodePoint(nodeById.get(nodeId) ?? null, {});
+    if (point) {
+      positions[nodeId] = point;
+    }
+  }
+  return positions;
+}
+
+function layoutStateFromPlan(plan: LayoutPlan, previous?: CaseGraphLayoutState): CaseGraphLayoutState {
+  return {
+    version: 2,
+    nodePositions: { ...plan.nodePositions },
+    positionMeta: { ...plan.positionMeta },
+    groupLayout: { ...plan.groupLayout },
+    viewport: previous?.viewport ?? { x: 0, y: 0, zoom: 1 },
+  };
+}
+
+function addedNodeIdsFromResult(result: { delta?: Partial<CaseGraphRelationResponse['delta']> }): string[] {
+  return (result.delta.addedNodes ?? [])
+    .map((node) => String(node.id || '').trim())
+    .filter(Boolean);
+}
+
+function resolvePrimaryNodeIdsForAccounts(
+  graphData: CaseGraphData | null,
+  selectedAccountIds: string[],
+): string[] {
+  const selected = new Set(selectedAccountIds.map((item) => String(item || '').trim()).filter(Boolean));
+  if (!selected.size) return [];
+  return (graphData?.nodes ?? [])
+    .filter((node) => {
+      const values = [
+        node.id,
+        node.accountId,
+        node.tradeCard,
+        ...(node.accounts ?? []).flatMap((account) => [account.accountId, account.tradeCard]),
+      ].map((item) => String(item || '').trim());
+      return values.some((value) => selected.has(value));
+    })
+    .map((node) => node.id);
+}
+
+function applyLayoutEventToTabPatch(
+  tab: GraphTabState,
+  graphData: CaseGraphData | null,
+  originData: CaseGraphOriginData | null,
+  event: LayoutEvent,
+): { graphData: CaseGraphData | null; originData: CaseGraphOriginData | null; layout: CaseGraphLayoutState; plan: LayoutPlan } {
+  const previousLayout = normalizeLayoutState(tab.layout);
+  const layoutEvent = inferAddedNodeIdsForLayoutEvent(event, graphData, previousLayout);
+  const plan = computeCaseGraphLayoutPlan({
+    graphData,
+    previousLayout,
+    event: layoutEvent,
+    ...LAYOUT_ENGINE_DIMENSIONS,
+  });
+  const positionedGraphData = applyGraphLayoutPositions(graphData, layoutStateFromPlan(plan, tab.layout));
+  const positionedOriginData = originData && positionedGraphData
+    ? { ...originData, nodes: positionedGraphData.nodes, money: positionedGraphData.edges }
+    : originData;
+  return {
+    graphData: positionedGraphData,
+    originData: positionedOriginData,
+    layout: layoutStateFromPlan(plan, tab.layout),
+    plan,
+  };
+}
+
+export function applyLayoutEventToTabPatchForTest(
+  tab: GraphTabState,
+  graphData: CaseGraphData | null,
+  originData: CaseGraphOriginData | null,
+  event: LayoutEvent,
+): { graphData: CaseGraphData | null; originData: CaseGraphOriginData | null; layout: CaseGraphLayoutState; plan: LayoutPlan } {
+  return applyLayoutEventToTabPatch(tab, graphData, originData, event);
+}
+
+function inferAddedNodeIdsForLayoutEvent(
+  event: LayoutEvent,
+  graphData: CaseGraphData | null,
+  previousLayout: CaseGraphLayoutState,
+): LayoutEvent {
+  if (!graphData || !('addedNodeIds' in event)) {
+    return event;
+  }
+  const previousNodeIds = new Set(Object.keys(previousLayout.nodePositions ?? {}));
+  const inferredAddedNodeIds = graphData.nodes
+    .map((node) => String(node.id || '').trim())
+    .filter((nodeId) => nodeId && !previousNodeIds.has(nodeId));
+  if (!inferredAddedNodeIds.length) {
+    return event;
+  }
+  const addedNodeIds = [...new Set([...(event.addedNodeIds ?? []), ...inferredAddedNodeIds])];
+  return { ...event, addedNodeIds };
+}
+
+async function applyInitialLayoutEventToTabPatch(
+  tab: GraphTabState,
+  graphData: CaseGraphData | null,
+  originData: CaseGraphOriginData | null,
+  event: Extract<LayoutEvent, { type: 'initial_graph' }>,
+): Promise<{ graphData: CaseGraphData | null; originData: CaseGraphOriginData | null; layout: CaseGraphLayoutState; plan: LayoutPlan }> {
+  const plan = await computeInitialG6LayoutPlan({
+    graphData,
+    previousLayout: normalizeLayoutState(tab.layout),
+    event,
+    ...LAYOUT_ENGINE_DIMENSIONS,
+  });
+  const positionedGraphData = applyGraphLayoutPositions(graphData, layoutStateFromPlan(plan, tab.layout));
+  const positionedOriginData = originData && positionedGraphData
+    ? { ...originData, nodes: positionedGraphData.nodes, money: positionedGraphData.edges }
+    : originData;
+  return {
+    graphData: positionedGraphData,
+    originData: positionedOriginData,
+    layout: layoutStateFromPlan(plan, tab.layout),
+    plan,
+  };
+}
+
 function hasGraphPositionsChanged(
   graphData: CaseGraphData,
   positions: Record<string, GraphNodePoint>,
 ): boolean {
-  return graphData.nodes.some((node) => {
+  const hasNodeChange = graphData.nodes.some((node) => {
     const point = positions[node.id];
     if (!point) return false;
     return finiteNumber(node.x) !== point.x || finiteNumber(node.y) !== point.y;
+  });
+  if (hasNodeChange) {
+    return true;
+  }
+  return (graphData.investigationGroups ?? []).some((group) => {
+    const point = positions[group.id];
+    if (!point) return false;
+    return finiteNumber(group.x) !== point.x || finiteNumber(group.y) !== point.y;
   });
 }
 
 function shouldPersistGraphPositions(
   graphData: CaseGraphData | null,
   positions: Record<string, GraphNodePoint>,
-  reason: 'layout' | 'drag',
+  reason: 'drag',
 ): graphData is CaseGraphData {
   return reason === 'drag' &&
     Boolean(graphData?.nodes.length) &&
@@ -4937,95 +5239,26 @@ function buildRelationOptions(
   return Object.keys(nodePositions).length ? { nodePositions } : {};
 }
 
-function buildInvestigationGroupRelationOptions(
+function investigationGroupLayoutEvent(
   graphData: CaseGraphData | null,
-  positions: Record<string, GraphNodePoint>,
   operationPayload: Omit<ApplyCaseGraphInvestigationGroupPayload, 'caseId' | 'graphId' | 'options'>,
-): Record<string, unknown> {
-  const options = buildRelationOptions(graphData, positions);
-  if (!graphData || !['expand', 'ungroup', 'remove_member'].includes(operationPayload.operation)) {
-    return options;
+): LayoutEvent {
+  const group = resolveInvestigationGroupForOperation(graphData, operationPayload);
+  const groupId = String(group?.id || operationPayload.groupId || '').trim();
+  const memberNodeIds = resolveInvestigationGroupMemberNodeIds(group, operationPayload);
+  if (!groupId || !memberNodeIds.length) {
+    return { type: 'layout_refresh' };
   }
-  const nodePositions = options.nodePositions;
-  if (!nodePositions || typeof nodePositions !== 'object') {
-    return options;
+  if (operationPayload.operation === 'collapse' || operationPayload.operation === 'create') {
+    return { type: 'group_collapse', groupId, memberNodeIds };
   }
-  const groupId = String(operationPayload.groupId || '').trim();
-  const group = (graphData.investigationGroups ?? []).find((item) => item.id === groupId);
-  if (!group?.collapsed) {
-    return options;
+  if (operationPayload.operation === 'expand') {
+    return { type: 'group_expand', groupId, memberNodeIds };
   }
-  const ignoredNodeIds = new Set<string>();
-  if (operationPayload.operation === 'expand' || operationPayload.operation === 'ungroup') {
-    for (const nodeId of group.memberNodeIds ?? []) {
-      ignoredNodeIds.add(String(nodeId || '').trim());
-    }
-  } else {
-    for (const nodeId of operationPayload.memberNodeIds ?? []) {
-      ignoredNodeIds.add(String(nodeId || '').trim());
-    }
+  if (operationPayload.operation === 'ungroup') {
+    return { type: 'group_split', groupId, memberNodeIds };
   }
-  const nextNodePositions = { ...(nodePositions as Record<string, GraphNodePoint>) };
-  for (const nodeId of ignoredNodeIds) {
-    delete nextNodePositions[nodeId];
-  }
-  return Object.keys(nextNodePositions).length ? { ...options, nodePositions: nextNodePositions } : {};
-}
-
-const GRAPH_NODE_COLLISION_WIDTH = 248;
-const GRAPH_NODE_COLLISION_HEIGHT = 84;
-const GRAPH_NODE_COLLISION_X_GAP = 24;
-const GRAPH_NODE_COLLISION_Y_GAP = 16;
-const GRAPH_NODE_RESTORE_STEP_Y = GRAPH_NODE_COLLISION_HEIGHT + 40;
-
-function buildRestoreNodesRelationOptions(
-  graphData: CaseGraphData | null,
-  positions: Record<string, GraphNodePoint>,
-  restoreNodeIds: string[],
-): Record<string, unknown> {
-  if (!graphData) {
-    return {};
-  }
-  const restoreSet = new Set(restoreNodeIds.map((nodeId) => String(nodeId || '').trim()).filter(Boolean));
-  if (!restoreSet.size) {
-    return buildRelationOptions(graphData, positions);
-  }
-
-  const nodeById = new Map(graphData.nodes.map((node) => [node.id, node]));
-  const { hiddenNodeIds, groupAnchorNodeIds } = resolveCollapsedGroupOccupancy(graphData);
-  const nextPositions: Record<string, GraphNodePoint> = {};
-  const occupied = new Map<string, GraphNodePoint>();
-
-  for (const node of graphData.nodes) {
-    const nodeId = String(node.id || '').trim();
-    if (!nodeId || hiddenNodeIds.has(nodeId) || restoreSet.has(nodeId)) {
-      continue;
-    }
-    const point = resolveNodePoint(node, positions);
-    if (!point) {
-      continue;
-    }
-    nextPositions[nodeId] = point;
-    if (!node.isExcluded || groupAnchorNodeIds.has(nodeId)) {
-      occupied.set(nodeId, point);
-    }
-  }
-
-  for (const nodeId of restoreSet) {
-    const node = nodeById.get(nodeId);
-    if (!node) {
-      continue;
-    }
-    const preferred = resolveNodePoint(node, positions);
-    if (!preferred) {
-      continue;
-    }
-    const point = resolveNonCollidingGraphPoint(preferred, occupied);
-    nextPositions[nodeId] = point;
-    occupied.set(nodeId, point);
-  }
-
-  return Object.keys(nextPositions).length ? { nodePositions: nextPositions } : {};
+  return { type: 'layout_refresh' };
 }
 
 function resolveInvestigationGroupOperationPosition(
@@ -5035,10 +5268,8 @@ function resolveInvestigationGroupOperationPosition(
   if (!graphData) {
     return null;
   }
-  const nodeById = new Map(graphData.nodes.map((node) => [node.id, node]));
   if (operationPayload.operation === 'create') {
-    const firstNodeId = operationPayload.nodeIds?.[0];
-    return firstNodeId ? resolveNodePoint(nodeById.get(firstNodeId) ?? null, {}) : null;
+    return resolveNodesBoundingBoxCenter(graphData, operationPayload.nodeIds ?? []);
   }
   const groupId = String(operationPayload.groupId || '').trim();
   const group = groupId
@@ -5052,33 +5283,57 @@ function resolveInvestigationGroupOperationPosition(
   if (groupX != null && groupY != null) {
     return { x: groupX, y: groupY };
   }
-  const firstNodeId = group.memberNodeIds?.[0];
-  return firstNodeId ? resolveNodePoint(nodeById.get(firstNodeId) ?? null, {}) : null;
+  return resolveNodesBoundingBoxCenter(graphData, group.memberNodeIds ?? []);
 }
 
-function resolveCollapsedGroupOccupancy(graphData: CaseGraphData): {
-  hiddenNodeIds: Set<string>;
-  groupAnchorNodeIds: Set<string>;
-} {
-  const nodeIds = new Set(graphData.nodes.map((node) => node.id));
-  const hiddenNodeIds = new Set<string>();
-  const groupAnchorNodeIds = new Set<string>();
-  for (const group of graphData.investigationGroups ?? []) {
-    if (!group.collapsed) {
-      continue;
-    }
-    const members = (group.memberNodeIds ?? [])
-      .map((nodeId) => String(nodeId || '').trim())
-      .filter((nodeId) => nodeId && nodeIds.has(nodeId));
-    const anchor = members[0];
-    if (anchor) {
-      groupAnchorNodeIds.add(anchor);
-    }
-    for (const nodeId of members.slice(1)) {
-      hiddenNodeIds.add(nodeId);
-    }
+function resolveInvestigationGroupForOperation(
+  graphData: CaseGraphData | null,
+  operationPayload: Omit<ApplyCaseGraphInvestigationGroupPayload, 'caseId' | 'graphId' | 'options'>,
+) {
+  const groups = graphData?.investigationGroups ?? [];
+  const groupId = String(operationPayload.groupId || '').trim();
+  if (groupId) {
+    return groups.find((group) => group.id === groupId) ?? null;
   }
-  return { hiddenNodeIds, groupAnchorNodeIds };
+  const payloadNodeIds = new Set((operationPayload.nodeIds ?? []).map((nodeId) => String(nodeId || '').trim()).filter(Boolean));
+  if (!payloadNodeIds.size) {
+    return null;
+  }
+  return groups.find((group) => {
+    const members = new Set((group.memberNodeIds ?? []).map((nodeId) => String(nodeId || '').trim()).filter(Boolean));
+    return payloadNodeIds.size === members.size && [...payloadNodeIds].every((nodeId) => members.has(nodeId));
+  }) ?? null;
+}
+
+function resolveInvestigationGroupMemberNodeIds(
+  group: CaseGraphData['investigationGroups'][number] | null | undefined,
+  operationPayload: Omit<ApplyCaseGraphInvestigationGroupPayload, 'caseId' | 'graphId' | 'options'>,
+): string[] {
+  const ids = operationPayload.nodeIds?.length
+    ? operationPayload.nodeIds
+    : operationPayload.memberNodeIds?.length
+      ? operationPayload.memberNodeIds
+      : group?.memberNodeIds ?? [];
+  return ids.map((nodeId) => String(nodeId || '').trim()).filter(Boolean);
+}
+
+function resolveNodesBoundingBoxCenter(
+  graphData: CaseGraphData,
+  nodeIds: string[],
+): GraphNodePoint | null {
+  const nodeById = new Map(graphData.nodes.map((node) => [node.id, node]));
+  const points = nodeIds
+    .map((nodeId) => resolveNodePoint(nodeById.get(nodeId) ?? null, {}))
+    .filter((point): point is GraphNodePoint => Boolean(point));
+  if (!points.length) {
+    return null;
+  }
+  const xs = points.map((point) => point.x);
+  const ys = points.map((point) => point.y);
+  return {
+    x: (Math.min(...xs) + Math.max(...xs)) / 2,
+    y: (Math.min(...ys) + Math.max(...ys)) / 2,
+  };
 }
 
 function resolveNodePoint(
@@ -5093,40 +5348,6 @@ function resolveNodePoint(
   const x = finiteNumber(point?.x) ?? finiteNumber(node.x);
   const y = finiteNumber(point?.y) ?? finiteNumber(node.y);
   return x == null || y == null ? null : { x, y };
-}
-
-function resolveNonCollidingGraphPoint(
-  preferred: GraphNodePoint,
-  occupied: Map<string, GraphNodePoint>,
-): GraphNodePoint {
-  const candidates: GraphNodePoint[] = [preferred];
-  for (let step = 1; step <= 12; step += 1) {
-    candidates.push({ x: preferred.x, y: preferred.y + GRAPH_NODE_RESTORE_STEP_Y * step });
-  }
-  for (let step = 1; step <= 6; step += 1) {
-    const sideOffset = GRAPH_NODE_COLLISION_WIDTH + 56;
-    candidates.push(
-      { x: preferred.x + sideOffset, y: preferred.y + GRAPH_NODE_RESTORE_STEP_Y * step },
-      { x: preferred.x - sideOffset, y: preferred.y + GRAPH_NODE_RESTORE_STEP_Y * step },
-      { x: preferred.x, y: preferred.y - GRAPH_NODE_RESTORE_STEP_Y * step },
-    );
-  }
-  return candidates.find((point) => !hasGraphPointCollision(point, occupied)) ?? preferred;
-}
-
-function hasGraphPointCollision(
-  point: GraphNodePoint,
-  occupied: Map<string, GraphNodePoint>,
-): boolean {
-  for (const existing of occupied.values()) {
-    if (
-      Math.abs(existing.x - point.x) < GRAPH_NODE_COLLISION_WIDTH + GRAPH_NODE_COLLISION_X_GAP &&
-      Math.abs(existing.y - point.y) < GRAPH_NODE_COLLISION_HEIGHT + GRAPH_NODE_COLLISION_Y_GAP
-    ) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function buildRelationSeedFromNode(

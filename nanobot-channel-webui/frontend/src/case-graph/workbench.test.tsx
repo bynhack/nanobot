@@ -58,7 +58,255 @@ describe('case graph workbench', () => {
     expect(tab.drillType).toBe(2);
   });
 
-  it('merges drill results as an extension from the selected node without moving existing nodes', async () => {
+  it('preserves persisted generated and restored layout positions when loading graph state', async () => {
+    vi.stubGlobal('window', {
+      __NANOBOT_WEBUI_BOOTSTRAP__: { title: 'Nanobot', authRequired: false },
+      localStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+      },
+      innerWidth: 1440,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    });
+    const { graphStateToTabForTest } = await import('./workbench');
+    const generatedNodeIds = ['account:107', 'account:55', 'account:9'];
+
+    const state = {
+      schemaVersion: 'case-graph.state.v1',
+      caseId: '37',
+      graphId: 'graph-1',
+      graphName: '图1',
+      revision: 1,
+      updatedAt: '2026-01-01T00:00:00Z',
+      lastStepId: '0002',
+      graph: {
+        nodes: [
+          { id: 'account:35', label: '冯燕青' },
+          { id: 'subject:suspect:1', label: '嫌疑人' },
+          ...generatedNodeIds.map((id) => ({ id, label: id })),
+        ],
+        edges: [
+          { id: 'money:account:35->subject:suspect:1', from: 'account:35', to: 'subject:suspect:1', source: 'account:35', target: 'subject:suspect:1', tradeAmount: 40000, tradeCount: 2 },
+          ...generatedNodeIds.map((id) => ({
+            id: `money:account:35->${id}`,
+            from: 'account:35',
+            to: id,
+            source: 'account:35',
+            target: id,
+            tradeAmount: 100,
+            tradeCount: 1,
+          })),
+        ],
+        tradeFacts: {},
+        tradeCards: [],
+        groupMap: {},
+        sourceSelectId: [],
+        summarySelectedAccountId: [],
+        summarySelectedAccountName: [],
+        excludedTrades: [],
+        excludedAccountId: [],
+        excludedAccountName: [],
+        layout: {
+          version: 2,
+          nodePositions: {
+            'account:35': { x: 72, y: -72 },
+            'subject:suspect:1': { x: 504, y: 408 },
+            'account:107': { x: 528, y: 120 },
+            'account:55': { x: 456, y: -192 },
+            'account:9': { x: 456, y: 288 },
+          },
+          positionMeta: {
+            'account:35': { source: 'initial' },
+            'subject:suspect:1': { source: 'initial' },
+            'account:107': { source: 'restored', anchorNodeIds: ['account:35'] },
+            'account:55': { source: 'generated', anchorNodeIds: ['account:35'] },
+            'account:9': { source: 'generated', anchorNodeIds: ['account:35'] },
+          },
+          groupLayout: {},
+          viewport: { x: 0, y: 0, zoom: 1 },
+        },
+        filters: { minAmount: null, maxAmount: null, startTime: '', endTime: '' },
+        drillNums: 3,
+        drillType: 2,
+        excludedNodes: [],
+        manualEdges: [],
+        annotations: [],
+        graphData: null,
+      },
+    } as const;
+    const tab = graphStateToTabForTest(state, { repairGeneratedLayout: true });
+
+    expect(tab.layout.nodePositions['account:107']).toEqual({ x: 528, y: 120 });
+    expect(tab.graphData?.nodes.find((node) => node.id === 'account:107')?.x).toBe(528);
+    expect(tab.graphData?.nodes.find((node) => node.id === 'account:107')?.y).toBe(120);
+    expect(tab.layout.nodePositions['account:35']).toEqual({ x: 72, y: -72 });
+    for (const nodeId of generatedNodeIds) {
+      expect(tab.layout.nodePositions[nodeId]).toEqual(state.graph.layout.nodePositions[nodeId]);
+    }
+  });
+
+  it('repairs generated layout positions that overlap existing loaded nodes', async () => {
+    vi.stubGlobal('window', {
+      __NANOBOT_WEBUI_BOOTSTRAP__: { title: 'Nanobot', authRequired: false },
+      localStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+      },
+      innerWidth: 1440,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    });
+    const { graphStateToTabForTest } = await import('./workbench');
+
+    const state = {
+      schemaVersion: 'case-graph.state.v1',
+      caseId: '37',
+      graphId: 'graph-1',
+      graphName: '图1',
+      revision: 3,
+      updatedAt: '2026-01-01T00:00:00Z',
+      lastStepId: '0003',
+      graph: {
+        nodes: [
+          { id: 'account:35', label: '冯燕青' },
+          { id: 'cash:deposit:239', label: '现金存入', type: 'cash', isCash: true },
+          { id: 'subject:suspect:1', label: '伍华中' },
+          { id: 'account:114', label: '新增上游' },
+        ],
+        edges: [
+          { id: 'account:35->subject:suspect:1', from: 'account:35', to: 'subject:suspect:1', source: 'account:35', target: 'subject:suspect:1', tradeAmount: 40000, tradeCount: 2 },
+          { id: 'account:114->account:35', from: 'account:114', to: 'account:35', source: 'account:114', target: 'account:35', tradeAmount: 30000, tradeCount: 3 },
+        ],
+        tradeFacts: {},
+        tradeCards: [],
+        groupMap: {},
+        sourceSelectId: [],
+        summarySelectedAccountId: [],
+        summarySelectedAccountName: [],
+        excludedTrades: [],
+        excludedAccountId: [],
+        excludedAccountName: [],
+        layout: {
+          version: 2,
+          nodePositions: {
+            'account:35': { x: 72, y: -72 },
+            'cash:deposit:239': { x: 72, y: 24 },
+            'subject:suspect:1': { x: 504, y: 408 },
+            'account:114': { x: 0, y: -96 },
+          },
+          positionMeta: {
+            'account:35': { source: 'initial' },
+            'cash:deposit:239': { source: 'initial' },
+            'subject:suspect:1': { source: 'initial' },
+            'account:114': { source: 'generated', anchorNodeIds: ['account:35'] },
+          },
+          groupLayout: {},
+          viewport: { x: 0, y: 0, zoom: 1 },
+        },
+        filters: { minAmount: null, maxAmount: null, startTime: '', endTime: '' },
+        drillNums: 3,
+        drillType: 2,
+        excludedNodes: [],
+        manualEdges: [],
+        annotations: [],
+        graphData: null,
+      },
+    } as const;
+
+    const tab = graphStateToTabForTest(state, { repairGeneratedLayout: true });
+
+    expect(tab.layout.nodePositions['account:35']).toEqual({ x: 72, y: -72 });
+    expect(tab.layout.nodePositions['account:114'].x).toBeLessThan(72 - 248);
+    expect(nodesOverlap(tab.layout.nodePositions['account:114'], tab.layout.nodePositions['account:35'])).toBe(false);
+    expect(tab.graphData?.nodes.find((node) => node.id === 'account:114')?.x).toBe(tab.layout.nodePositions['account:114'].x);
+  });
+
+  it('ignores legacy merge-assigned coordinates for nodes absent from the previous layout', async () => {
+    vi.stubGlobal('window', {
+      __NANOBOT_WEBUI_BOOTSTRAP__: { title: 'Nanobot', authRequired: false },
+      localStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+      },
+      innerWidth: 1440,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    });
+    const { applyLayoutEventToTabPatchForTest } = await import('./workbench');
+
+    const previousLayout = {
+      version: 2,
+      nodePositions: {
+        'account:35': { x: 72, y: -72 },
+        'cash:deposit:239': { x: 72, y: 24 },
+        'subject:suspect:1': { x: 504, y: 408 },
+      },
+      positionMeta: {
+        'account:35': { source: 'initial' },
+        'cash:deposit:239': { source: 'initial' },
+        'subject:suspect:1': { source: 'initial' },
+      },
+      groupLayout: {},
+      viewport: { x: 0, y: 0, zoom: 1 },
+    } as const;
+    const graphData = {
+      nodes: [
+        { id: 'account:35', label: '冯燕青', x: 72, y: -72 },
+        { id: 'cash:deposit:239', label: '现金存入', type: 'cash', isCash: true, x: 72, y: 24 },
+        { id: 'subject:suspect:1', label: '伍华中', x: 504, y: 408 },
+        { id: 'account:9', label: '蔡召东', x: 0, y: -96 },
+        { id: 'account:114', label: '新增上游', x: 0, y: 0 },
+      ],
+      edges: [
+        { id: 'account:35->subject:suspect:1', from: 'account:35', to: 'subject:suspect:1', source: 'account:35', target: 'subject:suspect:1', tradeAmount: 40000, tradeCount: 2 },
+        { id: 'account:9->account:35', from: 'account:9', to: 'account:35', source: 'account:9', target: 'account:35', tradeAmount: 115000, tradeCount: 18 },
+        { id: 'account:114->account:35', from: 'account:114', to: 'account:35', source: 'account:114', target: 'account:35', tradeAmount: 30000, tradeCount: 3 },
+      ],
+    };
+    const tab = {
+      graphId: 'graph-1',
+      graphName: '图1',
+      caseId: '37',
+      graphContent: '',
+      selectedAccountIds: [],
+      tradeCards: [],
+      queryBaselineTradeCards: [],
+      graphData: null,
+      originData: null,
+      tradeFacts: {},
+      groupMap: {},
+      sourceSelectId: [],
+      excludedTrades: [],
+      excludedAccountId: null,
+      excludedNodes: [],
+      showExcludedNodes: false,
+      drillNums: 10,
+      drillType: 1,
+      minAmount: null,
+      maxAmount: null,
+      startTime: '',
+      endTime: '',
+      appliedFilters: { minAmount: '', maxAmount: '', startTime: '', endTime: '' },
+      chatId: '',
+      loaded: true,
+      layout: previousLayout,
+    };
+
+    const patch = applyLayoutEventToTabPatchForTest(
+      tab as never,
+      graphData,
+      null,
+      { type: 'relation_drill', anchorNodeIds: ['account:35'], addedNodeIds: [] },
+    );
+
+    expect(patch.layout.nodePositions['account:35']).toEqual({ x: 72, y: -72 });
+    expect(patch.layout.nodePositions['account:9'].x).toBeLessThan(72 - 248);
+    expect(patch.layout.nodePositions['account:114'].x).toBe(patch.layout.nodePositions['account:9'].x);
+    expect(patch.graphData?.nodes.find((node) => node.id === 'account:9')?.x).toBe(patch.layout.nodePositions['account:9'].x);
+  });
+
+  it('merges drill results without taking over layout placement', async () => {
     vi.stubGlobal('window', {
       __NANOBOT_WEBUI_BOOTSTRAP__: { title: 'Nanobot', authRequired: false },
       localStorage: {
@@ -95,11 +343,70 @@ describe('case graph workbench', () => {
 
     expect(merged?.nodes.find((node) => node.id === 'wu')).toMatchObject({ x: 320, y: 240 });
     expect(merged?.nodes.find((node) => node.id === 'feng')).toMatchObject({ x: 560, y: 240 });
-    expect(merged?.nodes.find((node) => node.id === 'chen')?.x).toBeLessThan(320);
+    expect(merged?.nodes.find((node) => node.id === 'chen')).toMatchObject({ id: 'chen', label: '陈某' });
+    expect(merged?.nodes.find((node) => node.id === 'chen')?.x).toBeNull();
     expect(merged?.edges.map((edge) => edge.id).sort()).toEqual(['money:chen->wu', 'money:wu->feng']);
   });
 
-  it('keeps drill extension positions as the layout snapshot to persist', async () => {
+  it('keeps collapsed investigation groups when drill results add nodes without group payloads', async () => {
+    vi.stubGlobal('window', {
+      __NANOBOT_WEBUI_BOOTSTRAP__: { title: 'Nanobot', authRequired: false },
+      localStorage: {
+        getItem: () => null,
+        setItem: () => undefined,
+      },
+      innerWidth: 1440,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    });
+    const { mergeGraphDataForTest } = await import('./workbench');
+
+    const merged = mergeGraphDataForTest(
+      {
+        nodes: [
+          { id: 'account:35', label: '冯燕青', x: 72, y: -72 },
+          { id: 'account:39', label: '蔡金海', x: 960, y: 264 },
+          { id: 'account:229', label: '冯多', x: 960, y: 360 },
+        ],
+        edges: [
+          { id: 'account:35->account:39', from: 'account:35', to: 'account:39', source: 'account:35', target: 'account:39', tradeAmount: 100, tradeCount: 1 },
+        ],
+        investigationGroups: [
+          {
+            id: 'investigation_group:1',
+            name: '研判组 1',
+            memberNodeIds: ['account:39', 'account:229'],
+            collapsed: true,
+            x: 960,
+            y: 312,
+          },
+        ],
+      },
+      {
+        nodes: [
+          { id: 'account:35', label: '冯燕青' },
+          { id: 'account:107', label: '冯光彩' },
+        ],
+        edges: [
+          { id: 'account:35->account:107', from: 'account:35', to: 'account:107', source: 'account:35', target: 'account:107', tradeAmount: 50, tradeCount: 1 },
+        ],
+      },
+      { mode: 'drill', direction: 'out', anchorNodeId: 'account:35' },
+    );
+
+    expect(merged?.investigationGroups).toEqual([
+      expect.objectContaining({
+        id: 'investigation_group:1',
+        name: '研判组 1',
+        memberNodeIds: ['account:39', 'account:229'],
+        collapsed: true,
+        x: 960,
+        y: 312,
+      }),
+    ]);
+  });
+
+  it('keeps relation options limited to positioned nodes after data merge', async () => {
     vi.stubGlobal('window', {
       __NANOBOT_WEBUI_BOOTSTRAP__: { title: 'Nanobot', authRequired: false },
       localStorage: {
@@ -135,16 +442,10 @@ describe('case graph workbench', () => {
 
     expect(merged?.nodes.find((node) => node.id === 'subject:suspect:1')).toMatchObject({ x: 720, y: 355 });
     expect(merged?.nodes.find((node) => node.id === 'account:35')).toMatchObject({ x: 346, y: 68 });
-    expect(merged?.nodes.find((node) => node.id === 'account:107')?.x).toBeLessThan(346);
-    expect(options.nodePositions).toMatchObject({
+    expect(merged?.nodes.find((node) => node.id === 'account:107')?.x).toBeNull();
+    expect(options.nodePositions).toEqual({
       'subject:suspect:1': { x: 720, y: 355 },
       'account:35': { x: 346, y: 68 },
-      'account:107': merged?.nodes.find((node) => node.id === 'account:107')
-        ? {
-            x: merged.nodes.find((node) => node.id === 'account:107')!.x,
-            y: merged.nodes.find((node) => node.id === 'account:107')!.y,
-          }
-        : undefined,
     });
   });
 
@@ -327,7 +628,7 @@ describe('case graph workbench', () => {
     });
   });
 
-  it('moves restored nodes away from collapsed group anchors in relation request options', async () => {
+  it('keeps relation request options layout-neutral when restoring nodes', async () => {
     vi.stubGlobal('window', {
       __NANOBOT_WEBUI_BOOTSTRAP__: { title: 'Nanobot', authRequired: false },
       localStorage: {
@@ -361,8 +662,12 @@ describe('case graph workbench', () => {
       ['restore'],
     ) as { nodePositions: Record<string, { x: number; y: number }> };
 
-    expect(options.nodePositions.restore).toEqual({ x: 320, y: 492 });
-    expect(options.nodePositions['hidden-member']).toBeUndefined();
+    expect(options.nodePositions).toEqual({
+      anchor: { x: 320, y: 120 },
+      'hidden-member': { x: 320, y: 292 },
+      restore: { x: 320, y: 120 },
+      below: { x: 320, y: 292 },
+    });
   });
 
   it('persists graph positions only after an explicit node drag', async () => {
@@ -380,14 +685,15 @@ describe('case graph workbench', () => {
     const graphData = {
       nodes: [{ id: 'subject:suspect:1', label: '伍华中', x: 100, y: 200 }],
       edges: [],
+      investigationGroups: [{ id: 'group-1', name: '研判组 1', memberNodeIds: ['subject:suspect:1', 'other'], collapsed: true, x: 240, y: 360 }],
     };
     const positions = { 'subject:suspect:1': { x: 320, y: 240 } };
 
-    expect(shouldPersistGraphPositionsForTest(graphData, positions, 'layout')).toBe(false);
     expect(shouldPersistGraphPositionsForTest(graphData, positions, 'drag')).toBe(true);
+    expect(shouldPersistGraphPositionsForTest(graphData, { 'group-1': { x: 360, y: 480 } }, 'drag')).toBe(true);
   });
 
-  it('uses a persisted investigation group position instead of recalculating from member nodes', async () => {
+  it('uses group positions and member bounds for investigation group operations', async () => {
     vi.stubGlobal('window', {
       __NANOBOT_WEBUI_BOOTSTRAP__: { title: 'Nanobot', authRequired: false },
       localStorage: {
@@ -413,14 +719,14 @@ describe('case graph workbench', () => {
     expect(resolveInvestigationGroupOperationPositionForTest(graphData, {
       operation: 'create',
       nodeIds: ['first', 'second'],
-    })).toEqual({ x: 320, y: 120 });
+    })).toEqual({ x: 320, y: 206 });
     expect(resolveInvestigationGroupOperationPositionForTest(graphData, {
       operation: 'collapse',
       groupId: 'group-1',
     })).toEqual({ x: 520, y: 260 });
   });
 
-  it('allows relation-operation layout callbacks to patch the latest step snapshot', async () => {
+  it('builds latest step layout patches from current node positions', async () => {
     vi.stubGlobal('window', {
       __NANOBOT_WEBUI_BOOTSTRAP__: { title: 'Nanobot', authRequired: false },
       localStorage: {
@@ -431,7 +737,7 @@ describe('case graph workbench', () => {
       addEventListener: () => undefined,
       removeEventListener: () => undefined,
     });
-    const { shouldPersistGraphPositionsForTest, shouldPersistLatestStepLayoutForTest } = await import('./workbench');
+    const { shouldPersistLatestStepLayoutForTest } = await import('./workbench');
     const graphData = {
       nodes: [
         { id: 'subject:suspect:1', label: '伍华中' },
@@ -444,7 +750,6 @@ describe('case graph workbench', () => {
       'account:35': { x: 560, y: 240 },
     };
 
-    expect(shouldPersistGraphPositionsForTest(graphData, positions, 'layout')).toBe(false);
     expect(shouldPersistLatestStepLayoutForTest(graphData, positions)).toBe(true);
   });
 

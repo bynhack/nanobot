@@ -8,6 +8,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from .storage_paths import chat_workspaces_root
+except ImportError:  # pragma: no cover - compatibility for direct module loading in tests
+    def chat_workspaces_root(workspace: Path) -> Path:
+        return workspace / "data" / "chat_workspaces"
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -35,7 +41,7 @@ class SessionWorkspaceService:
     """Maintain delivered files for each chat in plugin-owned storage."""
 
     def __init__(self, workspace: Path) -> None:
-        self._root = workspace / ".nanobot_channel_webui" / "workspaces"
+        self._root = chat_workspaces_root(workspace)
         self._root.mkdir(parents=True, exist_ok=True)
 
     @staticmethod

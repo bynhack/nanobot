@@ -77,8 +77,8 @@
 
 - [workbench.tsx](../../frontend/src/case-graph/workbench.tsx)
 - [chat-action-protocol.ts](../../frontend/src/case-graph/chat-action-protocol.ts)
-- `~/.nanobot/workspace/skills/case-graph-analyst/scripts/case_graph_analyst.py`
-- `~/.nanobot/workspace/skills/case-graph-operator/SKILL.md`
+- `~/.casework/workspace/skills/case-graph-analyst/scripts/case_graph_analyst.py`
+- `~/.casework/workspace/skills/case-graph-operator/SKILL.md`
 
 ### 研判组体验仍可继续增强
 

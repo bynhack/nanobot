@@ -21,9 +21,9 @@
 
 本地过程文件也必须作为布局和步骤事实来源：
 
-- `~/.nanobot/workspace/.nanobot_channel_webui/case_graphs/**/graph.json`
-- `~/.nanobot/workspace/.nanobot_channel_webui/case_graphs/**/steps/*.json`
-- `~/.nanobot/workspace/.nanobot_channel_webui/case_graphs/**/facts/trades.jsonl`
+- `~/.casework/workspace/data/case_graphs/**/graph.json`
+- `~/.casework/workspace/data/case_graphs/**/steps/*.json`
+- `~/.casework/workspace/data/case_graphs/**/facts/trades.jsonl`
 
 维护原则：
 

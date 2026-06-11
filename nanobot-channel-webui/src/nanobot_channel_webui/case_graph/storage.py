@@ -12,6 +12,7 @@ from typing import Any, Mapping
 
 from nanobot.config.paths import get_workspace_path
 
+from ..storage_paths import case_graph_contexts_root, case_graphs_root
 from .types import CaseGraphPatch, CaseGraphState, normalize_case_graph_state
 
 
@@ -38,9 +39,9 @@ class CaseGraphStorage:
 
     def __init__(self, *, workspace: Path | None = None) -> None:
         self._workspace = workspace or get_workspace_path()
-        self._root = self._workspace / ".nanobot_channel_webui" / "case_graphs"
+        self._root = case_graphs_root(self._workspace)
         self._root.mkdir(parents=True, exist_ok=True)
-        self._context_root = self._workspace / ".nanobot_channel_webui" / "case_graph_contexts"
+        self._context_root = case_graph_contexts_root(self._workspace)
 
     @staticmethod
     def _file_key(graph_id: str) -> str:

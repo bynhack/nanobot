@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 from typing import Any, Mapping
 
+from ..storage_paths import case_graphs_root
 from .graph_state_types import STEP_SCHEMA_VERSION, legacy_graph_to_document, normalize_graph_document, normalize_layout, now_iso
 
 
@@ -15,7 +16,7 @@ class GraphRepository:
         self._workspace_root = workspace_root
 
     def graph_dir(self, case_id: str, graph_id: str) -> Path:
-        return self._workspace_root / ".nanobot_channel_webui" / "case_graphs" / case_id / graph_id
+        return case_graphs_root(self._workspace_root) / case_id / graph_id
 
     def load_current(self, case_id: str, graph_id: str) -> dict[str, Any]:
         path = self.graph_dir(case_id, graph_id) / "graph.json"

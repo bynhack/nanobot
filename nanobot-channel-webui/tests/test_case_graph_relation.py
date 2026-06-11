@@ -94,8 +94,8 @@ def test_relation_storage_writes_graph_and_step(tmp_path: Path) -> None:
         summary={"addedNodeCount": 0, "addedEdgeCount": 0},
     )
 
-    graph_file = tmp_path / ".nanobot_channel_webui" / "case_graphs" / "37" / "graph-1" / "graph.json"
-    step_file = tmp_path / ".nanobot_channel_webui" / "case_graphs" / "37" / "graph-1" / "steps" / "0001-seed-one-hop.json"
+    graph_file = tmp_path / "data" / "case_graphs" / "37" / "graph-1" / "graph.json"
+    step_file = tmp_path / "data" / "case_graphs" / "37" / "graph-1" / "steps" / "0001-seed-one-hop.json"
     assert graph_file.exists()
     assert step_file.exists()
     assert result["step"]["stepId"] == "0001"
@@ -440,15 +440,15 @@ def test_graph_state_service_writes_current_context_from_relation_state(tmp_path
 
     context_path = (
         tmp_path
-        / ".nanobot_channel_webui"
+        / "data"
         / "case_graph_contexts"
         / "37"
         / "graph-1"
         / "current_context.json"
     )
     assert context_path.exists()
-    assert context["graphFile"].endswith("/case_graphs/37/graph-1/graph.json")
-    assert context["tradeFactsFile"].endswith("/case_graphs/37/graph-1/facts/trades.jsonl")
+    assert context["graphFile"].endswith("/data/case_graphs/37/graph-1/graph.json")
+    assert context["tradeFactsFile"].endswith("/data/case_graphs/37/graph-1/facts/trades.jsonl")
     assert context["latestStepId"] == "0001"
     assert context["latestOperation"]["label"] == "一跳分析"
     assert context["deltaSummary"]["addedNodeCount"] == 2
@@ -848,7 +848,7 @@ def test_relation_service_persists_seed_one_hop_step(tmp_path: Path) -> None:
     assert result["graph"]["nodes"][0]["id"] == "subject:suspect:1"
     assert result["graph"]["drillNums"] == 5
     assert result["graph"]["drillType"] == 2
-    assert (tmp_path / ".nanobot_channel_webui" / "case_graphs" / "37" / "graph-1" / "graph.json").exists()
+    assert (tmp_path / "data" / "case_graphs" / "37" / "graph-1" / "graph.json").exists()
 
 
 def test_relation_service_syncs_only_snapshot_metadata_after_seed_query(tmp_path: Path) -> None:
@@ -2224,7 +2224,7 @@ def test_relation_service_excludes_multiple_nodes_in_one_step(tmp_path: Path) ->
     )
 
     steps = sorted(
-        (tmp_path / ".nanobot_channel_webui" / "case_graphs" / "37" / "graph-1" / "steps").glob("*.json")
+        (tmp_path / "data" / "case_graphs" / "37" / "graph-1" / "steps").glob("*.json")
     )
     assert [step.name for step in steps] == ["0001-seed-one-hop.json", "0002-manual-exclude-node.json"]
     assert result["step"]["stepId"] == "0002"

@@ -180,10 +180,10 @@ def test_persists_workspace_file_under_plugin_directory(tmp_path: Path) -> None:
         [{"name": "report.docx", "url": "/media/token-1", "mime": "application/docx"}],
     )
 
-    files = list((tmp_path / ".nanobot_channel_webui" / "workspaces").glob("*.json"))
+    files = list((tmp_path / "data" / "chat_workspaces").glob("*.json"))
 
     assert len(files) == 1
-    assert files[0].parent == tmp_path / ".nanobot_channel_webui" / "workspaces"
+    assert files[0].parent == tmp_path / "data" / "chat_workspaces"
     assert tmp_path.resolve() in files[0].resolve().parents
     assert ".." not in files[0].name
     assert "/" not in files[0].name

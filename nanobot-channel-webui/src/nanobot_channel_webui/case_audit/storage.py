@@ -14,6 +14,8 @@ from typing import Any
 
 from nanobot.config.paths import get_workspace_path
 
+from ..storage_paths import case_audits_root
+
 
 AUDIT_SCHEMA_VERSION = "case-audit-file.v1"
 AUDIT_CONDITION_LIST_KEYS = ("victimCards", "victimNames", "suspectCards", "suspectNames", "sourceAccountCards", "sourceAccountNames")
@@ -73,7 +75,7 @@ class CaseAuditStorage:
 
     def __init__(self, *, workspace: Path | None = None) -> None:
         self._workspace = workspace or get_workspace_path()
-        self._root = self._workspace / ".nanobot_channel_webui" / "case_audits"
+        self._root = case_audits_root(self._workspace)
         self._root.mkdir(parents=True, exist_ok=True)
 
     @staticmethod

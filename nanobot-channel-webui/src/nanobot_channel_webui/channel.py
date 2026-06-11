@@ -18,6 +18,7 @@ from nanobot.agent.hook import AgentHook, AgentHookContext
 from nanobot.bus.events import OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
+from nanobot.utils.helpers import ensure_dir
 
 from .auth import WebUIAccessControl
 from .case_audit import CaseAuditService, CaseAuditStorage
@@ -150,6 +151,20 @@ def _read_env_file_value(key: str) -> str:
         except Exception:
             continue
     return ""
+
+
+def _resolve_runtime_workspace() -> Path:
+    """Resolve the workspace from the active gateway config.
+
+    The upstream path helper defaults to ~/.nanobot/workspace when no explicit
+    workspace is passed. The WebUI plugin stores product state itself, so the
+    channel must read the active config and pass the workspace into each local
+    storage service instead of relying on that helper's default.
+    """
+    from nanobot.config.loader import load_config, resolve_config_env_vars
+
+    config = resolve_config_env_vars(load_config())
+    return ensure_dir(config.workspace_path)
 
 
 def _resolve_webui_title(config_title: str) -> str:
@@ -382,12 +397,13 @@ class WebUIChannel(BaseChannel):
             auth_token=self.config.auth_token,
             signing_secret=self.config.media_signing_secret,
         )
-        self._sessions = SessionQueryService()
+        self._runtime_workspace = _resolve_runtime_workspace()
+        self._sessions = SessionQueryService(workspace=self._runtime_workspace)
         self._workspace = SessionWorkspaceService(self._sessions.workspace)
         self._session_index = SessionIndexService(self._pocketbase)
         self._management = WebUIManagementService(self._sessions.workspace)
         self._management.bind_runtime_observer(self._runtime_observability_snapshot)
-        self._case_graph_storage = CaseGraphStorage()
+        self._case_graph_storage = CaseGraphStorage(workspace=self._runtime_workspace)
         self._case_graph_state_service = GraphStateService(self._case_graph_storage._workspace)
         self._case_graph_service = CaseGraphService(
             storage=self._case_graph_storage,
@@ -396,11 +412,12 @@ class WebUIChannel(BaseChannel):
         self._case_graph_relation_service = RelationGraphService(
             query_client=self._build_case_graph_query_client(),
             snapshot_storage=self._case_graph_storage,
+            workspace_root=self._runtime_workspace,
         )
         self._case_audit_service = CaseAuditService(
             query_client=self._build_case_graph_query_client(),
         )
-        self._case_audit_storage = CaseAuditStorage()
+        self._case_audit_storage = CaseAuditStorage(workspace=self._runtime_workspace)
         self._hook = WebUIHook(self._registry, self._turns)
         self._runtime_attached = self._ensure_runtime_attached()
 

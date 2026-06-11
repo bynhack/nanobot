@@ -7,6 +7,7 @@ import math
 from pathlib import Path
 from typing import Any
 
+from ..storage_paths import case_graph_contexts_root
 from .graph_repository import GraphRepository
 from .graph_state_types import normalize_layout
 from .graph_state_types import now_iso
@@ -208,9 +209,7 @@ class GraphStateService:
         latest_step = self._resolve_latest_step(steps, latest_step_id or str(current.get("lastStepId") or ""))
         graph_dir = self._repository.graph_dir(case_id, graph_id)
         context_path = (
-            self._repository._workspace_root
-            / ".nanobot_channel_webui"
-            / "case_graph_contexts"
+            case_graph_contexts_root(self._repository._workspace_root)
             / self._safe_path_segment(case_id)
             / self._safe_path_segment(graph_id)
             / "current_context.json"

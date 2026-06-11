@@ -8,6 +8,8 @@ from pathlib import Path
 
 from nanobot.utils.helpers import ensure_dir, safe_filename
 
+from .storage_paths import uploads_root
+
 
 def classify_attachment_type(mime: str, name: str = "") -> str:
     """Classify an attachment for UI rendering."""
@@ -45,6 +47,6 @@ def attachment_prompt_suffix(path: str, *, name: str, mime: str) -> str:
 
 def next_upload_path(workspace: Path, user_id: str, chat_id: str, filename: str) -> Path:
     """Return the destination path for an uploaded file."""
-    upload_dir = ensure_dir(workspace / ".nanobot_webui_uploads" / user_id / chat_id)
+    upload_dir = ensure_dir(uploads_root(workspace) / user_id / chat_id)
     safe_name = safe_filename(filename) or "upload.bin"
     return upload_dir / f"{int(time.time() * 1000)}_{safe_name}"

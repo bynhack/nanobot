@@ -151,7 +151,7 @@ def test_update_graph_does_not_sync_relation_graph_state_into_nested_graph_file(
 
     relation_graph_file = (
         tmp_path
-        / ".nanobot_channel_webui"
+        / "data"
         / "case_graphs"
         / "case-1"
         / "graph-layout"
@@ -229,14 +229,14 @@ def test_current_context_is_written_per_case_and_graph(tmp_path: Path) -> None:
 
     context_path = (
         tmp_path
-        / ".nanobot_channel_webui"
+        / "data"
         / "case_graph_contexts"
         / "case-1"
         / "graph-context"
         / "current_context.json"
     )
     assert context_path.exists()
-    assert not (tmp_path / ".nanobot_channel_webui" / "current_case_graph_context.json").exists()
+    assert not (tmp_path / "data" / "current_case_graph_context.json").exists()
     assert context["contextFile"] == str(context_path.resolve())
     assert context["chatId"] == "22222222-2222-4222-8222-222222222222"
     assert context["focus"] == {"type": "node", "nodeId": "137"}
@@ -256,7 +256,7 @@ def test_current_context_can_be_written_from_graph_metadata_without_snapshot(tmp
 
     context_path = (
         tmp_path
-        / ".nanobot_channel_webui"
+        / "data"
         / "case_graph_contexts"
         / "case-1"
         / "graph-context"
@@ -309,7 +309,7 @@ def test_delete_graph_removes_snapshot_relation_state_and_context_files(tmp_path
     snapshot_path = service._path_for_graph("graph-delete")
     relation_dir = (
         tmp_path
-        / ".nanobot_channel_webui"
+        / "data"
         / "case_graphs"
         / "case-1"
         / "graph-delete"
@@ -318,7 +318,7 @@ def test_delete_graph_removes_snapshot_relation_state_and_context_files(tmp_path
     (relation_dir / "graph.json").write_text("{}", encoding="utf-8")
     context_dir = (
         tmp_path
-        / ".nanobot_channel_webui"
+        / "data"
         / "case_graph_contexts"
         / "case-1"
         / "graph-delete"
@@ -458,7 +458,7 @@ def test_graph_id_is_trimmed_for_storage_lookup(tmp_path: Path) -> None:
     assert created["graph_id"] == "graph-5"
     assert service.get_graph("graph-5") == created
     assert service.get_graph(" graph-5 ") == created
-    assert len(list((tmp_path / ".nanobot_channel_webui" / "case_graphs").glob("*.json"))) == 1
+    assert len(list((tmp_path / "data" / "case_graphs").glob("*.json"))) == 1
 
 
 def test_create_graph_rejects_nested_non_json_value(tmp_path: Path) -> None:

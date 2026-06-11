@@ -11,6 +11,7 @@ from nanobot.config.paths import get_workspace_path
 from nanobot.session.manager import Session, SessionManager
 
 from .config import CHANNEL_NAME
+from .storage_paths import deleted_sessions_path
 from .history_projection import (
     message_text,
     parse_ask_user_tool_arguments,
@@ -23,9 +24,6 @@ _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
 )
-_DELETED_FILE = ".nanobot_channel_webui_deleted_sessions.json"
-
-
 def is_valid_chat_id(chat_id: str) -> bool:
     return bool(_UUID_RE.match(chat_id))
 
@@ -61,7 +59,7 @@ class SessionQueryService:
 
     def __init__(self, *, workspace: Path | None = None) -> None:
         self._workspace = workspace or get_workspace_path()
-        self._deleted_path = self._workspace / _DELETED_FILE
+        self._deleted_path = deleted_sessions_path(self._workspace)
 
     @property
     def workspace(self) -> Path:

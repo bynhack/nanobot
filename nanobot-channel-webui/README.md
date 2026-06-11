@@ -13,7 +13,7 @@ Keep the upstream `nanobot-ai` installation and startup flow unchanged:
 
 - install nanobot with `uv tool install nanobot-ai`
 - install this plugin into the same tool environment
-- enable `channels.webui_plugin` in `~/.nanobot/config.json`
+- enable `channels.webui_plugin` in `~/.casework/config.json`
 - start everything with `nanobot gateway`
 
 ## Install
@@ -70,13 +70,31 @@ Run the full local publish flow:
 
 This flow now does 3 things in order:
 
-1. verify the plugin locally
-2. sync static assets into the Python package
-3. build and install the latest wheel into the `nanobot-ai` tool environment
+1. prepare the local `~/.casework` runtime and migrate existing local workspace files
+2. verify the plugin locally
+3. sync static assets into the Python package
+4. build and install the latest wheel into the `nanobot-ai` tool environment
 
 For completed feature implementations or runtime/UI behavior changes, this local publish step is
 part of the definition of done. After `publish-local.sh` succeeds, the change is ready for local
-manual testing through `nanobot gateway`.
+manual testing through:
+
+```bash
+nanobot gateway --config ~/.casework/config.json
+```
+
+The local runtime directory is `~/.casework`. On first use, the publish script copies the existing
+`~/.nanobot/workspace` content into `~/.casework/workspace`, copies local runtime folders such as
+`media`, `cron`, and `logs` when present, and writes `agents.defaults.workspace` in
+`~/.casework/config.json` so future graph, audit, session, and upload data is stored there.
+
+Casework product files are grouped under `~/.casework/workspace/data`:
+
+- `~/.casework/workspace/data/case_graphs`
+- `~/.casework/workspace/data/case_graph_contexts`
+- `~/.casework/workspace/data/case_audits`
+- `~/.casework/workspace/data/chat_workspaces`
+- `~/.casework/workspace/data/uploads`
 
 When a requested modification or new requirement is clear and complete, implement it through this
 local publish handoff so the user can test it directly in the browser after completion.

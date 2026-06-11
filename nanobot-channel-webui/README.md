@@ -68,9 +68,9 @@ Run the full local publish flow:
 ./scripts/publish-local.sh
 ```
 
-This flow now does 3 things in order:
+This flow now does 4 things in order:
 
-1. prepare the local `~/.casework` runtime and migrate existing local workspace files
+1. prepare `~/.casework/config.json`
 2. verify the plugin locally
 3. sync static assets into the Python package
 4. build and install the latest wheel into the `nanobot-ai` tool environment
@@ -83,10 +83,17 @@ manual testing through:
 nanobot gateway --config ~/.casework/config.json
 ```
 
-The local runtime directory is `~/.casework`. On first use, the publish script copies the existing
-`~/.nanobot/workspace` content into `~/.casework/workspace`, copies local runtime folders such as
-`media`, `cron`, and `logs` when present, and writes `agents.defaults.workspace` in
-`~/.casework/config.json` so future graph, audit, session, and upload data is stored there.
+The local runtime directory is `~/.casework`. The publish script only prepares
+`~/.casework/config.json` and writes `agents.defaults.workspace` so future graph, audit, session, and
+upload data is stored under `~/.casework/workspace`. It does not copy old `~/.nanobot` workspace
+files during normal publish; runtime data is created by the gateway as the product runs.
+
+If old local data must be copied from `~/.nanobot` into `~/.casework`, run the explicit one-time
+migration command:
+
+```bash
+./scripts/migrate-casework-runtime.sh
+```
 
 Casework product files are grouped under `~/.casework/workspace/data`:
 

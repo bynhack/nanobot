@@ -32,6 +32,9 @@ nanobot-webui-business hr business <query|get|analyze> <resource|topic> [options
   直接运行 `nanobot-webui-business hr business analyze headcount`。不要先运行
   `business query employee` 拉取逐行员工明细，也不要先运行 `list-employees`，除非用户明确
   要求查看花名册明细、导出明细或点名查人。
+- 用户明确要求“员工所有信息”“花名册明细”“员工主档明细”时，直接运行
+  `nanobot-webui-business hr business query employee`；该命令已经返回完整员工主档字段，
+  不要再对结果逐个调用 `business get employee`。
 - 当前账号可见公司和部门：
   直接运行 `nanobot-webui-business hr business query organization-tree`。
 - 员工资料质量、重复身份证、重复手机号：

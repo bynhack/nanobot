@@ -16,6 +16,7 @@ import { cn } from "../../lib/utils";
 import { ImagePreview, ImageZoom } from "./image";
 import { DetailPreviewContext } from "../chat/detail-preview-context";
 import type { MediaItem } from "../../types";
+import { STORAGE_KEYS } from "../../store";
 
 const fileVariants = cva(
   "aui-file-root inline-flex items-center gap-3 rounded-lg transition-colors",
@@ -51,6 +52,40 @@ function getMimeTypeIcon(mimeType: string): FC<{ className?: string }> {
 
 function isDirectUrl(data: string) {
   return /^(https?:\/\/|blob:|\/)/.test(data);
+}
+
+function storedAuthToken(): string {
+  if (typeof window === "undefined") return "";
+  try {
+    return window.localStorage.getItem(STORAGE_KEYS.authToken) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function withStoredAuthQuery(url: string): string {
+  const token = storedAuthToken();
+  if (
+    !token ||
+    url.startsWith("/api/public-media/") ||
+    url.startsWith("http://") ||
+    url.startsWith("https://") ||
+    url.startsWith("blob:")
+  ) {
+    return url;
+  }
+  if (!url.startsWith("/")) {
+    return url;
+  }
+  const value = new URL(url, window.location.origin);
+  value.searchParams.set("auth_token", token);
+  return `${value.pathname}${value.search}`;
+}
+
+function fileHref(data: string, mimeType: string): string {
+  if (data.startsWith("data:")) return data;
+  if (isDirectUrl(data)) return withStoredAuthQuery(data);
+  return `data:${mimeType};base64,${data}`;
 }
 
 function getBase64Size(base64: string): number | null {
@@ -143,11 +178,7 @@ function FileDownload({
   children,
   ...props
 }: FileDownloadProps) {
-  const href = data.startsWith("data:")
-    ? data
-    : isDirectUrl(data)
-      ? data
-      : `data:${mimeType};base64,${data}`;
+  const href = fileHref(data, mimeType);
 
   return (
     <a
@@ -175,11 +206,7 @@ function FileDownload({
 const FileImpl: FileMessagePartComponent = ({ filename, data, mimeType }) => {
   const { openMedia } = useContext(DetailPreviewContext);
   const bytes = getBase64Size(data);
-  const href = data.startsWith("data:")
-    ? data
-    : isDirectUrl(data)
-      ? data
-      : `data:${mimeType};base64,${data}`;
+  const href = fileHref(data, mimeType);
   const item: MediaItem = {
     url: data,
     name: filename || "附件",

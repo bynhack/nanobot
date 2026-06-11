@@ -24,12 +24,19 @@ create table if not exists public.webui_user_profiles (
   resources jsonb,
   skills jsonb,
   tenant_policy jsonb,
+  is_deleted boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
+alter table public.webui_user_profiles
+  add column if not exists is_deleted boolean not null default false;
+
 create index if not exists webui_user_profiles_email_idx
   on public.webui_user_profiles (email);
+
+create index if not exists webui_user_profiles_is_deleted_idx
+  on public.webui_user_profiles (is_deleted);
 
 alter table public.webui_user_profiles enable row level security;
 

@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  appendAttachmentReferences,
   buildRuntimeMessages,
   historyMessageToThreadMessage,
   mediaToParts,
   requestStatusText,
+  rewriteUpstreamMediaItems,
+  rewriteUpstreamMediaUrl,
 } from './app-helpers';
 
 describe('mediaToParts', () => {
@@ -43,6 +46,57 @@ describe('mediaToParts', () => {
         mimeType: 'image/png',
       },
     ]);
+  });
+});
+
+describe('rewriteUpstreamMediaUrl', () => {
+  it('routes upstream sidecar media URLs through the control-plane proxy', () => {
+    expect(rewriteUpstreamMediaUrl('/api/media/sig123/payload456')).toBe(
+      '/api/public-media/payload456',
+    );
+    expect(rewriteUpstreamMediaUrl('https://example.com/file.png')).toBe('https://example.com/file.png');
+  });
+
+  it('rewrites media item arrays without changing remote URLs', () => {
+    expect(
+      rewriteUpstreamMediaItems([
+        { url: '/api/media/sig123/payload456', name: 'preview.html', mime: 'text/html' },
+        { url: 'https://example.com/remote.png', name: 'remote.png', mime: 'image/png' },
+      ]),
+    ).toEqual([
+      { url: '/api/public-media/payload456', name: 'preview.html', mime: 'text/html' },
+      { url: 'https://example.com/remote.png', name: 'remote.png', mime: 'image/png' },
+    ]);
+  });
+});
+
+describe('appendAttachmentReferences', () => {
+  it('adds uploaded file source paths to upstream websocket content', () => {
+    expect(
+      appendAttachmentReferences('请分析这份合同', [
+        {
+          path: '/instances/user-1/workspace/.nanobot_webui_uploads/chat-1/contract.pdf',
+          name: 'contract.pdf',
+          mime: 'application/pdf',
+        },
+      ]),
+    ).toBe(
+      '请分析这份合同\n\n[file: contract.pdf]\n[File: source: /instances/user-1/workspace/.nanobot_webui_uploads/chat-1/contract.pdf]',
+    );
+  });
+
+  it('keeps attachment-only messages actionable for the model', () => {
+    expect(
+      appendAttachmentReferences('', [
+        {
+          path: '/instances/user-1/workspace/.nanobot_webui_uploads/chat-1/report.xlsx',
+          name: 'report.xlsx',
+          mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        },
+      ]),
+    ).toBe(
+      '[file: report.xlsx]\n[File: source: /instances/user-1/workspace/.nanobot_webui_uploads/chat-1/report.xlsx]',
+    );
   });
 });
 

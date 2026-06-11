@@ -86,7 +86,6 @@
   ],
   "denied_commands": [
     "clear-business-data",
-    "delete-employee-records",
     "count-all"
   ],
   "requires_confirmation": false,

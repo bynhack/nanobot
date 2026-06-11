@@ -7,6 +7,8 @@ description: "HR 数据结构解释技能。Use only for 字段映射、Excel �
 
 本技能只负责解释 HR 数据含义、字段归属和表关系。它不是查询入口，也不是权限入口；
 查询和分析使用 `hr-query-analysis-router`，写入、导入和删除使用 `hr-db-ops`。
+日常 create/update 写 plan 时，优先通过 `nanobot-webui-business hr business schema <resource> --workflow create|update`
+获取资源级 plan 契约；本技能是字段排查兜底。
 
 ## Read Order
 

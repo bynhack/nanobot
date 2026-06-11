@@ -44,7 +44,8 @@
         "read",
         "query",
         "analyze",
-        "write"
+        "write",
+        "delete"
       ],
       "scope_key": "company"
     },
@@ -54,7 +55,8 @@
         "read",
         "query",
         "analyze",
-        "write"
+        "write",
+        "delete"
       ],
       "scope_key": "company"
     },
@@ -64,7 +66,8 @@
         "read",
         "query",
         "analyze",
-        "write"
+        "write",
+        "delete"
       ],
       "scope_key": "company"
     },
@@ -74,7 +77,8 @@
         "read",
         "query",
         "analyze",
-        "write"
+        "write",
+        "delete"
       ],
       "scope_key": "company"
     },
@@ -84,7 +88,8 @@
         "read",
         "query",
         "analyze",
-        "write"
+        "write",
+        "delete"
       ],
       "scope_key": "company"
     },
@@ -94,7 +99,8 @@
         "read",
         "query",
         "analyze",
-        "write"
+        "write",
+        "delete"
       ],
       "scope_key": "company"
     }
@@ -104,7 +110,6 @@
   ],
   "denied_commands": [
     "clear-business-data",
-    "delete-employee-records",
     "count-all"
   ],
   "requires_confirmation": false,
@@ -522,11 +527,15 @@
       ],
       "recipe": [
         "Use this recipe for conversational employee onboarding. Do not discover alternative schemas or trial-run writes.",
-        "Write exactly one JSON plan under .nanobot_channel_webui/runtime-inputs/<chat_id>/ from the user natural-language request. The plan may be a single JSON object or {\"records\":[...]}.",
-        "Show the JSON fields back to the user in natural language and wait for explicit confirmation before any write command.",
+        "Before drafting normal create/update JSON plans, run business schema <resource> --workflow create|update for the resource-specific plan contract. Prefer business schema over reading long hr-schema docs when drafting normal write plans.",
+        "This is a create workflow: run business preview employee before confirmation, then business create employee after confirmation. Do not use preview-update/update for a new employee.",
+        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Write exactly one JSON plan under .nanobot_channel_webui/runtime-inputs/<chat_id>/ from the user natural-language request.",
+        "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
+        "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
         "After confirmation, run business create employee --input <same-plan.json>.",
         "The create command performs the database write and internal verification against the same JSON plan; use the create result as the troubleshooting evidence if verification fails.",
-        "A successful create result must include verification.ok true."
+        "A successful create result must include verification.ok true.",
+        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "入职",
@@ -574,10 +583,13 @@
         "hr.contract.employee_lookup"
       ],
       "recipe": [
-        "Write one JSON plan from the user request. Use fields such as employee_name/name, company, type/contract_type, start_date/contract_start, expiry_date/contract_end, sign_date, notes/remark.",
+        "This is a create workflow for a new contract record, even when the employee already exists. Do not use preview-update/update unless the user is modifying an existing contract.",
+        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Use fields such as employee_name/name, company, type/contract_type, start_date/contract_start, expiry_date/contract_end, sign_date, notes/remark.",
         "Run business preview contract --input <plan.json> only to match employee and show the planned fields.",
-        "Show the JSON fields in natural language and wait for confirmation.",
-        "After confirmation, run business create contract --input <same-plan.json>; create includes verification."
+        "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
+        "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
+        "After confirmation, run business create contract --input <same-plan.json>; create includes verification.",
+        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "录入合同",
@@ -590,10 +602,25 @@
     },
     {
       "id": "hr.employee.update",
-      "title": "员工主档维护",
+      "title": "HR 业务数据更新",
       "kind": "update",
       "commands": [
-        "business update employee-nickname"
+        "business preview-update organization",
+        "business update organization",
+        "business preview-update employee",
+        "business update employee",
+        "business preview-update contract",
+        "business update contract",
+        "business preview-update performance",
+        "business update performance",
+        "business preview-update insurance",
+        "business update insurance",
+        "business preview-update personnel-change",
+        "business update personnel-change",
+        "business preview-update disciplinary",
+        "business update disciplinary",
+        "business preview-update seal-usage",
+        "business update seal-usage"
       ],
       "resources": [
         {
@@ -602,14 +629,83 @@
             "write"
           ],
           "scope_key": "company"
+        },
+        {
+          "resource": "hr.organization",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.contract",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.performance",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.insurance",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.personnel_change",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.disciplinary",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.seal_usage",
+          "actions": [
+            "write"
+          ],
+          "scope_key": "company"
         }
       ],
       "requires_confirmation": true,
+      "recipe": [
+        "Use the update workflow only when the user wants to modify an existing HR business record.",
+        "Do not use this workflow to create new employee-related records. New contracts, performance reviews, insurance changes, personnel changes, disciplinary records, and seal usage records use preview/create instead.",
+        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Include company and enough business keys to uniquely match the existing record, then include only fields the user wants to change.",
+        "Run business preview-update <resource> --input <plan.json> and summarize matches, skipped records, and field diffs in natural language.",
+        "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
+        "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
+        "Wait for explicit user confirmation.",
+        "After confirmation, run business update <resource> --input <same-plan.json>; update includes verification.",
+        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it.",
+        "If update fails, do not delete or recreate the record as a fallback. Report the failure or ask the user for a unique matching field; delete and recreate requires a separate explicit confirmation."
+      ],
       "focus_terms": [
         "员工维护",
-        "员工花名",
-        "姓名花名",
-        "employee update"
+        "员工更新",
+        "修改员工",
+        "更新合同",
+        "修改合同",
+        "更新绩效",
+        "更新社医保",
+        "更新人事异动",
+        "更新奖惩",
+        "更新用章",
+        "employee update",
+        "business update"
       ]
     },
     {
@@ -631,10 +727,13 @@
       ],
       "requires_confirmation": true,
       "recipe": [
-        "Write one JSON plan from the user request. Use employee_name/name, company, review_date/month, final_score/score, notes/comment/remark.",
+        "This is a create workflow for a new performance record, even when the employee already exists. Do not use preview-update/update unless the user is modifying an existing performance record.",
+        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Use employee_name/name, company, review_date/month, final_score/score, notes/comment/remark.",
         "Run business preview performance --input <plan.json>; if matched is 0 or records is 0, stop and explain the issue instead of creating.",
-        "Show the JSON fields in natural language and wait for confirmation.",
-        "After confirmation, run business create performance --input <same-plan.json>; create includes verification."
+        "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
+        "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
+        "After confirmation, run business create performance --input <same-plan.json>; create includes verification.",
+        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "录入绩效",
@@ -663,7 +762,13 @@
       ],
       "requires_confirmation": true,
       "recipe": [
-        "Write one JSON plan from the user request, show the natural-language preview, wait for confirmation, then run business create insurance --input <same-plan.json>. Create includes verification."
+        "This is a create workflow for a new insurance change record, even when the employee already exists. Do not use preview-update/update unless the user is modifying an existing insurance change.",
+        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Write the plan before any command.",
+        "Run business preview insurance --input <plan.json> before asking for confirmation.",
+        "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
+        "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
+        "After confirmation, run business create insurance --input <same-plan.json>. Create includes verification.",
+        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "录入社保",
@@ -692,7 +797,13 @@
       ],
       "requires_confirmation": true,
       "recipe": [
-        "Write one JSON plan from the user request, show the natural-language preview, wait for confirmation, then run business create personnel-change --input <same-plan.json>. Create includes verification."
+        "This is a create workflow for a new personnel change record, even when the employee already exists. Do not use preview-update/update unless the user is modifying an existing personnel change.",
+        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Write the plan before any command.",
+        "Run business preview personnel-change --input <plan.json> before asking for confirmation.",
+        "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
+        "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
+        "After confirmation, run business create personnel-change --input <same-plan.json>. Create includes verification.",
+        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "录入异动",
@@ -723,7 +834,13 @@
       ],
       "requires_confirmation": true,
       "recipe": [
-        "Write one JSON plan from the user request, show the natural-language preview, wait for confirmation, then run business create disciplinary --input <same-plan.json>. Create includes verification."
+        "This is a create workflow for a new disciplinary record, even when the employee already exists. Do not use preview-update/update unless the user is modifying an existing disciplinary record.",
+        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Write the plan before any command.",
+        "Run business preview disciplinary --input <plan.json> before asking for confirmation.",
+        "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
+        "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
+        "After confirmation, run business create disciplinary --input <same-plan.json>. Create includes verification.",
+        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "录入奖惩",
@@ -752,7 +869,13 @@
       ],
       "requires_confirmation": true,
       "recipe": [
-        "Write one JSON plan from the user request, show the natural-language preview, wait for confirmation, then run business create seal-usage --input <same-plan.json>. Create includes verification."
+        "This is a create workflow for a new seal usage record, even when the employee already exists. Do not use preview-update/update unless the user is modifying an existing seal usage record.",
+        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Write the plan before any command.",
+        "Run business preview seal-usage --input <plan.json> before asking for confirmation.",
+        "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
+        "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
+        "After confirmation, run business create seal-usage --input <same-plan.json>. Create includes verification.",
+        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "录入用章",
@@ -797,12 +920,15 @@
       ],
       "recipe": [
         "Use this recipe for conversational organization or department creation. Do not discover hidden schemas or trial-run confirmed writes.",
-        "Write exactly one JSON plan under .nanobot_channel_webui/runtime-inputs/<chat_id>/ before calling any command.",
+        "This is a create workflow: run business preview organization before confirmation, then business create organization after confirmation. Do not use preview-update/update for a new organization or department.",
+        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Write exactly one JSON plan under .nanobot_channel_webui/runtime-inputs/<chat_id>/ before calling any command.",
         "For adding a department to an existing company, use {\"company\":\"公司全称\",\"departments\":[{\"name\":\"部门名称\"}]}. Put unsupported business notes in summary/source; the department table stores company and name.",
         "Run business preview organization --input <plan.json> to validate what would be created or already exists.",
-        "Show the JSON fields and preview result to the user in natural language and wait for explicit confirmation before any write command.",
+        "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
+        "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
         "After confirmation, run business create organization --input <same-plan.json>.",
-        "The create command performs internal verification against the same JSON plan and must return verification.ok true; use the create result as the troubleshooting evidence if verification fails."
+        "The create command performs internal verification against the same JSON plan and must return verification.ok true; use the create result as the troubleshooting evidence if verification fails.",
+        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "新增部门",
@@ -837,6 +963,139 @@
         "删除员工",
         "移除员工",
         "employee delete"
+      ]
+    },
+    {
+      "id": "hr.business_record.delete",
+      "title": "业务记录逻辑删除",
+      "kind": "delete",
+      "commands": [
+        "business delete contract",
+        "business delete performance",
+        "business delete insurance",
+        "business delete personnel-change",
+        "business delete disciplinary",
+        "business delete seal-usage"
+      ],
+      "resources": [
+        {
+          "resource": "hr.contract",
+          "actions": [
+            "delete"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.performance",
+          "actions": [
+            "delete"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.insurance",
+          "actions": [
+            "delete"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.personnel_change",
+          "actions": [
+            "delete"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.disciplinary",
+          "actions": [
+            "delete"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.seal_usage",
+          "actions": [
+            "delete"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "requires_confirmation": true,
+      "focus_terms": [
+        "删除合同",
+        "删除绩效",
+        "删除社医保",
+        "删除异动",
+        "删除奖惩",
+        "删除用章",
+        "逻辑删除",
+        "record delete"
+      ]
+    },
+    {
+      "id": "hr.deleted_records.audit",
+      "title": "逻辑删除记录审计查询",
+      "kind": "query",
+      "commands": [
+        "business query deleted-records"
+      ],
+      "resources": [
+        {
+          "resource": "hr.employee",
+          "actions": [
+            "read"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.contract",
+          "actions": [
+            "read"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.performance",
+          "actions": [
+            "read"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.insurance",
+          "actions": [
+            "read"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.personnel_change",
+          "actions": [
+            "read"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.disciplinary",
+          "actions": [
+            "read"
+          ],
+          "scope_key": "company"
+        },
+        {
+          "resource": "hr.seal_usage",
+          "actions": [
+            "read"
+          ],
+          "scope_key": "company"
+        }
+      ],
+      "focus_terms": [
+        "逻辑删除审计",
+        "已删除记录",
+        "删除记录查询",
+        "deleted records"
       ]
     }
   ]

@@ -157,6 +157,26 @@ export function mediaToParts(media: MediaItem[]): Array<ThreadMessageLike['conte
   });
 }
 
+export function rewriteUpstreamMediaUrl(url: string): string {
+  const prefix = '/api/media/';
+  if (!url.startsWith(prefix)) {
+    return url;
+  }
+  const parts = url.slice(prefix.length).split('/');
+  const payload = parts.length > 1 ? parts.slice(1).join('/') : parts[0];
+  return `/api/public-media/${payload}`;
+}
+
+export function rewriteUpstreamMediaItems(media: MediaItem[] | undefined): MediaItem[] | undefined {
+  if (!media) {
+    return media;
+  }
+  return media.map((item) => ({
+    ...item,
+    url: rewriteUpstreamMediaUrl(item.url),
+  }));
+}
+
 export function mediaToAttachments(media: MediaItem[]) {
   return media.map((item, index) => {
     const mime = detectMime(item);
@@ -355,6 +375,20 @@ export function extractUploadedAttachments(message: AppendMessage): UploadedAtta
   return (message.attachments ?? [])
     .map((attachment) => (attachment as UploadedCompleteAttachment).uploadedAttachment)
     .filter((attachment): attachment is UploadedAttachment => Boolean(attachment));
+}
+
+export function appendAttachmentReferences(
+  content: string,
+  attachments: Array<Pick<UploadedAttachment, 'path' | 'name' | 'mime'>>,
+): string {
+  const references = attachments
+    .filter((attachment) => attachment.path && attachment.name)
+    .map((attachment) => `[file: ${attachment.name}]\n[File: source: ${attachment.path}]`);
+  if (!references.length) {
+    return content;
+  }
+  const trimmed = content.trim();
+  return [trimmed, references.join("\n\n")].filter(Boolean).join("\n\n");
 }
 
 export function uploadedAttachmentToCompleteAttachment(uploaded: UploadedAttachment): UploadedCompleteAttachment {

@@ -14,32 +14,78 @@ import type {
   UploadedAttachment,
   UpstreamToolEvent,
 } from './types';
+import type { MediaItem } from './types';
+
+export const AUTH_EXPIRED_EVENT = 'nanobot:auth-expired';
+
+export class AuthExpiredError extends Error {
+  readonly status = 401;
+
+  constructor(message = '登录已失效，请重新登录') {
+    super(message);
+    this.name = 'AuthExpiredError';
+  }
+}
 
 export function authHeaders(token: string): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+function authExpiredEvent(message: string): Event {
+  if (typeof CustomEvent === 'function') {
+    return new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { message } });
+  }
+  const event = new Event(AUTH_EXPIRED_EVENT) as Event & { detail?: { message: string } };
+  event.detail = { message };
+  return event;
+}
+
+export function notifyAuthExpired(message = '登录已失效，请重新登录'): void {
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function') {
+    return;
+  }
+  window.dispatchEvent(authExpiredEvent(message));
+}
+
+async function errorMessage(response: Response, fallback: string): Promise<string> {
+  let detail = fallback;
+  try {
+    const payload = (await response.json()) as { error?: string };
+    if (payload.error) {
+      detail = payload.error;
+    }
+  } catch {
+    // ignore non-JSON error payloads
+  }
+  return detail;
+}
+
+export async function ensureOk(response: Response, fallback: string): Promise<void> {
+  if (response.ok) {
+    return;
+  }
+  const detail = await errorMessage(response, fallback);
+  if (response.status === 401) {
+    notifyAuthExpired(detail);
+    throw new AuthExpiredError(detail);
+  }
+  throw new Error(detail);
 }
 
 export async function loadCurrentUser(token: string): Promise<AuthResponse> {
   const response = await fetch('/api/auth/me', {
     headers: authHeaders(token),
   });
-  if (!response.ok) {
-    let detail = `读取登录状态失败（${response.status}）`;
-    try {
-      const payload = (await response.json()) as { error?: string };
-      if (payload.error) {
-        detail = payload.error;
-      }
-    } catch {
-      // ignore
-    }
-    throw new Error(detail);
-  }
+  await ensureOk(response, `读取登录状态失败（${response.status}）`);
   return response.json() as Promise<AuthResponse>;
 }
 
 export function withAuthQuery(url: string, token: string): string {
   if (!token) {
+    return url;
+  }
+
+  if (url.startsWith('/api/public-media/')) {
     return url;
   }
   
@@ -64,9 +110,7 @@ export async function deleteSession(chatId: string, token: string): Promise<void
     method: 'DELETE',
     headers: authHeaders(token),
   });
-  if (!response.ok) {
-    throw new Error(`删除会话失败（${response.status}）`);
-  }
+  await ensureOk(response, `删除会话失败（${response.status}）`);
 }
 
 function upstreamSessionToSummary(row: {
@@ -97,9 +141,7 @@ export async function loadUpstreamSessions(token: string): Promise<SessionSummar
   const response = await fetch('/api/upstream/sessions', {
     headers: authHeaders(token),
   });
-  if (!response.ok) {
-    throw new Error(`加载会话失败（${response.status}）`);
-  }
+  await ensureOk(response, `加载会话失败（${response.status}）`);
   const payload = (await response.json()) as { sessions?: unknown[] };
   return (payload.sessions ?? [])
     .map((row) => upstreamSessionToSummary(row as Parameters<typeof upstreamSessionToSummary>[0]))
@@ -175,8 +217,57 @@ function traceLineToPart(line: string, index: number): AssistantHistoryPart {
   };
 }
 
+function upstreamFileEditToPart(edit: Record<string, unknown>, index: number): AssistantHistoryPart {
+  const name = typeof edit.tool === 'string' && edit.tool ? edit.tool : `file_edit_${index + 1}`;
+  const status = edit.phase === 'error' || edit.status === 'error' ? 'error' : 'ok';
+  const result = typeof edit.status === 'string' && edit.status
+    ? edit.status
+    : typeof edit.phase === 'string' && edit.phase
+      ? edit.phase
+      : '';
+  return {
+    type: 'tool-call',
+    tool: {
+      callId: typeof edit.call_id === 'string' ? edit.call_id : undefined,
+      name,
+      args: {
+        ...(typeof edit.path === 'string' ? { path: edit.path } : {}),
+        ...(typeof edit.absolute_path === 'string' ? { absolute_path: edit.absolute_path } : {}),
+        ...(Number.isFinite(edit.added) ? { added: edit.added } : {}),
+        ...(Number.isFinite(edit.deleted) ? { deleted: edit.deleted } : {}),
+      },
+      result,
+      status,
+    },
+  };
+}
+
+function upstreamFileEditsToParts(row: Record<string, unknown>): AssistantHistoryPart[] {
+  const edits = Array.isArray(row.fileEdits)
+    ? row.fileEdits
+    : Array.isArray(row.file_edits)
+      ? row.file_edits
+      : [];
+  return edits
+    .filter((edit): edit is Record<string, unknown> => Boolean(edit) && typeof edit === 'object')
+    .map(upstreamFileEditToPart);
+}
+
 function upstreamTraceMessageToParts(row: Record<string, unknown>): AssistantHistoryPart[] {
-  const toolEvents = Array.isArray(row.toolEvents) ? row.toolEvents as UpstreamToolEvent[] : [];
+  const toolEvents = Array.isArray(row.toolEvents)
+    ? row.toolEvents as UpstreamToolEvent[]
+    : Array.isArray(row.tool_events)
+      ? row.tool_events as UpstreamToolEvent[]
+      : [];
+  const parts = [
+    ...toolEvents
+      .filter((event) => event.phase === 'end' || event.phase === 'error')
+      .map(upstreamToolEventToPart),
+    ...upstreamFileEditsToParts(row),
+  ];
+  if (parts.length) {
+    return parts;
+  }
   if (toolEvents.length) {
     return toolEvents
       .filter((event) => event.phase === 'end' || event.phase === 'error')
@@ -188,6 +279,151 @@ function upstreamTraceMessageToParts(row: Record<string, unknown>): AssistantHis
       ? [row.content]
       : [];
   return traces.map(traceLineToPart);
+}
+
+function toolCallFunctionPayload(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function upstreamAssistantToolCallsToParts(row: Record<string, unknown>): AssistantHistoryPart[] {
+  const toolCalls = Array.isArray(row.tool_calls)
+    ? row.tool_calls
+    : Array.isArray(row.toolCalls)
+      ? row.toolCalls
+      : [];
+
+  return toolCalls
+    .filter((call): call is Record<string, unknown> => Boolean(call) && typeof call === 'object')
+    .map((call, index) => {
+      const fn = toolCallFunctionPayload(call.function);
+      const name = typeof fn.name === 'string' && fn.name ? fn.name : `tool_${index + 1}`;
+      return {
+        type: 'tool-call',
+        tool: {
+          callId: typeof call.id === 'string' ? call.id : undefined,
+          name,
+          args: parseJsonObject(fn.arguments),
+          result: '',
+          status: 'ok',
+        },
+      };
+    });
+}
+
+function applyToolResultToParts(
+  parts: AssistantHistoryPart[],
+  row: Record<string, unknown>,
+): AssistantHistoryPart[] {
+  const callId = typeof row.tool_call_id === 'string'
+    ? row.tool_call_id
+    : typeof row.toolCallId === 'string'
+      ? row.toolCallId
+      : '';
+  const name = typeof row.name === 'string' && row.name ? row.name : 'tool';
+  const result = stringifyToolResult(row.content ?? row.result ?? '');
+
+  let matched = false;
+  const next = parts.map((part) => {
+    if (part.type !== 'tool-call') {
+      return part;
+    }
+    const isMatch = callId
+      ? part.tool.callId === callId
+      : part.tool.name === name && !part.tool.result;
+    if (!isMatch) {
+      return part;
+    }
+    matched = true;
+    return {
+      ...part,
+      tool: {
+        ...part.tool,
+        result,
+        status: row.error ? 'error' as const : 'ok' as const,
+      },
+    };
+  });
+
+  if (matched) {
+    return next;
+  }
+
+  return [
+    ...parts,
+    {
+      type: 'tool-call',
+      tool: {
+        callId: callId || undefined,
+        name,
+        args: {},
+        result,
+        status: row.error ? 'error' : 'ok',
+      },
+    },
+  ];
+}
+
+function isMediaItemPayload(value: unknown): value is MediaItem {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const item = value as Record<string, unknown>;
+  return typeof item.url === 'string'
+    && typeof item.name === 'string'
+    && (item.mime == null || typeof item.mime === 'string');
+}
+
+function upstreamMediaFromRow(row: Record<string, unknown>): MediaItem[] {
+  const rawMedia = Array.isArray(row.media)
+    ? row.media
+    : Array.isArray(row.media_urls)
+      ? row.media_urls
+      : [];
+  return rawMedia
+    .flatMap((item) => {
+      if (isMediaItemPayload(item)) {
+        return [{
+          url: item.url,
+          name: item.name,
+          mime: item.mime ?? '',
+        }];
+      }
+      if (typeof item === 'string' && item.trim()) {
+        const normalized = item.trim();
+        return [{
+          url: normalized,
+          name: normalized.split('/').filter(Boolean).at(-1) ?? normalized,
+          mime: '',
+        }];
+      }
+      return [];
+    });
+}
+
+function upstreamMediaDeliveryToPart(content: string, media: MediaItem[]): AssistantHistoryPart {
+  return {
+    type: 'tool-call',
+    tool: {
+      name: 'message',
+      args: {
+        content,
+        media: media.map((item) => item.url),
+      },
+      result: `Message delivered with ${media.length} attachment${media.length === 1 ? '' : 's'}`,
+      status: 'ok',
+    },
+  };
+}
+
+function shouldInferMediaDeliveryTool(row: Record<string, unknown>): boolean {
+  const rawMedia = Array.isArray(row.media) ? row.media : [];
+  return rawMedia.some(
+    (item) => Boolean(item)
+      && typeof item === 'object'
+      && typeof (item as Record<string, unknown>).kind === 'string',
+  );
 }
 
 function upstreamThreadMessagesToHistory(messages: unknown[]): HistoryMessage[] {
@@ -206,6 +442,10 @@ function upstreamThreadMessagesToHistory(messages: unknown[]): HistoryMessage[] 
     activityParts = [];
   };
 
+  const hasPendingToolResult = () => activityParts.some(
+    (part) => part.type === 'tool-call' && !part.tool.result,
+  );
+
   for (const message of messages) {
     if (!message || typeof message !== 'object') {
       continue;
@@ -213,7 +453,20 @@ function upstreamThreadMessagesToHistory(messages: unknown[]): HistoryMessage[] 
     const row = message as Record<string, unknown>;
     const role = String(row.role ?? '');
     const kind = String(row.kind ?? 'message');
+    const type = String(row.type ?? '');
     const content = String(row.content ?? row.text ?? '');
+    const media = upstreamMediaFromRow(row);
+
+    if ((type === 'outbound' || role === 'assistant') && media.length) {
+      if (role === 'assistant' && shouldInferMediaDeliveryTool(row)) {
+        activityParts.push(upstreamMediaDeliveryToPart(content, media));
+      }
+      if (!hasPendingToolResult()) {
+        flushActivity();
+      }
+      result.push({ type: 'outbound', content, media });
+      continue;
+    }
 
     if (role === 'user') {
       flushActivity();
@@ -221,13 +474,26 @@ function upstreamThreadMessagesToHistory(messages: unknown[]): HistoryMessage[] 
       continue;
     }
 
-    if (role === 'tool' && kind === 'trace') {
-      activityParts = [...activityParts, ...upstreamTraceMessageToParts(row)];
+    if (role === 'tool') {
+      if (kind === 'trace') {
+        activityParts = [...activityParts, ...upstreamTraceMessageToParts(row)];
+      } else {
+        activityParts = applyToolResultToParts(activityParts, row);
+      }
       continue;
     }
 
     if (role === 'assistant') {
-      const reasoning = typeof row.reasoning === 'string' ? row.reasoning : '';
+      const toolCallParts = upstreamAssistantToolCallsToParts(row);
+      if (toolCallParts.length) {
+        activityParts = [...activityParts, ...toolCallParts];
+      }
+
+      const reasoning = typeof row.reasoning === 'string'
+        ? row.reasoning
+        : typeof row.reasoning_content === 'string'
+          ? row.reasoning_content
+          : '';
       if (reasoning) {
         activityParts.push({ type: 'reasoning', text: reasoning });
       }
@@ -257,9 +523,7 @@ export async function loadUpstreamThread(chatId: string, token: string): Promise
   if (response.status === 404) {
     return [];
   }
-  if (!response.ok) {
-    throw new Error(`加载会话历史失败（${response.status}）`);
-  }
+  await ensureOk(response, `加载会话历史失败（${response.status}）`);
   const payload = (await response.json()) as { messages?: unknown[] };
   return upstreamThreadMessagesToHistory(payload.messages ?? []);
 }
@@ -275,9 +539,7 @@ export async function uploadFiles(chatId: string, files: File[], token: string):
     headers: authHeaders(token),
     body: formData,
   });
-  if (!response.ok) {
-    throw new Error(`上传文件失败（${response.status}）`);
-  }
+  await ensureOk(response, `上传文件失败（${response.status}）`);
   const payload = (await response.json()) as { files?: UploadedAttachment[] };
   return payload.files ?? [];
 }
@@ -312,9 +574,7 @@ export async function loadSessionWorkspace(chatId: string, token: string): Promi
   const response = await fetch(`/api/workspaces/${encodeURIComponent(chatId)}`, {
     headers: authHeaders(token),
   });
-  if (!response.ok) {
-    throw new Error(`加载工作空间失败（${response.status}）`);
-  }
+  await ensureOk(response, `加载工作空间失败（${response.status}）`);
   const payload = (await response.json()) as SessionWorkspaceResponse;
   return {
     chatId: payload.chat_id,
@@ -333,17 +593,13 @@ export async function loadSessionWorkspace(chatId: string, token: string): Promi
 
 export async function fetchText(url: string, token: string): Promise<string> {
   const response = await fetch(withAuthQuery(url, token));
-  if (!response.ok) {
-    throw new Error(`加载资源失败（${response.status}）`);
-  }
+  await ensureOk(response, `加载资源失败（${response.status}）`);
   return response.text();
 }
 
 export async function fetchArrayBuffer(url: string, token: string): Promise<ArrayBuffer> {
   const response = await fetch(withAuthQuery(url, token));
-  if (!response.ok) {
-    throw new Error(`加载资源失败（${response.status}）`);
-  }
+  await ensureOk(response, `加载资源失败（${response.status}）`);
   return response.arrayBuffer();
 }
 
@@ -351,9 +607,7 @@ export async function loadSettingsSkills(token: string): Promise<SettingsSkillSu
   const response = await fetch('/api/settings/skills', {
     headers: authHeaders(token),
   });
-  if (!response.ok) {
-    throw new Error(`加载技能失败（${response.status}）`);
-  }
+  await ensureOk(response, `加载技能失败（${response.status}）`);
   const payload = (await response.json()) as { skills?: SettingsSkillSummary[] };
   return payload.skills ?? [];
 }
@@ -370,9 +624,7 @@ export async function loadSettingsSkillDetail(
   const response = await fetch(`${url.pathname}${url.search}`, {
     headers: authHeaders(token),
   });
-  if (!response.ok) {
-    throw new Error(`加载技能详情失败（${response.status}）`);
-  }
+  await ensureOk(response, `加载技能详情失败（${response.status}）`);
   return response.json() as Promise<SettingsSkillDetail>;
 }
 
@@ -390,9 +642,7 @@ export async function loadSettingsSkillFile(
   const response = await fetch(`${url.pathname}${url.search}`, {
     headers: authHeaders(token),
   });
-  if (!response.ok) {
-    throw new Error(`加载技能文件失败（${response.status}）`);
-  }
+  await ensureOk(response, `加载技能文件失败（${response.status}）`);
   return response.json() as Promise<SettingsSkillFile>;
 }
 
@@ -414,9 +664,7 @@ export async function toggleSettingsSkill(
     },
     body: JSON.stringify({ enabled }),
   });
-  if (!response.ok) {
-    throw new Error(`切换技能状态失败（${response.status}）`);
-  }
+  await ensureOk(response, `切换技能状态失败（${response.status}）`);
   return response.json() as Promise<SettingsSkillDetail>;
 }
 
@@ -424,9 +672,7 @@ export async function loadSettingsConfig(token: string): Promise<SettingsConfigS
   const response = await fetch('/api/settings/config', {
     headers: authHeaders(token),
   });
-  if (!response.ok) {
-    throw new Error(`加载配置失败（${response.status}）`);
-  }
+  await ensureOk(response, `加载配置失败（${response.status}）`);
   return response.json() as Promise<SettingsConfigSnapshot>;
 }
 
@@ -439,18 +685,7 @@ export async function saveSettingsConfig(raw: string, token: string): Promise<Se
     },
     body: JSON.stringify({ raw }),
   });
-  if (!response.ok) {
-    let detail = `保存配置失败（${response.status}）`;
-    try {
-      const payload = (await response.json()) as { error?: string };
-      if (payload.error) {
-        detail = payload.error;
-      }
-    } catch {
-      // ignore
-    }
-    throw new Error(detail);
-  }
+  await ensureOk(response, `保存配置失败（${response.status}）`);
   return response.json() as Promise<SettingsConfigSnapshot>;
 }
 
@@ -458,9 +693,7 @@ export async function loadSettingsRuntime(token: string): Promise<SettingsRuntim
   const response = await fetch('/api/settings/runtime', {
     headers: authHeaders(token),
   });
-  if (!response.ok) {
-    throw new Error(`加载运行状态失败（${response.status}）`);
-  }
+  await ensureOk(response, `加载运行状态失败（${response.status}）`);
   return response.json() as Promise<SettingsRuntimeSnapshot>;
 }
 
@@ -468,9 +701,7 @@ export async function loadSettingsAudit(token: string, limit = 100): Promise<Set
   const response = await fetch(`/api/settings/audit?limit=${encodeURIComponent(String(limit))}`, {
     headers: authHeaders(token),
   });
-  if (!response.ok) {
-    throw new Error(`加载审计日志失败（${response.status}）`);
-  }
+  await ensureOk(response, `加载审计日志失败（${response.status}）`);
   return response.json() as Promise<SettingsAuditSnapshot>;
 }
 
@@ -478,8 +709,6 @@ export async function loadSettingsTenantContracts(token: string): Promise<Settin
   const response = await fetch('/api/settings/tenant-contracts', {
     headers: authHeaders(token),
   });
-  if (!response.ok) {
-    throw new Error(`加载技能契约失败（${response.status}）`);
-  }
+  await ensureOk(response, `加载技能契约失败（${response.status}）`);
   return response.json() as Promise<SettingsTenantContractsSnapshot>;
 }

@@ -43,6 +43,7 @@ create table if not exists public.webui_user_profiles (
   resources jsonb,
   skills jsonb,
   tenant_policy jsonb,
+  is_deleted boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -52,7 +53,7 @@ alter table public.webui_user_profiles enable row level security;
 grant select on public.webui_user_profiles to service_role;
 ```
 
-普通 `user` 必须至少具备 `resources`、`scopes` 或 `tenant_policy` 之一；缺失权限画像时后端默认拒绝。`admin` 可不配置资源列表，`PolicyResolver` 会将其解析为全局管理员。
+普通 `user` 必须至少具备 `resources`、`scopes` 或 `tenant_policy` 之一；缺失权限画像时后端默认拒绝。`admin` 可不配置资源列表，`PolicyResolver` 会将其解析为全局管理员。`is_deleted = true` 表示该权限画像已逻辑删除，前端和后端默认不应作为可用账号画像展示或解析。
 
 ## SQL 设置文件
 

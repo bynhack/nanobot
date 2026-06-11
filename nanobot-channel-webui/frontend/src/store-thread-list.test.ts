@@ -3,6 +3,38 @@ import { describe, expect, it } from 'vitest';
 import { createInitialState, reducer } from './store';
 
 describe('thread list session lifecycle', () => {
+  it('ignores empty session init events without leaving the current thread', () => {
+    const state = createInitialState({ title: 'Nanobot', authRequired: false }, '', 'chat-current');
+
+    const next = reducer(state, {
+      type: 'server.event',
+      event: {
+        type: 'session.init',
+        chatId: '',
+        sessionId: '',
+      },
+    });
+
+    expect(next.currentChatId).toBe('chat-current');
+    expect(next.messagesByChat).toEqual({});
+  });
+
+  it('ignores empty session history events without leaving the current thread', () => {
+    const state = createInitialState({ title: 'Nanobot', authRequired: false }, '', 'chat-current');
+
+    const next = reducer(state, {
+      type: 'server.event',
+      event: {
+        type: 'session.history',
+        chatId: '   ',
+        messages: [],
+      },
+    });
+
+    expect(next.currentChatId).toBe('chat-current');
+    expect(next.messagesByChat).toEqual({});
+  });
+
   it('does not create a fake session row on session.init alone', () => {
     const state = createInitialState({ title: 'Nanobot', authRequired: false });
 
@@ -96,6 +128,131 @@ describe('thread list session lifecycle', () => {
 
     expect(next.currentChatId).toBe('chat-new');
     expect(next.sessions[0]?.chat_id).toBe('chat-new');
+  });
+
+  it('rebuilds the current session summary when upstream sessions temporarily miss the active chat', () => {
+    const stateWithMessage = reducer(createInitialState({ title: 'Nanobot', authRequired: false }), {
+      type: 'local.user_message',
+      chatId: 'chat-active',
+      content: '',
+      media: [{ url: '/api/public-media/upload-token', name: 'discipline.png', mime: 'image/png' }],
+    });
+    const stateWithoutSessionCache = {
+      ...stateWithMessage,
+      sessions: [],
+    };
+
+    const next = reducer(stateWithoutSessionCache, {
+      type: 'sessions.loaded',
+      sessions: [],
+    });
+
+    expect(next.currentChatId).toBe('chat-active');
+    expect(next.sessions).toHaveLength(1);
+    expect(next.sessions[0]).toMatchObject({
+      chat_id: 'chat-active',
+      preview: 'discipline.png',
+      message_count: 1,
+    });
+  });
+
+  it('switches from a draft to the server thread when the local attachment message is committed', () => {
+    const state = createInitialState({ title: 'Nanobot', authRequired: false });
+
+    const next = reducer(state, {
+      type: 'local.user_message',
+      chatId: 'chat-with-upload',
+      content: '',
+      media: [{ url: '/api/public-media/upload-token', name: 'contract.pdf', mime: 'application/pdf' }],
+    });
+
+    expect(next.currentChatId).toBe('chat-with-upload');
+    expect(next.messagesByChat['chat-with-upload']).toMatchObject([
+      {
+        type: 'user',
+        content: '',
+        media: [{ url: '/api/public-media/upload-token', name: 'contract.pdf', mime: 'application/pdf' }],
+      },
+    ]);
+    expect(next.sessions[0]).toMatchObject({
+      chat_id: 'chat-with-upload',
+      preview: 'contract.pdf',
+      message_count: 1,
+    });
+  });
+
+  it('does not replace an existing attachment thread title with later user messages', () => {
+    const firstTurn = reducer(createInitialState({ title: 'Nanobot', authRequired: false }), {
+      type: 'local.user_message',
+      chatId: 'chat-with-upload',
+      content: '',
+      media: [{ url: '/api/public-media/upload-token', name: 'discipline.png', mime: 'image/png' }],
+    });
+
+    const secondTurn = reducer(firstTurn, {
+      type: 'local.user_message',
+      chatId: 'chat-with-upload',
+      content: '你又在瞎说了',
+    });
+
+    expect(secondTurn.currentChatId).toBe('chat-with-upload');
+    expect(secondTurn.sessions[0]).toMatchObject({
+      chat_id: 'chat-with-upload',
+      preview: 'discipline.png',
+      message_count: 2,
+    });
+  });
+
+  it('uses uploaded attachment names instead of raw source text when rebuilding history titles', () => {
+    const state = createInitialState({ title: 'Nanobot', authRequired: false });
+
+    const next = reducer(state, {
+      type: 'server.event',
+      event: {
+        type: 'session.history',
+        chatId: 'chat-with-upload',
+        messages: [
+          {
+            type: 'user',
+            content: '[file: discipline.png] [File: source: /tmp/.nanobot_webui_uploads/chat/discipline.png]',
+            media: [{ url: '/api/public-media/upload-token', name: 'discipline.png', mime: 'image/png' }],
+          },
+          {
+            type: 'assistant',
+            content: '已读取附件。',
+          },
+        ],
+      },
+    });
+
+    expect(next.sessions[0]).toMatchObject({
+      chat_id: 'chat-with-upload',
+      preview: 'discipline.png',
+      message_count: 2,
+    });
+  });
+
+  it('sanitizes upstream session previews created from attachment bridge text', () => {
+    const state = createInitialState({ title: 'Nanobot', authRequired: false });
+
+    const next = reducer(state, {
+      type: 'sessions.loaded',
+      sessions: [
+        {
+          chat_id: 'chat-with-upload',
+          created_at: '2026-06-10T00:00:00.000Z',
+          last_ts: '2026-06-10T00:00:00.000Z',
+          preview: '[file: discipline.png] [File: source: /tmp/.nanobot_webui_uploads/chat/discipline.png]',
+          message_count: 2,
+        },
+      ],
+    });
+
+    expect(next.sessions[0]).toMatchObject({
+      chat_id: 'chat-with-upload',
+      preview: 'discipline.png',
+      message_count: 2,
+    });
   });
 
   it('keeps existing session order when switching to a session with history', () => {

@@ -21,6 +21,7 @@ import { DRAFT_THREAD_ID, buildExternalThreadListAdapter, buildThreadSuggestions
 import { findPendingAskUserPrompt } from './ask-user';
 import { uploadFiles } from './api';
 import { messageContentWithSelectedSkill } from './skill-quick-select';
+import { STORAGE_KEYS } from './store';
 
 const EMPTY_MESSAGES: readonly RuntimeMessageSource[] = [];
 
@@ -142,11 +143,8 @@ export function useWebuiRuntime({
       },
       async send(attachment): Promise<CompleteAttachment> {
         const authToken = appStore.getState().authToken;
-        const chatId = await ensureThread();
-        if (!chatId) {
-          throw new Error('缺少当前会话，无法上传附件');
-        }
-        const uploadedFiles = await uploadFiles(chatId, [attachment.file], authToken);
+        const uploadChatId = appStore.getState().currentChatId ?? DRAFT_THREAD_ID;
+        const uploadedFiles = await uploadFiles(uploadChatId, [attachment.file], authToken);
         const uploaded = uploadedFiles[0];
         if (!uploaded) {
           throw new Error('上传结果为空');
@@ -154,7 +152,7 @@ export function useWebuiRuntime({
         return uploadedToCompleteAttachment(attachment, uploaded);
       },
     }),
-    [ensureThread],
+    [],
   );
 
   const handleNewMessage = useCallback(async (message: AppendMessage) => {
@@ -188,6 +186,7 @@ export function useWebuiRuntime({
       content: sendContent,
       media: uploadedAttachments.map(({ url, name, mime }) => ({ url, name, mime })),
     });
+    window.localStorage.setItem(STORAGE_KEYS.chatId, chatId);
     appStore.dispatch({ type: 'local.turn_started', chatId });
     sendMessage({
       content: sendContent,

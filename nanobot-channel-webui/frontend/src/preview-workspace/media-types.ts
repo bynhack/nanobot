@@ -1,10 +1,6 @@
 import type { MediaItem } from '../types';
 
 export function mediaMime(item: MediaItem): string {
-  if (item.mime) {
-    return item.mime.toLowerCase();
-  }
-
   const match = item.url.match(/^data:([^;]+);base64,/);
   if (match) {
     return match[1].toLowerCase();
@@ -35,7 +31,12 @@ export function mediaMime(item: MediaItem): string {
     xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   };
 
-  return map[ext] ?? 'application/octet-stream';
+  const normalized = item.mime?.toLowerCase() ?? '';
+  if (normalized && normalized !== 'application/octet-stream' && normalized !== 'binary/octet-stream') {
+    return normalized;
+  }
+
+  return map[ext] ?? (normalized || 'application/octet-stream');
 }
 
 export function isWordMime(mime: string): boolean {

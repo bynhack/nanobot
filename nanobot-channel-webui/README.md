@@ -191,14 +191,31 @@ HR 不应该污染通用运行时。业务词、任务聚焦词、能力组合�
 开发时从本地 checkout 安装：
 
 ```bash
-uv tool install nanobot-ai --with /absolute/path/to/nanobot-channel-webui --force
+uv tool install nanobot-ai \
+  --with /absolute/path/to/nanobot-channel-webui \
+  --force
 ```
 
 发布后从包安装：
 
 ```bash
-uv tool install nanobot-ai --with nanobot-channel-webui --force
+uv tool install nanobot-ai \
+  --with nanobot-channel-webui \
+  --force
 ```
+
+如果使用已经构建好的 wheel：
+
+```bash
+uv tool install nanobot-ai \
+  --with ./dist/nanobot_channel_webui-0.1.1-py3-none-any.whl \
+  --force
+```
+
+这样只维护一个 `nanobot-ai` tool env，Nanobot 用户实例能 import 插件。较新的 uv
+支持 `--with-executables-from <plugin>` 时，可以同时暴露插件命令；当前兼容脚本会在 uv
+不支持该参数时，把 `nanobot-ai` env 内生成的 `nanobot-webui` 和
+`nanobot-webui-business` 链接到 uv tool bin 目录。
 
 ### 本地验证
 
@@ -224,7 +241,9 @@ uv tool install nanobot-ai --with nanobot-channel-webui --force
 1. 本地验证。
 2. 同步前端静态资源到 Python 包。
 3. 构建 wheel。
-4. 安装到本机 `nanobot-ai` tool env。
+4. 使用 `uv tool install nanobot-ai --with <wheel> --force` 将插件安装到同一个
+   `nanobot-ai` tool env；如果当前 uv 不支持 `--with-executables-from`，脚本会创建
+   `nanobot-webui` / `nanobot-webui-business` 的 PATH shim。
 
 如果修改涉及 Python 后端、插件运行时、权限注入、会话服务、API 或其他服务端逻辑，发布后需要重启 WebUI 控制面：
 

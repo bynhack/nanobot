@@ -11,8 +11,11 @@
 | 创建时间 | `created_at timestamptz`，数据库自动填写 |
 | 修改人 | `updated_by uuid → auth.users`，**应用层必须手动填写**，INSERT 时也必须填 |
 | 修改时间 | `updated_at timestamptz`，由触发器自动更新，**禁止手动设置** |
+| 逻辑删除 | `is_deleted boolean NOT NULL DEFAULT false`，`false` 表示默认正常显示，`true` 表示逻辑删除 |
 | 权限 | 所有表启用 RLS，已登录用户可 SELECT / INSERT / UPDATE |
 | 文件存储 | `text[]` 类型字段存储 Supabase Storage 的文件 URL 数组 |
+
+`is_deleted` 用于统一逻辑删除能力。前端和业务 CLI 默认列表应隐藏 `is_deleted = true` 的记录，但数据库不物理删除记录，便于审计、追溯和必要时恢复。该字段已覆盖：`companies`、`departments`、`employees`、`contracts`、`performance_reviews`、`insurance_changes`、`personnel_changes`、`disciplinary_records`、`seal_usage`、`overtime_records`、`work_injuries`、`job_postings`、`interview_records`、`training_records`、`webui_user_profiles`。
 
 ---
 
@@ -45,6 +48,7 @@ companies（公司）
 ├── employees（员工）            company_id → companies.id
 │   ├── department_id            department_id → departments.id
 │   ├── contracts（合同）        employee_id → employees.id [级联删除]
+│   │                            company_id → companies.id
 │   ├── performance_reviews      employee_id → employees.id [级联删除]
 │   ├── insurance_changes        employee_id → employees.id [级联删除]
 │   ├── personnel_changes        employee_id → employees.id [级联删除]
@@ -54,7 +58,7 @@ companies（公司）
 ├── seal_usage（用章）           company_id → companies.id
 │                                applicant_id → employees.id（申请人，可为空）
 │                                seal_applicant_id → employees.id（用章人，可为空）
-├── job_postings（招聘岗位）     company_id → companies.id
+├── job_postings（招聘岗位）     当前表不直接保存公司外键
 │   └── interview_records        job_posting_id → job_postings.id [级联删除]
 └── training_records（培训）     company_id → companies.id
 ```
@@ -172,6 +176,16 @@ companies（公司）
 | `resignation_cert_issued` | boolean | 离职花名册：离职证明是否已开具 | |
 | `resignation_notes` | text | 离职花名册：离职备注 | |
 
+#### 档案延续 / 跨主体调动字段
+
+| 字段 | 类型 | 对应 Excel | 说明 |
+|------|------|-----------|------|
+| `identity_key` | text | 系统归并字段 | 员工身份归并键，用于跨记录识别同一自然人。 |
+| `previous_employee_id` | uuid FK → employees | 档案延续 | 上一条员工档案或调动前员工记录。 |
+| `transfer_group_id` | uuid | 档案延续 | 跨公司 / 主体调动归并组。 |
+| `service_continuity_policy` | text | 档案延续 | 工龄连续性规则或说明。 |
+| `recognized_service_start_date` | date | 档案延续 | 认定连续工龄起算日期。 |
+
 ---
 
 ### 4. `contracts` — 合同
@@ -181,6 +195,7 @@ companies（公司）
 | 字段 | 类型 | 对应 Excel | 说明 |
 |------|------|-----------|------|
 | `employee_id` | uuid FK → employees | 员工姓名 | 级联删除 |
+| `company_id` | uuid FK → companies | 合同归属公司 | 用于合同按公司归属过滤和授权。 |
 | `type` | text | Sheet 名称 | `劳动合同` / `劳务合同` / `实习协议` / `合作协议` |
 | `sequence` | integer | 第几份 | 第1份、第2份… |
 | `sign_date` | date | 签订日期 | |
@@ -263,7 +278,7 @@ companies（公司）
 | 字段 | 类型 | 对应 Excel | 说明 |
 |------|------|-----------|------|
 | `employee_id` | uuid FK → employees | 员工姓名 | 级联删除 |
-| `incident_dates` | date[] | 事件日期 | 处罚发生日期，可记录多个日期。标准业务 CLI 对外仍以 `incident_date` 返回和接收。 |
+| `incident_dates` | date[] | 事件日期 | 当前数据库字段为复数数组字段，可记录多个处罚发生日期。标准业务 CLI 对外仍以 `incident_date` 返回和接收。 |
 | `penalty_type` | text | 处罚类型 | 书面警告 / 记过 / 降薪 / 辞退 |
 | `penalty_reason` | text | 处罚原因 | 事件描述 |
 | `signed_upload` | text[] | 上传纸质签字版 | Storage bucket: `hr-documents` |
@@ -337,11 +352,10 @@ companies（公司）
 
 ### 12. `job_postings` — 招聘岗位
 
-对应「招聘信息」Sheet 的岗位部分，先有岗位记录，才能建面试记录。
+对应「招聘信息」Sheet 的岗位部分，先有岗位记录，才能建面试记录。当前表不直接保存公司外键；如需公司维度，需要通过业务流程补充或后续 schema 扩展，不要从本表字段推断。
 
 | 字段 | 类型 | 对应 Excel | 说明 |
 |------|------|-----------|------|
-| `company_id` | uuid FK → companies | 所属公司 | 招聘方 |
 | `position_name` | text | 招聘岗位 | 如：人事专员、会计 |
 | `headcount` | integer | 招聘人数 | |
 | `job_type` | text | 岗位类型 | 全职 / 兼职 / 实习 |

@@ -12,5 +12,23 @@ fi
 
 echo "Installing wheel: $(basename "$WHEEL_PATH")"
 echo "Wheel path: $WHEEL_PATH"
-uv tool install nanobot-ai --with "$WHEEL_PATH" --force
+if uv tool install --help | grep -q -- "--with-executables-from"; then
+  uv tool install nanobot-ai \
+    --with "$WHEEL_PATH" \
+    --with-executables-from "$WHEEL_PATH" \
+    --force
+else
+  uv tool install nanobot-ai --with "$WHEEL_PATH" --force
+  UV_TOOL_DIR="$(uv tool dir)"
+  UV_TOOL_BIN_DIR="$(uv tool dir --bin)"
+  mkdir -p "$UV_TOOL_BIN_DIR"
+  for executable in nanobot-webui nanobot-webui-business; do
+    target="$UV_TOOL_DIR/nanobot-ai/bin/$executable"
+    if [[ ! -x "$target" ]]; then
+      echo "Expected executable not found in nanobot-ai tool env: $target" >&2
+      exit 1
+    fi
+    ln -sfn "$target" "$UV_TOOL_BIN_DIR/$executable"
+  done
+fi
 echo "Done"

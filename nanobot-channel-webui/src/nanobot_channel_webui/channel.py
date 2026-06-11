@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import html as html_lib
 import json
 import mimetypes
@@ -37,6 +38,7 @@ from .uploads import next_upload_path
 
 STATIC_DIR = Path(__file__).parent / "static"
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+DRAFT_UPLOAD_CHAT_ID = "__nanobot_draft_thread__"
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
     re.IGNORECASE,
@@ -45,6 +47,10 @@ _UUID_RE = re.compile(
 
 def is_valid_chat_id(chat_id: str) -> bool:
     return bool(_UUID_RE.match(chat_id))
+
+
+def is_valid_upload_chat_id(chat_id: str) -> bool:
+    return chat_id == DRAFT_UPLOAD_CHAT_ID or is_valid_chat_id(chat_id)
 
 
 def _read_env_file_value(key: str) -> str:
@@ -149,9 +155,13 @@ class WebUIChannel(BaseChannel):
         app.router.add_get("/api/settings/audit", self._handle_audit)
         app.router.add_get("/api/settings/tenant-contracts", self._handle_tenant_contracts)
         app.router.add_get("/api/upstream/bootstrap", self._handle_upstream_bootstrap)
+        app.router.add_get("/api/upstream/ws/{instance_id}", self._handle_upstream_ws_proxy)
         app.router.add_get("/api/upstream/sessions", self._handle_upstream_sessions)
         app.router.add_get("/api/upstream/sessions/{chat_id}/webui-thread", self._handle_upstream_thread)
         app.router.add_delete("/api/upstream/sessions/{chat_id}", self._handle_upstream_delete_session)
+        app.router.add_get("/api/public-media/{payload}", self._handle_upstream_media)
+        app.router.add_get("/api/upstream/media/{sig}/{payload}", self._handle_upstream_media)
+        app.router.add_get("/api/media/{sig}/{payload}", self._handle_upstream_media)
         app.router.add_get("/api/workspaces/{chat_id}", self._handle_workspace)
         app.router.add_post("/uploads/{chat_id}", self._handle_uploads)
         app.router.add_get("/media/{token}", self._handle_media)
@@ -300,8 +310,195 @@ class WebUIChannel(BaseChannel):
         except Exception as exc:
             return 502, {"error": f"访问上游 WebUI Gateway 失败: {exc}"}
 
+    async def _upstream_bytes(
+        self,
+        path: str,
+        *,
+        token: str = "",
+        base_url: str | None = None,
+    ) -> tuple[int, bytes, dict[str, str]]:
+        import aiohttp
+
+        upstream_base = (base_url or self.config.upstream_gateway_url).rstrip("/")
+        if not upstream_base:
+            return (
+                404,
+                json.dumps({"error": "未配置上游 WebUI Gateway"}, ensure_ascii=False).encode("utf-8"),
+                {"Content-Type": "application/json"},
+            )
+        url = f"{upstream_base}{path}"
+        headers = {"Authorization": f"Bearer {token}"} if token else {}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as response:
+                    body = await response.read()
+                    selected_headers = {
+                        key: value
+                        for key, value in response.headers.items()
+                        if key.lower() in {"content-type", "cache-control", "accept-ranges", "content-range"}
+                    }
+                    return response.status, body, selected_headers
+        except Exception as exc:
+            return (
+                502,
+                json.dumps({"error": f"访问上游媒体失败: {exc}"}, ensure_ascii=False).encode("utf-8"),
+                {"Content-Type": "application/json"},
+            )
+
+    @staticmethod
+    def _rewrite_upstream_media_url(url: str) -> str:
+        prefix = "/api/media/"
+        if not url.startswith(prefix):
+            return url
+        parts = url[len(prefix):].split("/", 1)
+        payload = parts[1] if len(parts) == 2 else parts[0]
+        return f"/api/public-media/{payload}"
+
+    @classmethod
+    def _rewrite_upstream_payload_media_urls(cls, value: Any) -> Any:
+        if isinstance(value, list):
+            return [cls._rewrite_upstream_payload_media_urls(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        rewritten: dict[str, Any] = {}
+        for key, item in value.items():
+            if key == "url" and isinstance(item, str):
+                rewritten[key] = cls._rewrite_upstream_media_url(item)
+            else:
+                rewritten[key] = cls._rewrite_upstream_payload_media_urls(item)
+        return rewritten
+
+    @classmethod
+    def _media_items_from_upstream_payload(cls, payload: Any) -> list[dict[str, Any]]:
+        if not isinstance(payload, dict):
+            return []
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
+            return []
+        media_items: list[dict[str, Any]] = []
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            raw_media = message.get("media")
+            if not isinstance(raw_media, list):
+                raw_media = message.get("media_urls")
+            if not isinstance(raw_media, list):
+                continue
+            delivered_at = (
+                message.get("delivered_at")
+                or message.get("created_at")
+                or message.get("updated_at")
+            )
+            for item in raw_media:
+                if not isinstance(item, dict):
+                    continue
+                url = str(item.get("url") or "").strip()
+                name = str(item.get("name") or "").strip()
+                if not url or not name:
+                    continue
+                normalized = {
+                    "url": cls._rewrite_upstream_media_url(url),
+                    "name": name,
+                    "mime": str(item.get("mime") or "").strip(),
+                }
+                if isinstance(delivered_at, str) and delivered_at:
+                    normalized["delivered_at"] = delivered_at
+                media_items.append(normalized)
+        return media_items
+
     def _managed_instances_enabled(self) -> bool:
-        return bool(self._supabase.enabled)
+        return bool(getattr(getattr(self, "_supabase", None), "enabled", False))
+
+    @staticmethod
+    def _decode_media_payload(payload: str) -> Path | None:
+        try:
+            padded = payload + "=" * (-len(payload) % 4)
+            decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        except Exception:
+            return None
+        path = Path(decoded)
+        if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+            return None
+        return path
+
+    @staticmethod
+    def _decode_upload_media_payload(payload: str) -> Path | None:
+        try:
+            padded = payload + "=" * (-len(payload) % 4)
+            decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+            data = json.loads(decoded)
+        except Exception:
+            return None
+        path = Path(str(data.get("path", ""))).expanduser()
+        return path if path.is_absolute() else None
+
+    @staticmethod
+    def _encode_upload_media_payload(path: Path) -> str:
+        raw = json.dumps(
+            {"path": str(path.resolve(strict=False))},
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+    def _public_upload_media_url(self, path: Path) -> str:
+        return f"/api/public-media/{self._encode_upload_media_payload(path)}"
+
+    def _public_upload_media_path(self, payload: str) -> Path | None:
+        path = self._decode_upload_media_payload(payload)
+        if path is None:
+            return None
+        try:
+            resolved = path.resolve(strict=False)
+        except OSError:
+            return None
+        if ".nanobot_webui_uploads" not in resolved.parts:
+            return None
+
+        roots = [self._workspace_root.resolve() / ".nanobot_webui_uploads"]
+        if self._managed_instances_enabled():
+            instances_root = Path(self.config.runtime_root).expanduser() / "instances"
+            if instances_root.exists():
+                roots.extend(
+                    (workspace / ".nanobot_webui_uploads").resolve()
+                    for workspace in instances_root.glob("*/workspace")
+                )
+
+        for root in roots:
+            try:
+                resolved.relative_to(root)
+            except ValueError:
+                continue
+            return resolved if resolved.is_file() else None
+        return None
+
+    def _public_media_path(self, payload: str) -> Path | None:
+        upload_path = self._public_upload_media_path(payload)
+        if upload_path is not None:
+            return upload_path
+
+        relative = self._decode_media_payload(payload)
+        if relative is None:
+            return None
+        if self._managed_instances_enabled():
+            instances_root = Path(self.config.runtime_root).expanduser() / "instances"
+            if not instances_root.exists():
+                return None
+            for media_root in sorted(instances_root.glob("*/media")):
+                candidate = (media_root / relative).resolve()
+                try:
+                    candidate.relative_to(media_root.resolve())
+                except ValueError:
+                    continue
+                if candidate.is_file():
+                    return candidate
+            return None
+        candidate = (self._workspace_root / ".nanobot_media" / relative).resolve()
+        try:
+            candidate.relative_to((self._workspace_root / ".nanobot_media").resolve())
+        except ValueError:
+            return None
+        return candidate if candidate.is_file() else None
 
     def _managed_instance_bootstrap_service(self) -> ManagedInstanceBootstrapService:
         if self._managed_instance_service is not None:
@@ -382,7 +579,89 @@ class WebUIChannel(BaseChannel):
         if not allowed:
             return resp
         status, payload = await self._issue_upstream_token(user)
+        if (
+            status == 200
+            and self._managed_instances_enabled()
+            and isinstance(payload, dict)
+            and payload.get("instance_id")
+        ):
+            payload = dict(payload)
+            payload["ws_url"] = self._public_upstream_ws_url(
+                request,
+                str(payload["instance_id"]),
+            )
         return web.json_response(payload, status=status)
+
+    @staticmethod
+    def _public_upstream_ws_url(request: Any, instance_id: str) -> str:
+        _ = request
+        return f"/api/upstream/ws/{instance_id}"
+
+    async def _handle_upstream_ws_proxy(self, request: Any) -> Any:
+        from aiohttp import WSMsgType, web
+        import aiohttp
+
+        allowed, resp, user = await self._authorize_request(request)
+        if not allowed:
+            return resp
+        if not self._managed_instances_enabled() or user is None:
+            return web.json_response({"error": "托管实例 WebSocket 代理需要登录用户"}, status=401)
+
+        instance_id = str(request.match_info.get("instance_id") or "")
+        expected_instance_id = InstanceSpecBuilder.instance_id_for_user(user)
+        if instance_id != expected_instance_id:
+            return web.json_response({"error": "当前账号无权访问该实例"}, status=403)
+
+        status, boot = await self._issue_upstream_token(user)
+        if status != 200:
+            return web.json_response(boot, status=status)
+        port = int(boot.get("websocket_port") or boot.get("gateway_port") or 0)
+        if port <= 0:
+            return web.json_response({"error": "用户实例 WebSocket 端口不可用"}, status=502)
+
+        token = str(request.rel_url.query.get("token") or boot.get("token") or "")
+        client_id = str(request.rel_url.query.get("client_id") or "nanobot-channel-webui")
+        path = str(boot.get("ws_path") or "/")
+        upstream_url = f"ws://127.0.0.1:{port}{path}"
+        upstream_params = {"client_id": client_id}
+        if token:
+            upstream_params["token"] = token
+
+        client_ws = web.WebSocketResponse()
+        await client_ws.prepare(request)
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(upstream_url, params=upstream_params) as upstream_ws:
+                    client_to_upstream = asyncio.create_task(
+                        self._proxy_websocket_messages(client_ws, upstream_ws, WSMsgType)
+                    )
+                    upstream_to_client = asyncio.create_task(
+                        self._proxy_websocket_messages(upstream_ws, client_ws, WSMsgType)
+                    )
+                    done, pending = await asyncio.wait(
+                        {client_to_upstream, upstream_to_client},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    for task in pending:
+                        task.cancel()
+                    for task in done:
+                        task.result()
+        except Exception as exc:
+            logger.warning("upstream websocket proxy closed: {}", exc)
+        finally:
+            await client_ws.close()
+        return client_ws
+
+    @staticmethod
+    async def _proxy_websocket_messages(source: Any, target: Any, msg_type: Any) -> None:
+        async for msg in source:
+            if msg.type == msg_type.TEXT:
+                await target.send_str(msg.data)
+            elif msg.type == msg_type.BINARY:
+                await target.send_bytes(msg.data)
+            elif msg.type in (msg_type.CLOSE, msg_type.CLOSED, msg_type.ERROR):
+                await target.close()
+                break
 
     async def _handle_upstream_sessions(self, request: Any) -> Any:
         from aiohttp import web
@@ -432,7 +711,18 @@ class WebUIChannel(BaseChannel):
             token=token,
             base_url=self._upstream_base_from_bootstrap(boot),
         )
+        payload = self._rewrite_upstream_payload_media_urls(payload)
         return web.json_response(payload, status=status)
+
+    async def _handle_upstream_media(self, request: Any) -> Any:
+        from aiohttp import web
+
+        payload = request.match_info.get("payload", "")
+        media_path = self._public_media_path(payload)
+        if media_path is None:
+            return web.json_response({"error": "媒体文件不存在或已失效"}, status=404)
+        content_type = mimetypes.guess_type(media_path.name)[0] or "application/octet-stream"
+        return web.FileResponse(media_path, headers={"Content-Type": content_type})
 
     async def _handle_upstream_delete_session(self, request: Any) -> Any:
         from aiohttp import web
@@ -653,6 +943,32 @@ class WebUIChannel(BaseChannel):
             return self._workspace.load_workspace(chat_id)
         return self._workspace.record_deliveries(chat_id, delivered)
 
+    async def _workspace_from_upstream_thread(
+        self,
+        user: CurrentUser | None,
+        chat_id: str,
+    ) -> dict[str, Any]:
+        status, boot = await self._issue_upstream_token(user)
+        token = str(boot.get("token", "")) if status == 200 else ""
+        if not token:
+            return await asyncio.to_thread(self._workspace.load_workspace, chat_id)
+        key = f"websocket:{chat_id}"
+        status, payload = await self._upstream_json(
+            f"/api/sessions/{key}/webui-thread",
+            token=token,
+            base_url=self._upstream_base_from_bootstrap(boot),
+        )
+        if status != 200:
+            return await asyncio.to_thread(self._workspace.load_workspace, chat_id)
+        media = self._media_items_from_upstream_payload(payload)
+        return await asyncio.to_thread(self._record_workspace_media, chat_id, media)
+
+    def _workspace_root_for_user(self, user: CurrentUser | None) -> Path:
+        if user is None or not self._managed_instances_enabled():
+            return self._workspace_root
+        spec = self._managed_instance_bootstrap_service().spec_for_user(user)
+        return spec.workspace.workspace.expanduser()
+
     async def _handle_workspace(self, request: Any) -> Any:
         from aiohttp import web
 
@@ -667,13 +983,19 @@ class WebUIChannel(BaseChannel):
         if not await self._can_access_session(user, chat_id):
             return web.json_response({"error": "无权访问此会话"}, status=404)
 
-        workspace = await asyncio.to_thread(self._workspace.load_workspace, chat_id)
+        if self._managed_instances_enabled():
+            workspace = await self._workspace_from_upstream_thread(user, chat_id)
+        else:
+            workspace = await asyncio.to_thread(self._workspace.load_workspace, chat_id)
         return web.json_response({
             "chat_id": workspace["chat_id"],
             "updated_at": workspace["updated_at"],
             "file_count": len(workspace["files"]),
             "files": workspace["files"],
         })
+
+    def _upload_workspace_root_for_user(self, user: CurrentUser | None) -> Path:
+        return self._workspace_root_for_user(user)
 
     async def _handle_uploads(self, request: Any) -> Any:
         from aiohttp import web
@@ -683,11 +1005,14 @@ class WebUIChannel(BaseChannel):
             return resp
 
         chat_id = request.match_info.get("chat_id", "").strip()
-        if not chat_id or not is_valid_chat_id(chat_id):
+        if not chat_id or not is_valid_upload_chat_id(chat_id):
             return web.json_response({"error": "无效的会话 ID"}, status=400)
+        if chat_id != DRAFT_UPLOAD_CHAT_ID and not await self._can_access_session(user, chat_id):
+            return web.json_response({"error": "无权访问此会话"}, status=404)
 
         reader = await request.multipart()
         uploaded: list[dict[str, str]] = []
+        upload_workspace = self._upload_workspace_root_for_user(user)
 
         while True:
             part = await reader.next()
@@ -700,7 +1025,7 @@ class WebUIChannel(BaseChannel):
                 continue
 
             destination = next_upload_path(
-                self._workspace_root,
+                upload_workspace,
                 user.id if user is not None else "shared",
                 chat_id,
                 filename,
@@ -714,7 +1039,7 @@ class WebUIChannel(BaseChannel):
                 "path": str(destination),
                 "name": media_item.get("name") or destination.name,
                 "mime": part.headers.get("Content-Type", "") or mimetypes.guess_type(destination.name)[0] or "",
-                "url": media_item.get("url", ""),
+                "url": self._public_upload_media_url(destination),
             })
 
         if not uploaded:

@@ -23,6 +23,11 @@
   - `created_at`
   - `updated_by`
   - `updated_at`
+- 统一逻辑删除字段：
+  - `is_deleted boolean NOT NULL DEFAULT false`
+  - `false`：默认正常显示
+  - `true`：逻辑删除，前端和业务 CLI 默认列表隐藏
+  - 不物理删除记录，方便审计、追溯和必要时恢复
 - `updated_at` 由 `update_updated_at()` 触发器自动维护
 - 所有表启用了 RLS
 - 已登录用户可 `SELECT / INSERT / UPDATE`
@@ -108,11 +113,17 @@ companies（公司）
 - `hr_clerk`
 - `resignation_date`
 - `resignation_reason`
+- `identity_key`
+- `previous_employee_id`
+- `transfer_group_id`
+- `service_continuity_policy`
+- `recognized_service_start_date`
 
 注意：
 
 - 同时存储在职和离职员工。
 - `status='离职'` 通常表示该员工已离职。
+- 档案延续和跨主体调动应优先使用 `identity_key`、`previous_employee_id`、`transfer_group_id` 辅助关联，不要仅凭姓名合并档案。
 - 删除员工会影响多个子表，默认不要硬删。
 
 ### `contracts`
@@ -120,6 +131,7 @@ companies（公司）
 关键字段：
 
 - `employee_id`
+- `company_id`
 - `type`
 - `sequence`
 - `sign_date`
@@ -153,8 +165,11 @@ companies（公司）
 
 关键字段：
 
-- `company_id`
 - 岗位相关业务字段，详见 `database-schema-zh.md`
+
+注意：
+
+- 当前表不直接保存公司外键，不要在查询或写入计划里引用 `job_postings.company_id`。
 
 ### `interview_records`
 
@@ -169,7 +184,7 @@ companies（公司）
 - 修改员工数据时，优先使用 `employee_id`，其次用 `name + company_id`。
 - `companies.name` 是最明显的业务唯一键。
 - `departments` 用 `(company_id, name)` 识别最稳妥。
-- 不要默认删除 `employees`，因为其下多张表设置了级联删除。
+- 删除业务记录时默认使用 `is_deleted = true` 逻辑删除，不要物理删除；`employees` 下多张表设置了级联删除，更不能默认硬删。
 
 ## 什么时候读完整资料
 

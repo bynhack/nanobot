@@ -29,8 +29,8 @@ nanobot-webui-business hr business <query|get|analyze> <resource|topic> [options
 |---|---|
 | 当前账号可见公司和部门 | `business query organization-tree` |
 | 某公司有哪些部门 | `business query departments --company "公司全称"` |
-| 现在有哪些员工 | `business query employee` |
-| 某公司现在有哪些员工 | `business query employee --company "公司全称"` |
+| 现在有哪些员工 / 员工花名册明细 / 员工所有主档信息 | `business query employee` |
+| 某公司现在有哪些员工 / 某公司花名册明细 | `business query employee --company "公司全称"` |
 | 查某个员工信息 | `business get employee --name "姓名" [--company "公司全称"]` |
 | 查某员工所有记录/生命周期 | `business query employee-timeline --name "姓名" [--company "公司全称"]` |
 | 这个手机号是谁 | `business get employee --phone "手机号"` |

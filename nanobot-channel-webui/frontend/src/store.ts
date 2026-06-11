@@ -21,6 +21,7 @@ export const STORAGE_KEYS = {
   uiTheme: 'nanobot_channel_webui_ui_theme',
   showToolMessages: 'nanobot_channel_webui_show_tool_messages',
   showReasoningMessages: 'nanobot_channel_webui_show_reasoning_messages',
+  debugState: 'nanobot_channel_webui_debug_state',
 } as const;
 
 let localMessageCounter = 0;
@@ -357,6 +358,51 @@ function ensureSessionSummary(
   ];
 }
 
+function sanitizeSessionPreview(preview: string): string {
+  const fileMatch = preview.match(/^\s*\[file:\s*([^\]]+)\]/i);
+  return fileMatch?.[1]?.trim() || preview;
+}
+
+function sessionPreviewFromMessages(messages: HistoryMessage[] | undefined): string {
+  if (!messages?.length) {
+    return '新对话';
+  }
+  const userMessage = messages.find((message) => message.type === 'user');
+  if (userMessage?.type === 'user') {
+    return previewFromUserMessage(userMessage.content, userMessage.media);
+  }
+  const firstMessage = messages[0];
+  if (firstMessage?.type === 'outbound') {
+    return firstMessage.content || firstMessage.media[0]?.name || '新对话';
+  }
+  return firstMessage?.content || '新对话';
+}
+
+function previewFromUserMessage(content: string, media?: MediaItem[]): string {
+  if (media?.length && /^\s*\[file:/i.test(content)) {
+    return media[0]?.name ?? '附件';
+  }
+  return sanitizeSessionPreview(content) || (media?.length ? media[0]?.name ?? '附件' : '新对话');
+}
+
+function normalizeSessionSummary(session: SessionSummary): SessionSummary {
+  return {
+    ...session,
+    preview: sanitizeSessionPreview(session.preview) || '新对话',
+  };
+}
+
+function currentSessionFallback(state: AppState, chatId: string): SessionSummary {
+  const messages = state.messagesByChat[chatId] ?? [];
+  return {
+    chat_id: chatId,
+    created_at: new Date().toISOString(),
+    last_ts: new Date().toISOString(),
+    preview: sessionPreviewFromMessages(messages),
+    message_count: messages.length,
+  };
+}
+
 export type Action =
   | { type: 'auth.set'; token: string }
   | { type: 'connection.set'; connectionState: ConnectionState }
@@ -382,9 +428,10 @@ export function reducer(state: AppState, action: Action): AppState {
     case 'connection.set':
       return { ...state, connectionState: action.connectionState };
     case 'sessions.loaded': {
+      const loadedSessions = action.sessions.map(normalizeSessionSummary);
       const currentChatId = state.currentChatId;
       const currentExists = currentChatId
-        ? action.sessions.some((session) => session.chat_id === currentChatId)
+        ? loadedSessions.some((session) => session.chat_id === currentChatId)
         : false;
       const currentHasLocalMessages = currentChatId
         ? Boolean(state.messagesByChat[currentChatId]?.length)
@@ -392,12 +439,20 @@ export function reducer(state: AppState, action: Action): AppState {
       const currentLocalSession = currentChatId
         ? state.sessions.find((session) => session.chat_id === currentChatId)
         : undefined;
-      const sessions = currentChatId && !currentExists && currentHasLocalMessages && currentLocalSession
-        ? [currentLocalSession, ...action.sessions]
-        : action.sessions;
+      const currentTurn = currentChatId ? state.activeTurns[currentChatId] : undefined;
+      const currentTurnInFlight = Boolean(
+        currentTurn
+        && (currentTurn.waiting || currentTurn.requestStatus === 'processing' || currentTurn.requestStatus === 'running_tools'),
+      );
+      const shouldPreserveCurrent = Boolean(currentChatId && !currentExists && (currentHasLocalMessages || currentTurnInFlight));
+      const sessions = shouldPreserveCurrent && currentChatId
+        ? [currentLocalSession ?? currentSessionFallback(state, currentChatId), ...loadedSessions]
+        : loadedSessions;
       return {
         ...state,
-        currentChatId: currentChatId && !currentExists && !currentHasLocalMessages ? null : currentChatId,
+        currentChatId: currentChatId && !currentExists && !currentHasLocalMessages && !currentTurnInFlight
+          ? null
+          : currentChatId,
         sessions,
       };
     }
@@ -408,16 +463,21 @@ export function reducer(state: AppState, action: Action): AppState {
         workspacePanel: closedWorkspacePanel(),
       };
     case 'local.user_message': {
+      const previousMessageCount = state.messagesByChat[action.chatId]?.length ?? 0;
+      const existingSession = state.sessions.find((session) => session.chat_id === action.chatId);
       const nextState = appendMessage(state, action.chatId, {
         type: 'user',
         content: action.content,
         ...(action.media?.length ? { media: action.media } : {}),
       });
       const messageCount = nextState.messagesByChat[action.chatId]?.length ?? 1;
+      const shouldSetPreview = !existingSession || previousMessageCount === 0;
       return {
         ...nextState,
+        currentChatId: action.chatId,
+        workspacePanel: state.currentChatId === action.chatId ? state.workspacePanel : closedWorkspacePanel(),
         sessions: ensureSessionSummary(nextState, action.chatId, {
-          preview: action.content || (action.media?.length ? action.media[0]?.name ?? '附件' : '新对话'),
+          ...(shouldSetPreview ? { preview: previewFromUserMessage(action.content, action.media) } : {}),
           message_count: messageCount,
           last_ts: new Date().toISOString(),
         }),
@@ -513,6 +573,9 @@ export function reducer(state: AppState, action: Action): AppState {
 
 function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
   if (event.type === 'session.init') {
+    if (!event.chatId.trim()) {
+      return state;
+    }
     return {
       ...state,
       currentChatId: event.chatId,
@@ -525,7 +588,10 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
   }
 
   if (event.type === 'session.history') {
-    const preview = event.messages.find((message) => message.type === 'user')?.content ?? '';
+    if (!event.chatId.trim()) {
+      return state;
+    }
+    const preview = sessionPreviewFromMessages(event.messages);
     const existingSession = state.sessions.find((session) => session.chat_id === event.chatId);
     return {
       ...state,
@@ -534,7 +600,7 @@ function reduceServerEvent(state: AppState, event: ServerEvent): AppState {
       sessions:
         event.messages.length > 0 || existingSession
           ? ensureSessionSummary(state, event.chatId, {
-              ...(preview ? { preview } : {}),
+              ...(preview !== '新对话' ? { preview } : {}),
               message_count: event.messages.length,
             }, { preserveExistingOrder: Boolean(existingSession) })
           : state.sessions,
@@ -773,6 +839,65 @@ function normalizeDeltaForStore(current: string, incoming: string): string {
   return incoming;
 }
 
+function debugStateEnabled(): boolean {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  return window.localStorage.getItem(STORAGE_KEYS.debugState) === 'true'
+    || new URLSearchParams(window.location.search).get('debug_state') === '1';
+}
+
+function activeTurnSummary(state: AppState, chatId: string | null) {
+  if (!chatId) {
+    return null;
+  }
+  const turn = state.activeTurns[chatId];
+  if (!turn) {
+    return null;
+  }
+  return {
+    phase: turn.phase,
+    requestStatus: turn.requestStatus,
+    waiting: turn.waiting,
+    messageId: turn.messageId,
+    streamId: turn.streamId,
+  };
+}
+
+function debugStateSnapshot(state: AppState) {
+  return {
+    currentChatId: state.currentChatId,
+    connectionState: state.connectionState,
+    sessions: state.sessions.map((session) => ({
+      chat_id: session.chat_id,
+      preview: session.preview,
+      message_count: session.message_count,
+    })),
+    currentMessageCount: state.currentChatId
+      ? state.messagesByChat[state.currentChatId]?.length ?? 0
+      : 0,
+    currentTurn: activeTurnSummary(state, state.currentChatId),
+  };
+}
+
+function debugAction(action: Action, before: AppState, after: AppState): void {
+  if (!debugStateEnabled()) {
+    return;
+  }
+  const changed = before.currentChatId !== after.currentChatId
+    || before.sessions !== after.sessions
+    || before.connectionState !== after.connectionState
+    || (before.currentChatId && before.activeTurns[before.currentChatId] !== after.activeTurns[before.currentChatId]);
+  if (!changed) {
+    return;
+  }
+  console.debug('[nanobot-debug] appStore.dispatch', {
+    action,
+    before: debugStateSnapshot(before),
+    after: debugStateSnapshot(after),
+  });
+}
+
 export function createStore(initialState: AppState) {
   let state = initialState;
   const listeners = new Set<(state: AppState) => void>();
@@ -782,7 +907,9 @@ export function createStore(initialState: AppState) {
       return state;
     },
     dispatch(action: Action): void {
+      const before = state;
       state = reducer(state, action);
+      debugAction(action, before, state);
       listeners.forEach((listener) => listener(state));
     },
     subscribe(listener: (state: AppState) => void): () => void {

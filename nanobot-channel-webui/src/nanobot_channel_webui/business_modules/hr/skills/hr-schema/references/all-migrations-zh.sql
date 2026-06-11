@@ -9,6 +9,7 @@
 --   created_at  创建时间（数据库自动填写）
 --   updated_by  最后修改人（需应用层手动填写，INSERT 时也必须填）
 --   updated_at  最后修改时间（由触发器 update_updated_at() 自动更新，禁止手动设置）
+--   is_deleted  统一逻辑删除标记，false 为默认显示，true 为逻辑删除，不物理删除
 
 -- ============================================================
 -- 共享触发器函数（建表前先建）
@@ -119,6 +120,14 @@ CREATE TABLE employees (
     resignation_cert_issued       boolean,                -- 离职花名册：离职证明是否已开具
     resignation_notes             text,                   -- 离职花名册：离职备注
 
+    -- ── 档案延续 / 跨主体调动 ──
+    identity_key                   text,                   -- 员工身份归并键，可用于跨记录识别同一自然人
+    previous_employee_id           uuid        REFERENCES employees(id),
+                                                          -- 上一条员工档案 / 调动前员工记录
+    transfer_group_id              uuid,                   -- 跨公司 / 主体调动归并组
+    service_continuity_policy      text,                   -- 工龄连续性规则或说明
+    recognized_service_start_date  date,                   -- 认定连续工龄起算日期
+
     created_by  uuid        REFERENCES auth.users(id),
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_by  uuid        REFERENCES auth.users(id),
@@ -140,6 +149,7 @@ CREATE TRIGGER employees_updated_at BEFORE UPDATE ON employees
 CREATE TABLE contracts (
     id             uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
     employee_id    uuid        NOT NULL REFERENCES employees(id) ON DELETE CASCADE,  -- 关联员工
+    company_id     uuid        REFERENCES companies(id),  -- 合同归属公司
     type           text        NOT NULL,   -- 合同类型：劳动合同 / 劳务合同 / 实习协议 / 合作协议
     sequence       integer,               -- 第几份合同（第1份、第2份……）
     sign_date      date,                  -- 合同签订日期
@@ -370,7 +380,6 @@ CREATE TRIGGER work_injuries_updated_at BEFORE UPDATE ON work_injuries
 -- ============================================================
 CREATE TABLE job_postings (
     id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id       uuid        NOT NULL REFERENCES companies(id),  -- 招聘所属公司
     position_name    text        NOT NULL,  -- 招聘岗位名称，如：人事专员、会计
     headcount        integer,               -- 招聘人数
     job_type         text,                  -- 岗位类型，如：全职 / 兼职 / 实习
@@ -386,7 +395,6 @@ CREATE TABLE job_postings (
     updated_by  uuid        REFERENCES auth.users(id),
     updated_at  timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_job_postings_company_id ON job_postings(company_id);
 CREATE TRIGGER job_postings_updated_at BEFORE UPDATE ON job_postings
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
@@ -486,3 +494,51 @@ BEGIN
         EXECUTE format('CREATE POLICY "authenticated_update" ON %I FOR UPDATE TO authenticated USING (true)', t);
     END LOOP;
 END $$;
+
+
+-- ============================================================
+-- 统一逻辑删除字段
+-- 说明：
+--   is_deleted = false：默认正常显示
+--   is_deleted = true：逻辑删除，前端和业务 CLI 默认列表隐藏
+--   不物理删除记录，方便审计、追溯和必要时恢复
+-- ============================================================
+DO $$
+DECLARE
+    t text;
+BEGIN
+    FOREACH t IN ARRAY ARRAY[
+        'companies',
+        'departments',
+        'employees',
+        'contracts',
+        'performance_reviews',
+        'insurance_changes',
+        'personnel_changes',
+        'disciplinary_records',
+        'seal_usage',
+        'overtime_records',
+        'work_injuries',
+        'job_postings',
+        'interview_records',
+        'training_records',
+        'webui_user_profiles'
+    ]
+    LOOP
+        EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS is_deleted boolean NOT NULL DEFAULT false', t);
+        EXECUTE format('CREATE INDEX IF NOT EXISTS idx_%s_is_deleted ON %I(is_deleted)', t, t);
+    END LOOP;
+END $$;
+
+-- 兼容旧版本用业务字段模拟归档的数据，把它们迁移到正式逻辑删除字段。
+UPDATE contracts SET is_deleted = true WHERE notes LIKE '[已归档 %';
+UPDATE performance_reviews SET is_deleted = true WHERE notes LIKE '[已归档 %';
+UPDATE insurance_changes SET is_deleted = true WHERE notes LIKE '[已归档 %';
+UPDATE personnel_changes SET is_deleted = true WHERE notes LIKE '[已归档 %';
+UPDATE disciplinary_records SET is_deleted = true WHERE penalty_reason LIKE '[已归档 %';
+UPDATE seal_usage SET is_deleted = true WHERE notes LIKE '[已归档 %';
+UPDATE overtime_records SET is_deleted = true WHERE notes LIKE '[已归档 %';
+UPDATE work_injuries SET is_deleted = true WHERE personal_report LIKE '[已归档 %';
+UPDATE job_postings SET is_deleted = true WHERE notes LIKE '[已归档 %';
+UPDATE interview_records SET is_deleted = true WHERE notes LIKE '[已归档 %';
+UPDATE training_records SET is_deleted = true WHERE notes LIKE '[已归档 %';

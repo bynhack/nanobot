@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { loadCurrentUser } from './api';
+import { AUTH_EXPIRED_EVENT, loadCurrentUser } from './api';
 import { bootstrap, appStore } from './app-state';
 import { STORAGE_KEYS } from './store';
 import { getSupabaseAccessToken, signInWithSupabase, signOutSupabase } from './supabase-client';
@@ -8,6 +8,13 @@ import type { AuthUser } from './types';
 
 export function shouldSkipSupabaseSessionRestore(authToken: string, logoutRequested: boolean): boolean {
   return !authToken && logoutRequested;
+}
+
+export function authExpiredMessage(event: Event): string {
+  const detail = (event as Event & { detail?: { message?: unknown } }).detail;
+  return typeof detail?.message === 'string' && detail.message.trim()
+    ? detail.message
+    : '登录已失效，请重新登录';
 }
 
 export function useAuthSession(authToken: string) {
@@ -27,6 +34,26 @@ export function useAuthSession(authToken: string) {
   useEffect(() => {
     setDraftToken(authToken);
   }, [authToken]);
+
+  useEffect(() => {
+    const handleAuthExpired = (event: Event) => {
+      suppressSupabaseRestoreRef.current = true;
+      window.localStorage.removeItem(STORAGE_KEYS.authToken);
+      appStore.dispatch({ type: 'auth.set', token: '' });
+      appStore.dispatch({ type: 'sessions.loaded', sessions: [] });
+      setCurrentUser(null);
+      setAuthError(authExpiredMessage(event));
+      resolvedAuthTokenRef.current = null;
+      setAuthResolved(true);
+      setAuthBusy(false);
+      if (bootstrap.authMode === 'token') {
+        setAuthModalOpen(true);
+      }
+    };
+
+    window.addEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, handleAuthExpired);
+  }, []);
 
   useEffect(() => {
     if (bootstrap.authMode === 'token' && bootstrap.authRequired && !authToken) {

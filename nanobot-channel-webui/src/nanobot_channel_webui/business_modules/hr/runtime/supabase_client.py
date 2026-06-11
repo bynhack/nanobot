@@ -226,13 +226,13 @@ class PostgrestQuery:
         return self
 
     def execute(self) -> dict[str, Any]:
-        params: dict[str, str] = {"select": self.select_value}
+        params: list[tuple[str, str]] = [("select", self.select_value)]
         for key, value in self.filters:
-            params[key] = value
+            params.append((key, value))
         if self.order_value:
-            params["order"] = self.order_value
+            params.append(("order", self.order_value))
         if self.limit_value is not None:
-            params["limit"] = str(self.limit_value)
+            params.append(("limit", str(self.limit_value)))
         prefer = "return=representation"
         if self.count:
             prefer = f"{prefer},count={self.count}"
@@ -264,4 +264,13 @@ class PostgrestQuery:
     def _value(value: Any) -> str:
         if isinstance(value, bool):
             return "true" if value else "false"
+        if isinstance(value, list):
+            return "{" + ",".join(PostgrestQuery._array_value(item) for item in value) + "}"
         return str(value)
+
+    @staticmethod
+    def _array_value(value: Any) -> str:
+        item = str(value)
+        if not item or any(char in item for char in [",", "{", "}", '"', "\\"]) or item != item.strip():
+            return '"' + item.replace("\\", "\\\\").replace('"', '\\"') + '"'
+        return item

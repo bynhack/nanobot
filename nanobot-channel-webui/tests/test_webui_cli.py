@@ -146,8 +146,13 @@ def test_project_exposes_nanobot_webui_console_script() -> None:
     assert pyproject["project"]["scripts"]["nanobot-webui"] == "nanobot_channel_webui.cli:main"
 
 
-def test_publish_script_installs_webui_package_as_tool() -> None:
+def test_publish_script_installs_plugin_into_nanobot_ai_tool_env() -> None:
     script = (ROOT / "scripts" / "publish-local.sh").read_text(encoding="utf-8")
 
-    assert 'uv tool install "$WHEEL_PATH" --force' in script
-    assert "nanobot-ai --with" not in script
+    assert "uv tool install nanobot-ai" in script
+    assert '--with "$WHEEL_PATH"' in script
+    assert '--with-executables-from "$WHEEL_PATH" \\' in script
+    assert 'target="$UV_TOOL_DIR/nanobot-ai/bin/$executable"' in script
+    assert 'ln -sfn "$target" "$UV_TOOL_BIN_DIR/$executable"' in script
+    assert 'uv tool install "$WHEEL_PATH" --force' not in script
+    assert "uv pip install" not in script

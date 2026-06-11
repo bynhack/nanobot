@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 
 import { deleteSession, loadSessions, loadUpstreamThread } from './api';
+import { appendAttachmentReferences, rewriteUpstreamMediaItems } from './app-helpers';
 import { appStore, bootstrap } from './app-state';
 import { STORAGE_KEYS } from './store';
 import { createThreadSwitchGuard } from './thread-switch';
@@ -38,10 +39,16 @@ export function useWebsocketSession({
     try {
       const sessions = await loadSessions(authToken);
       const currentChatId = appStore.getState().currentChatId;
+      const currentTurn = currentChatId ? appStore.getState().activeTurns[currentChatId] : undefined;
+      const currentTurnInFlight = Boolean(
+        currentTurn
+        && (currentTurn.waiting || currentTurn.requestStatus === 'processing' || currentTurn.requestStatus === 'running_tools'),
+      );
       if (
         currentChatId
         && !sessions.some((session) => session.chat_id === currentChatId)
         && !(appStore.getState().messagesByChat[currentChatId]?.length)
+        && !currentTurnInFlight
       ) {
         window.localStorage.removeItem(STORAGE_KEYS.chatId);
       }
@@ -108,8 +115,12 @@ export function useWebsocketSession({
       onEvent: (event) => {
         const normalized = normalizeServerEvent(event);
         if (normalized?.type === 'session.init') {
-          window.localStorage.setItem(STORAGE_KEYS.chatId, normalized.chatId);
+          const resolvingRequestedThread = pendingThreadResolversRef.current.length > 0;
           resolvePendingThreads(normalized.chatId);
+          if (resolvingRequestedThread) {
+            return;
+          }
+          window.localStorage.setItem(STORAGE_KEYS.chatId, normalized.chatId);
         }
         if (normalized?.type === 'session.deleted' && appStore.getState().currentChatId === normalized.chatId) {
           window.localStorage.removeItem(STORAGE_KEYS.chatId);
@@ -163,7 +174,7 @@ export function useWebsocketSession({
     wsClientRef.current?.send({
       type: 'message',
       chat_id: chatId,
-      content: payload.content,
+      content: appendAttachmentReferences(payload.content, payload.attachments),
       webui: true,
     });
   }, []);
@@ -221,13 +232,20 @@ export function useWebsocketSession({
   );
 }
 
-function normalizeServerEvent(event: import('./types').ServerEvent): import('./types').ServerEvent | null {
+function normalizedChatId(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+export function normalizeServerEvent(event: import('./types').ServerEvent): import('./types').ServerEvent | null {
   if ('type' in event) {
     return event;
   }
 
-  const chatId = typeof event.chat_id === 'string' ? event.chat_id : '';
+  const chatId = normalizedChatId(event.chat_id);
   if (event.event === 'ready' || event.event === 'attached') {
+    if (!chatId) {
+      return null;
+    }
     return { type: 'session.init', chatId, sessionId: chatId };
   }
   if (event.event === 'delta') {
@@ -258,7 +276,12 @@ function normalizeServerEvent(event: import('./types').ServerEvent): import('./t
     if (!event.text && !event.media_urls?.length) {
       return null;
     }
-    return { type: 'turn.completed', chatId, content: event.text ?? '', media: event.media_urls };
+    return {
+      type: 'turn.completed',
+      chatId,
+      content: event.text ?? '',
+      media: rewriteUpstreamMediaItems(event.media_urls),
+    };
   }
   if (event.event === 'turn_end') {
     return { type: 'turn.phase', chatId, phase: 'completed', resuming: false };

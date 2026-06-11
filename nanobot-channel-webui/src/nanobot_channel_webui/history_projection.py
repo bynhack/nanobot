@@ -74,6 +74,30 @@ def tool_call_arguments(tool_call: dict[str, Any]) -> Any:
     return tool_call.get("arguments", "{}")
 
 
+def collect_tool_results(
+    raw_messages: list[dict[str, Any]],
+    start: int,
+    tool_call_ids: set[str],
+) -> dict[str, str]:
+    results: dict[str, str] = {}
+    cursor = start
+    while cursor < len(raw_messages):
+        message = raw_messages[cursor]
+        role = message.get("role")
+        if role == "user":
+            break
+        if role == "assistant" and message.get("tool_calls"):
+            break
+        if role == "tool":
+            call_id = str(message.get("tool_call_id", ""))
+            if call_id in tool_call_ids:
+                results[call_id] = message_text(message.get("content", ""))
+                if len(results) == len(tool_call_ids):
+                    break
+        cursor += 1
+    return results
+
+
 def project_session_messages(
     raw_messages: list[dict[str, Any]],
     *,
@@ -110,15 +134,13 @@ def project_session_messages(
             index += 1
             continue
 
-        tool_results: dict[str, str] = {}
-        cursor = index + 1
-        while cursor < len(raw_messages) and raw_messages[cursor].get("role") == "tool":
-            tool_message = raw_messages[cursor]
-            tool_results[str(tool_message.get("tool_call_id", ""))] = message_text(
-                tool_message.get("content", "")
-            )
-            cursor += 1
-        index = cursor
+        tool_call_ids = {
+            str(tool_call.get("id", ""))
+            for tool_call in tool_calls
+            if isinstance(tool_call, dict) and tool_call.get("id")
+        }
+        tool_results = collect_tool_results(raw_messages, index + 1, tool_call_ids)
+        index += 1
 
         tool_block: list[dict[str, Any]] = []
         for tool_call in tool_calls:
@@ -158,7 +180,6 @@ def project_session_messages(
                     "content": str(args.get("content", "")),
                     "media": media_service.build_media_items(media_paths),
                 })
-                continue
 
             tool_block.append({
                 "name": name,

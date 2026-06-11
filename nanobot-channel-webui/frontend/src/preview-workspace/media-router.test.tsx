@@ -93,6 +93,16 @@ describe('MediaPreviewRouter', () => {
     expect(
       renderToStaticMarkup(
         createElement(MediaPreviewRouter, {
+          item: { url: '/api/upstream/media/sig/payload', name: 'hello.html', mime: 'application/octet-stream' },
+          downloadUrl: '/api/upstream/media/sig/payload?auth_token=token',
+          token: 'token',
+        }),
+      ),
+    ).toContain('data-preview="html"');
+
+    expect(
+      renderToStaticMarkup(
+        createElement(MediaPreviewRouter, {
           item: { url: '/media/report.bin', name: 'report.bin', mime: 'application/octet-stream' },
           downloadUrl: '/media/report.bin',
           token: '',

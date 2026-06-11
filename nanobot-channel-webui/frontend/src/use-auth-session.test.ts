@@ -30,4 +30,11 @@ describe('Supabase logout session restore guard', () => {
 
     expect(shouldSkipSupabaseSessionRestore('access-token', true)).toBe(false);
   });
+
+  it('reads auth expiration messages from global events', async () => {
+    const { authExpiredMessage } = await import('./use-auth-session');
+
+    expect(authExpiredMessage(new CustomEvent('x', { detail: { message: '未登录或登录已失效' } }))).toBe('未登录或登录已失效');
+    expect(authExpiredMessage(new Event('x'))).toBe('登录已失效，请重新登录');
+  });
 });

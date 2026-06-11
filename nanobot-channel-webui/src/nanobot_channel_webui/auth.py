@@ -40,6 +40,7 @@ class WebUIAccessControl:
             return auth_header[7:].strip()
         return (
             request.headers.get("X-WebUI-Token", "").strip()
+            or request.rel_url.query.get("webui_token", "").strip()
             or request.rel_url.query.get("token", "").strip()
             or request.rel_url.query.get("auth_token", "").strip()
         )

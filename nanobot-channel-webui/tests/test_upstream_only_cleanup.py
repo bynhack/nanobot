@@ -26,6 +26,7 @@ def test_control_plane_no_longer_registers_local_conversation_routes() -> None:
     assert ("GET", "/api/upstream/sessions") in registered
     assert ("GET", "/api/upstream/sessions/{chat_id}/webui-thread") in registered
     assert ("DELETE", "/api/upstream/sessions/{chat_id}") in registered
+    assert ("GET", "/api/upstream/ws/{instance_id}") in registered
     assert ("GET", "/health") in registered
 
 
@@ -55,6 +56,9 @@ def test_frontend_uses_upstream_gateway_without_local_fallback_commands() -> Non
     for required in (
         "/api/upstream/bootstrap",
         "/api/upstream/sessions",
+        "new URL(rawUrl, window.location.href)",
+        "url.protocol = 'wss:'",
+        "webui_token",
         "new_chat",
         "message",
         "attach",

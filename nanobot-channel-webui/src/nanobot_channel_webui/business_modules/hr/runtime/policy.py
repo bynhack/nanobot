@@ -42,6 +42,9 @@ HR_COMMAND_RULES: dict[str, tuple[str, str, str | None]] = {
     "personnel-changes-list": ("hr.personnel_change", "query", None),
     "disciplinary-by-employee": ("hr.disciplinary", "read", None),
     "seal-usage-list": ("hr.seal_usage", "query", None),
+    "deleted-records": ("hr.employee", "read", None),
+    "business-capabilities": ("hr.employee", "query", None),
+    "business-plan-schema": ("hr.employee", "query", None),
     "analyze-headcount": ("hr.employee", "analyze", None),
     "analyze-contract-coverage": ("hr.contract", "analyze", None),
     "analyze-contract-expiry": ("hr.contract", "analyze", None),
@@ -53,33 +56,59 @@ HR_COMMAND_RULES: dict[str, tuple[str, str, str | None]] = {
     "preview-org-seeds": ("hr.organization", "write", None),
     "apply-org-seeds": ("hr.organization", "write", None),
     "verify-org-seeds": ("hr.organization", "read", None),
+    "preview-update-org-seeds": ("hr.organization", "write", None),
+    "update-org-seeds": ("hr.organization", "write", None),
     "delete-empty-departments": ("hr.department", "write", None),
     "preview-employees": ("hr.employee", "write", None),
     "apply-employees": ("hr.employee", "write", None),
     "verify-employees": ("hr.employee", "read", None),
+    "preview-update-employees": ("hr.employee", "write", None),
+    "update-employees": ("hr.employee", "write", None),
     "verify-employee-deletions": ("hr.employee", "read", None),
     "preview-contracts": ("hr.contract", "write", None),
     "apply-contracts": ("hr.contract", "write", None),
     "verify-contracts": ("hr.contract", "read", None),
+    "preview-update-contracts": ("hr.contract", "write", None),
+    "update-contracts": ("hr.contract", "write", None),
+    "delete-contracts": ("hr.contract", "delete", None),
     "preview-performance-reviews": ("hr.performance", "write", None),
     "apply-performance-reviews": ("hr.performance", "write", None),
     "verify-performance-reviews": ("hr.performance", "read", None),
+    "preview-update-performance-reviews": ("hr.performance", "write", None),
+    "update-performance-reviews": ("hr.performance", "write", None),
+    "delete-performance-reviews": ("hr.performance", "delete", None),
     "preview-insurance-changes": ("hr.insurance", "write", None),
     "apply-insurance-changes": ("hr.insurance", "write", None),
     "verify-insurance-changes": ("hr.insurance", "read", None),
+    "preview-update-insurance-changes": ("hr.insurance", "write", None),
+    "update-insurance-changes": ("hr.insurance", "write", None),
+    "delete-insurance-changes": ("hr.insurance", "delete", None),
     "preview-personnel-changes": ("hr.personnel_change", "write", None),
     "apply-personnel-changes": ("hr.personnel_change", "write", None),
     "verify-personnel-changes": ("hr.personnel_change", "read", None),
+    "preview-update-personnel-changes": ("hr.personnel_change", "write", None),
+    "update-personnel-changes": ("hr.personnel_change", "write", None),
+    "delete-personnel-changes": ("hr.personnel_change", "delete", None),
     "apply-employee-nickname-cleanup": ("hr.employee", "write", None),
     "verify-employee-nickname-cleanup": ("hr.employee", "read", None),
     "preview-disciplinary-records": ("hr.disciplinary", "write", None),
     "apply-disciplinary-records": ("hr.disciplinary", "write", None),
     "verify-disciplinary-records": ("hr.disciplinary", "read", None),
+    "preview-update-disciplinary-records": ("hr.disciplinary", "write", None),
+    "update-disciplinary-records": ("hr.disciplinary", "write", None),
+    "delete-disciplinary-records": ("hr.disciplinary", "delete", None),
     "apply-disciplinary-attachments": ("hr.disciplinary", "write", None),
     "verify-disciplinary-attachments": ("hr.disciplinary", "read", None),
     "preview-seal-usage": ("hr.seal_usage", "write", None),
     "apply-seal-usage": ("hr.seal_usage", "write", None),
     "verify-seal-usage": ("hr.seal_usage", "read", None),
+    "preview-update-seal-usage": ("hr.seal_usage", "write", None),
+    "update-seal-usage": ("hr.seal_usage", "write", None),
+    "delete-seal-usage": ("hr.seal_usage", "delete", None),
+}
+
+DANGEROUS_DELETE_COMMANDS = {
+    "clear-business-data",
 }
 
 SCOPED_GLOBAL_DENY_COMMANDS = {
@@ -107,6 +136,9 @@ SCOPED_MULTI_COMPANY_COMMANDS = {
     "personnel-changes-list",
     "disciplinary-by-employee",
     "seal-usage-list",
+    "deleted-records",
+    "business-capabilities",
+    "business-plan-schema",
     "analyze-headcount",
     "analyze-contract-coverage",
     "analyze-contract-expiry",
@@ -167,13 +199,13 @@ def authorize_hr_command(
 ) -> None:
     policy = policy or load_access_policy()
     options = options or {}
-    if policy.unrestricted or command in {None, "help", "--help", "-h"}:
+    if policy.unrestricted or command in {None, "help", "--help", "-h", "business-plan-schema"}:
         return
     if policy.missing_policy_file:
         raise RuntimeError("当前账号缺少 WebUI 权限文件，拒绝执行 HR 业务命令")
     if not policy.company_scope:
         raise RuntimeError("当前账号未配置可访问公司范围，请联系管理员配置 HR 数据权限")
-    if command in {"clear-business-data", "delete-employee-records"}:
+    if command in DANGEROUS_DELETE_COMMANDS:
         raise RuntimeError("当前账号无权执行危险 HR 命令")
     if command in SCOPED_GLOBAL_DENY_COMMANDS:
         raise RuntimeError(f"当前账号无权执行全局 HR 命令: {command}")
@@ -292,13 +324,19 @@ def _collect_scope_company_names_into(value: Any, parent_key: str, results: list
         return
     if not isinstance(value, dict):
         return
-    if parent_key == "companies" and clean(value.get("name")):
+    if parent_key == "companies" and clean_scalar(value.get("name")):
         results.append(clean(value.get("name")))
     for key, child in value.items():
-        if key in COMPANY_KEYS and clean(child):
+        if key in COMPANY_KEYS and clean_scalar(child):
             results.append(clean(child))
             continue
         _collect_scope_company_names_into(child, key, results)
+
+
+def clean_scalar(value: Any) -> str:
+    if isinstance(value, dict | list):
+        return ""
+    return clean(value)
 
 
 def clean(value: Any) -> str:

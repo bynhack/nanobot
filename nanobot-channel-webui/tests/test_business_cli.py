@@ -24,6 +24,7 @@ from nanobot_channel_webui.business_modules.hr.runtime.repository import (
     disciplinary_record_select,
     generic_payload,
     normalize_contract_seed_record,
+    normalize_employee_seed_record,
     normalize_named_employee_record,
     normalize_performance_review_seed_record,
     normalize_personnel_change_record,
@@ -349,7 +350,13 @@ def test_hr_business_update_organization_supports_all_company_and_department_fie
         {"field": "company_id", "before": "c1", "after": "c2"},
     ]
     assert result["write"]["companies"] == [
-        {"name": "乐潮里科技有限公司", "action": "updated", "fields": ["short_name"]}
+        {
+            "name": "乐潮里科技有限公司",
+            "action": "updated",
+            "fields": ["short_name"],
+            "match_count": 1,
+            "matched_ids": ["c1"],
+        }
     ]
     assert result["write"]["departments"] == [
         {
@@ -357,6 +364,8 @@ def test_hr_business_update_organization_supports_all_company_and_department_fie
             "action": "updated",
             "fields": ["name", "company_id"],
             "company": "乐潮里科技有限公司",
+            "match_count": 1,
+            "matched_ids": ["d1"],
         }
     ]
     assert result["verification"]["ok"] is True
@@ -422,7 +431,7 @@ def test_business_help_keeps_verify_internal() -> None:
     help_payload = commands.business_help()
     serialized = json.dumps(help_payload, ensure_ascii=False)
 
-    assert "<query|get|analyze|preview|create|preview-update|update|delete|schema>" in help_payload["usage"]
+    assert "<list|get|preview|create|preview-update|update|delete|schema|capabilities>" in help_payload["usage"]
     assert "verify" not in help_payload["usage"]
     assert "business verify" not in serialized
     assert "verification" in serialized
@@ -432,16 +441,17 @@ def test_business_help_keeps_verify_internal() -> None:
     assert "business update employee --input <plan.json>" in serialized
 
 
-def test_business_help_lists_agent_relevant_query_and_delete_commands() -> None:
+def test_business_help_lists_agent_relevant_read_and_delete_commands() -> None:
     help_payload = commands.business_help()
     serialized = json.dumps(help_payload, ensure_ascii=False)
 
-    assert "business query employee-timeline --name <name> [--company <company>]" in serialized
-    assert "business query performance-by-employee --name <name> [--company <company>]" in serialized
-    assert "business query insurance-by-employee --name <name> [--company <company>]" in serialized
-    assert "business query personnel-change-by-employee --name <name> [--company <company>]" in serialized
-    assert "business query seal-usage [--company <company>]" in serialized
-    assert "business query deleted-records --resource <resource>" in serialized
+    assert "business list employee [--company <company>]" in serialized
+    assert "business get employee --id <id>" in serialized
+    assert "business list performance [--company <company>] [--employee <name>] [--month YYYY-MM] [--year YYYY]" in serialized
+    assert "business list insurance [--company <company>] [--employee <name>] [--month YYYY-MM] [--status <status>]" in serialized
+    assert "business list personnel-change [--company <company>] [--employee <name>] [--year YYYY] [--reason <reason>]" in serialized
+    assert "business list seal-usage [--company <company>] [--applicant <name>] [--from YYYY-MM-DD] [--to YYYY-MM-DD]" in serialized
+    assert "business list deleted-records --resource <resource>" in serialized
     assert "business capabilities" in serialized
     assert "business delete contract --input <plan.json>" in serialized
     assert "business delete seal-usage --input <plan.json>" in serialized
@@ -470,7 +480,833 @@ def test_business_capabilities_reports_available_commands_and_logical_delete(
     assert result["logical_delete"]["field"] == "is_deleted"
     assert result["logical_delete"]["default_queries_exclude_deleted"] is True
     assert "business delete contract --input <plan.json>" in result["commands"]["delete"]
-    assert "business query deleted-records --resource <resource>" in result["commands"]["audit"]
+    assert "business list deleted-records --resource <resource>" in result["commands"]["audit"]
+    assert result["option_contract"]["value_options"]["input"]["value_type"] == "string"
+    assert result["option_contract"]["value_options"]["days"]["value_type"] == "integer"
+    assert result["option_contract"]["value_options"]["threshold"]["minimum"] == 0
+    assert result["option_contract"]["boolean_options"] == ["help"]
+
+
+def test_business_capabilities_exposes_slim_public_contract_without_legacy_commands(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=[
+            "hr.employee",
+            "hr.contract",
+            "hr.performance",
+            "hr.insurance",
+            "hr.personnel_change",
+            "hr.disciplinary",
+            "hr.seal_usage",
+        ],
+        actions=["query", "read", "analyze"],
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+
+    result = commands.run(["business", "capabilities"], repo=HrRepository(FakeSupabaseConnector()))
+    serialized_commands = json.dumps(result["commands"], ensure_ascii=False)
+    command_options = result["option_contract"]["command_options"]
+
+    assert "business list employee" in serialized_commands
+    assert "business get employee --id <id>" in serialized_commands
+    assert "business query" not in serialized_commands
+    assert "business analyze roster" in serialized_commands
+    assert "business analyze contract-coverage" in serialized_commands
+    assert "business analyze contract-expiry" in serialized_commands
+    assert "business analyze performance-month" in serialized_commands
+    assert "business analyze insurance-month" in serialized_commands
+    assert "business analyze personnel-change" in serialized_commands
+    assert "business analyze disciplinary" in serialized_commands
+    assert "business analyze seal-usage" in serialized_commands
+    assert "business analyze employee-profile" in serialized_commands
+    assert "employee-timeline" not in serialized_commands
+    assert "performance-by-employee" not in serialized_commands
+    assert "count-all" not in serialized_commands
+    assert "clear-business-data" not in serialized_commands
+
+    assert command_options["list-employees"]["allowed_options"] == [
+        "company",
+        "department",
+        "id-card",
+        "limit",
+        "name",
+        "page",
+        "page-size",
+        "phone",
+        "status",
+    ]
+    assert command_options["get-employee"] == {
+        "allowed_options": ["id"],
+        "required_options": ["id"],
+    }
+    assert "employee-timeline" not in command_options
+    assert "analyze-headcount" not in command_options
+    assert command_options["analyze-roster"]["allowed_options"] == ["as-of", "company"]
+    assert command_options["analyze-contract-coverage"]["allowed_options"] == ["as-of", "company"]
+    assert command_options["analyze-contract-expiry"]["allowed_options"] == ["company", "days"]
+    assert command_options["analyze-performance-month"]["allowed_options"] == ["company", "month"]
+    assert command_options["analyze-insurance-month"]["allowed_options"] == ["company", "month"]
+    assert command_options["analyze-personnel-change"]["allowed_options"] == ["company", "year"]
+    assert command_options["analyze-disciplinary"]["allowed_options"] == ["company"]
+    assert command_options["analyze-seal-usage"]["allowed_options"] == ["company", "from", "to"]
+    assert command_options["analyze-employee-profile"]["allowed_options"] == ["as-of", "company"]
+
+
+def test_business_analyze_roster_returns_stable_consistent_summary(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.employee"],
+        actions=["query", "read", "analyze"],
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    connector.rows["employees"].extend(
+        [
+            {
+                "id": "e2",
+                "name": "陈雨",
+                "company_id": "c2",
+                "department_id": "d3",
+                "phone": "13900000002",
+                "id_card_number": "420100199001010022",
+                "status": "试用",
+            },
+            {
+                "id": "e3",
+                "name": "周离",
+                "company_id": "c2",
+                "department_id": "d3",
+                "phone": "13900000003",
+                "id_card_number": "420100199001010033",
+                "status": "离职",
+            },
+        ]
+    )
+
+    result = commands.run(
+        ["business", "analyze", "roster", "--company", "武汉未来天空音乐文化产业有限公司"],
+        repo=HrRepository(connector),
+    )
+
+    assert result["topic"] == "roster"
+    assert result["scope"]["company"] == "武汉未来天空音乐文化产业有限公司"
+    assert result["summary"]["total_employees"] == 3
+    assert result["summary"]["active_employees"] == 2
+    assert result["summary"]["inactive_employees"] == 1
+    assert (
+        sum(item["employee_count"] for item in result["groups"]["by_status"])
+        == result["summary"]["total_employees"]
+    )
+    assert (
+        sum(item["employee_count"] for item in result["groups"]["by_company"])
+        == result["summary"]["total_employees"]
+    )
+    assert result["groups"]["by_company"] == [
+        {
+            "company": "武汉未来天空音乐文化产业有限公司",
+            "employee_count": 3,
+            "active_employees": 2,
+            "inactive_employees": 1,
+            "statuses": {"正式": 1, "离职": 1, "试用": 1},
+        }
+    ]
+    assert result["groups"]["by_department"] == [
+        {
+            "company": "武汉未来天空音乐文化产业有限公司",
+            "department": "行政部",
+            "employee_count": 1,
+            "active_employees": 1,
+            "inactive_employees": 0,
+            "statuses": {"正式": 1},
+        },
+        {
+            "company": "武汉未来天空音乐文化产业有限公司",
+            "department": "人力资源部",
+            "employee_count": 2,
+            "active_employees": 1,
+            "inactive_employees": 1,
+            "statuses": {"离职": 1, "试用": 1},
+        },
+    ]
+    assert result["consistency"] == {"checked": True, "passed": True, "errors": []}
+
+
+def test_business_analyze_contract_coverage_uses_active_roster_denominator(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.employee", "hr.contract"],
+        actions=["query", "read", "analyze"],
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    connector.rows["employees"].extend(
+        [
+            {
+                "id": "e2",
+                "name": "陈雨",
+                "company_id": "c2",
+                "department_id": "d3",
+                "phone": "13900000002",
+                "id_card_number": "420100199001010022",
+                "status": "试用",
+            },
+            {
+                "id": "e3",
+                "name": "周离",
+                "company_id": "c2",
+                "department_id": "d3",
+                "phone": "13900000003",
+                "id_card_number": "420100199001010033",
+                "status": "离职",
+            },
+        ]
+    )
+    connector.rows["contracts"][0]["expiry_date"] = "2026-05-31"
+    connector.rows["contracts"].append(
+        {
+            "id": "ct2",
+            "employee_id": "e3",
+            "type": "固定期限劳动合同",
+            "sequence": 1,
+            "sign_date": "2026-01-01",
+            "duration_years": 1,
+            "start_date": "2026-01-01",
+            "expiry_date": "2027-01-01",
+            "is_permanent": False,
+            "notes": None,
+        }
+    )
+
+    roster = commands.run(
+        ["business", "analyze", "roster", "--company", "武汉未来天空音乐文化产业有限公司", "--as-of", "2026-06-12"],
+        repo=HrRepository(connector),
+    )
+    coverage = commands.run(
+        [
+            "business",
+            "analyze",
+            "contract-coverage",
+            "--company",
+            "武汉未来天空音乐文化产业有限公司",
+            "--as-of",
+            "2026-06-12",
+        ],
+        repo=HrRepository(connector),
+    )
+
+    summary = coverage["summary"]
+    assert coverage["topic"] == "contract-coverage"
+    assert summary["coverage_denominator"] == roster["summary"]["active_employees"] == 2
+    assert summary["employees_with_any_contract"] == 1
+    assert summary["employees_with_active_contract"] == 0
+    assert summary["employees_without_any_contract"] == 1
+    assert summary["employees_without_active_contract"] == 2
+    assert summary["coverage_rate_any"] == 0.5
+    assert summary["coverage_rate_active"] == 0.0
+    assert coverage["findings"][0]["kind"] == "missing_any_contract"
+    assert coverage["findings"][0]["count"] == 1
+    assert coverage["findings"][1]["kind"] == "missing_active_contract"
+    assert coverage["findings"][1]["count"] == 1
+    assert coverage["consistency"] == {"checked": True, "passed": True, "errors": []}
+    contract_query = next(
+        query
+        for query in connector.rows["_query_log"]
+        if query["table"] == "contracts" and "employee_id,type,start_date" in query["select"]
+    )
+    assert "employees(id,name" in contract_query["select"]
+
+
+def test_business_analyze_performance_month_returns_stable_summary(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.employee", "hr.performance"],
+        actions=["query", "read", "analyze"],
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    connector.rows["employees"].append(
+        {
+            "id": "e2",
+            "name": "陈雨",
+            "company_id": "c2",
+            "department_id": "d3",
+            "phone": "13900000002",
+            "id_card_number": "420100199001010022",
+            "status": "正式",
+        }
+    )
+    connector.rows["performance_reviews"] = [
+        {
+            "id": "pr1",
+            "employee_id": "e1",
+            "review_date": "2026-06-01",
+            "self_score": 60,
+            "supervisor_score": 50,
+            "final_score": 55,
+            "performance_ratio": 0.8,
+            "performance_salary": 1000,
+            "actual_performance_salary": 800,
+            "performance_adjustment": -200,
+            "notes": "低分",
+        }
+    ]
+
+    result = commands.run(
+        ["business", "analyze", "performance-month", "--month", "2026-06"],
+        repo=HrRepository(connector),
+    )
+
+    assert result["topic"] == "performance-month"
+    assert result["summary"]["coverage_denominator"] == 2
+    assert result["summary"]["reviewed_employees"] == 1
+    assert result["summary"]["missing_review_employees"] == 1
+    assert result["summary"]["low_score_count_below_60"] == 1
+    assert result["findings"][0]["kind"] == "missing_performance_review"
+    assert result["findings"][0]["count"] == 1
+    assert result["findings"][1]["kind"] == "low_performance_score"
+    assert result["findings"][1]["count"] == 1
+    assert result["consistency"] == {"checked": True, "passed": True, "errors": []}
+
+
+def test_business_analyze_insurance_month_returns_stable_summary(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.employee", "hr.insurance"],
+        actions=["query", "read", "analyze"],
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    connector.rows["insurance_changes"] = [
+        {
+            "id": "ic1",
+            "employee_id": "e1",
+            "change_date": "2026-06-02",
+            "insurance_add_date": "2026-06-02",
+            "insurance_remove_date": None,
+            "status": "新增",
+            "signed_upload": None,
+            "hr_clerk": "张幸",
+            "notes": None,
+        }
+    ]
+
+    result = commands.run(
+        ["business", "analyze", "insurance-month", "--month", "2026-06"],
+        repo=HrRepository(connector),
+    )
+
+    assert result["topic"] == "insurance-month"
+    assert result["summary"]["total_changes"] == 1
+    assert result["summary"]["add_count"] == 1
+    assert result["summary"]["remove_count"] == 0
+    assert result["groups"]["by_status"] == [{"status": "新增", "record_count": 1}]
+    assert result["findings"][0]["kind"] == "missing_signed_upload"
+    assert result["findings"][0]["count"] == 1
+    assert result["consistency"] == {"checked": True, "passed": True, "errors": []}
+
+
+def test_business_analyze_disciplinary_returns_stable_summary(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.employee", "hr.disciplinary"],
+        actions=["query", "read", "analyze"],
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+
+    result = commands.run(["business", "analyze", "disciplinary"], repo=HrRepository(FakeSupabaseConnector()))
+
+    assert result["topic"] == "disciplinary"
+    assert result["summary"]["total_records"] == 1
+    assert result["summary"]["missing_signed_upload_count"] == 1
+    assert result["groups"]["by_penalty_type"] == [{"penalty_type": "警告", "record_count": 1}]
+    assert result["findings"][0]["kind"] == "missing_signed_upload"
+    assert result["findings"][0]["count"] == 1
+    assert result["consistency"] == {"checked": True, "passed": True, "errors": []}
+
+
+def test_business_analyze_contract_expiry_returns_stable_summary(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.employee", "hr.contract"],
+        actions=["query", "read", "analyze"],
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+
+    result = commands.run(
+        ["business", "analyze", "contract-expiry", "--days", "365"],
+        repo=HrRepository(FakeSupabaseConnector()),
+    )
+
+    assert result["topic"] == "contract-expiry"
+    assert result["summary"]["expiring_contracts"] == result["count"]
+    assert result["findings"][0]["kind"] == "contract_expiring"
+    assert result["findings"][0]["count"] == result["summary"]["expiring_contracts"]
+    assert result["consistency"] == {"checked": True, "passed": True, "errors": []}
+
+
+def test_business_analyze_personnel_change_returns_stable_summary(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.employee", "hr.personnel_change"],
+        actions=["query", "read", "analyze"],
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    connector.rows["personnel_changes"] = [
+        {
+            "id": "pc1",
+            "employee_id": "e1",
+            "current_department": "行政部",
+            "current_position": "助理",
+            "new_department": "行政部",
+            "new_position": "专员",
+            "change_reason": "转正",
+            "effective_date": "2026-06-10",
+            "procedures_complete": False,
+            "signed_upload": None,
+            "hr_clerk": "张幸",
+        }
+    ]
+
+    result = commands.run(
+        ["business", "analyze", "personnel-change", "--year", "2026"],
+        repo=HrRepository(connector),
+    )
+
+    assert result["topic"] == "personnel-change"
+    assert result["summary"]["year"] == "2026"
+    assert result["summary"]["total_changes"] == 1
+    assert result["summary"]["incomplete_procedures_count"] == 1
+    assert result["summary"]["missing_signed_upload_count"] == 1
+    assert result["groups"]["by_change_reason"] == [{"change_reason": "转正", "record_count": 1}]
+    assert [item["kind"] for item in result["findings"]] == [
+        "incomplete_personnel_change_procedure",
+        "missing_signed_upload",
+    ]
+    assert result["consistency"] == {"checked": True, "passed": True, "errors": []}
+
+
+def test_business_analyze_seal_usage_returns_stable_summary(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.employee", "hr.seal_usage"],
+        actions=["query", "read", "analyze"],
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    connector.rows["seal_usage"] = [
+        {
+            "id": "su1",
+            "company_id": "c2",
+            "usage_date": "2026-06-11",
+            "applicant_id": "e1",
+            "seal_applicant_id": None,
+            "reason": "合同用章",
+            "attachments": [],
+            "notes": None,
+        }
+    ]
+
+    result = commands.run(
+        ["business", "analyze", "seal-usage", "--from", "2026-06-01", "--to", "2026-06-30"],
+        repo=HrRepository(connector),
+    )
+
+    assert result["topic"] == "seal-usage"
+    assert result["summary"]["total_usages"] == 1
+    assert result["summary"]["missing_attachments_count"] == 1
+    assert result["summary"]["missing_seal_applicant_count"] == 1
+    assert result["groups"]["by_company"] == [{"company": "武汉未来天空音乐文化产业有限公司", "record_count": 1}]
+    assert [item["kind"] for item in result["findings"]] == [
+        "missing_seal_usage_attachment",
+        "missing_seal_applicant",
+    ]
+    assert result["consistency"] == {"checked": True, "passed": True, "errors": []}
+
+
+def test_business_analyze_employee_profile_returns_stable_summary(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.employee"],
+        actions=["query", "read", "analyze"],
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    connector.rows["employees"].extend(
+        [
+            {
+                "id": "e2",
+                "name": "陈雨",
+                "company_id": "c2",
+                "department_id": None,
+                "phone": "18271001313",
+                "id_card_number": "",
+                "status": "正式",
+            }
+        ]
+    )
+
+    result = commands.run(
+        ["business", "analyze", "employee-profile", "--as-of", "2026-06-12"],
+        repo=HrRepository(connector),
+    )
+
+    assert result["topic"] == "employee-profile"
+    assert result["summary"]["total_employees"] == 2
+    assert result["summary"]["missing_department_count"] == 1
+    assert result["summary"]["missing_id_card_count"] == 1
+    assert result["summary"]["duplicate_phone_groups"] == 1
+    assert result["groups"]["by_status"] == [{"status": "正式", "employee_count": 2}]
+    assert result["groups"]["by_company"] == [
+        {
+            "company": "武汉未来天空音乐文化产业有限公司",
+            "employee_count": 2,
+            "active_employees": 2,
+            "inactive_employees": 0,
+            "statuses": {"正式": 2},
+        }
+    ]
+    assert [item["kind"] for item in result["findings"]] == [
+        "missing_department",
+        "missing_id_card",
+        "duplicate_phone",
+    ]
+    assert result["consistency"] == {"checked": True, "passed": True, "errors": []}
+
+
+def test_business_capabilities_exposes_conversational_workflow_recipes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(tmp_path, resources=["hr.employee"], actions=["query"])
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+
+    result = commands.run(["business", "capabilities"], repo=HrRepository(FakeSupabaseConnector()))
+    recipes = {item["intent"]: item for item in result["workflow_recipes"]}
+
+    assert set(recipes) >= {"入职", "转正", "续签", "内部调动", "离职"}
+    assert recipes["入职"]["command_sequence"] == [
+        "business schema employee --workflow create",
+        "business preview employee --input <employee-plan.json>",
+        "business create employee --input <employee-plan.json>",
+    ]
+    assert "business preview personnel-change --input <personnel-change-plan.json>" in recipes["转正"]["command_sequence"]
+    assert "business preview-update employee --input <employee-update-plan.json>" in recipes["离职"]["command_sequence"]
+
+
+def test_business_command_rejects_unknown_option_with_suggestion() -> None:
+    repo = HrRepository(FakeSupabaseConnector())
+
+    with pytest.raises(RuntimeError) as exc_info:
+        commands.run(["business", "query", "employee", "--cmpany", "武汉赢城集团有限公司"], repo=repo)
+
+    message = str(exc_info.value)
+    assert "Unknown option --cmpany" in message
+    assert "--company" in message
+
+
+def test_business_command_rejects_missing_value_option() -> None:
+    repo = HrRepository(FakeSupabaseConnector())
+
+    with pytest.raises(RuntimeError) as exc_info:
+        commands.run(["business", "schema", "employee", "--workflow"], repo=repo)
+
+    assert str(exc_info.value) == "Option --workflow requires a value"
+
+
+def test_business_command_rejects_invalid_integer_option() -> None:
+    repo = HrRepository(FakeSupabaseConnector())
+
+    with pytest.raises(RuntimeError) as exc_info:
+        commands.run(["business", "analyze", "contract-expiry", "--days", "abc"], repo=repo)
+
+    assert str(exc_info.value) == "Option --days must be an integer"
+
+
+def test_business_command_rejects_out_of_range_numeric_option() -> None:
+    repo = HrRepository(FakeSupabaseConnector())
+
+    with pytest.raises(RuntimeError) as exc_info:
+        commands.run(["business", "analyze", "low-performance", "--threshold", "120"], repo=repo)
+
+    assert str(exc_info.value) == "Option --threshold must be between 0 and 100"
+
+
+def test_business_command_rejects_option_not_allowed_for_command(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(tmp_path, resources=["hr.employee"], actions=["read"])
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+
+    with pytest.raises(RuntimeError) as exc_info:
+        commands.run(
+            ["business", "get", "employee", "--name", "刘松", "--threshold", "80"],
+            repo=HrRepository(FakeSupabaseConnector()),
+        )
+
+    assert str(exc_info.value) == "Option --threshold is not supported by command employee-detail"
+
+
+def test_business_list_employee_paginates_bare_list_and_includes_ids(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(tmp_path, resources=["hr.employee"], actions=["query"])
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    connector.rows["employees"].extend(
+        [
+            {
+                "id": f"e-extra-{index}",
+                "name": f"测试员工{index}",
+                "company_id": "c2",
+                "department_id": "d4",
+                "status": "正式",
+            }
+            for index in range(104)
+        ]
+    )
+
+    result = commands.run(
+        ["business", "list", "employee", "--page-size", "50"],
+        repo=HrRepository(connector),
+    )
+
+    assert len(result["records"]) == 50
+    assert result["pagination"] == {
+        "page": 1,
+        "page_size": 50,
+        "total": 105,
+        "has_next": True,
+    }
+    assert all(row.get("id") for row in result["records"])
+
+
+def test_business_list_employee_with_explicit_filter_is_unpaginated_and_rejects_limit(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(tmp_path, resources=["hr.employee"], actions=["query"])
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    connector.rows["employees"].append(
+        {
+            "id": "e2",
+            "name": "正式员工二",
+            "company_id": "c2",
+            "department_id": "d4",
+            "status": "正式",
+        }
+    )
+
+    result = commands.run(
+        ["business", "list", "employee", "--status", "正式"],
+        repo=HrRepository(connector),
+    )
+
+    assert "pagination" not in result
+    assert {row["id"] for row in result["records"]} == {"e1", "e2"}
+
+    with pytest.raises(RuntimeError) as exc_info:
+        commands.run(
+            ["business", "list", "employee", "--status", "正式", "--limit", "1"],
+            repo=HrRepository(connector),
+        )
+
+    assert str(exc_info.value) == "带过滤的 list 返回完整匹配结果，不支持 --limit；请移除 --limit 或改用裸 list 配合 --page-size"
+
+
+def test_business_list_employee_filtered_result_over_hard_limit_returns_suggestions(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(tmp_path, resources=["hr.employee"], actions=["query"])
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    connector.rows["employees"] = [
+        {
+            "id": f"e{index}",
+            "name": f"正式员工{index}",
+            "company_id": "c2",
+            "department_id": "d4",
+            "status": "正式",
+        }
+        for index in range(5001)
+    ]
+
+    with pytest.raises(RuntimeError) as exc_info:
+        commands.run(
+            ["business", "list", "employee", "--status", "正式"],
+            repo=HrRepository(connector),
+        )
+
+    message = str(exc_info.value)
+    assert "结果集超过 5000 行" in message
+    assert "--company, --department, --status, --name, --id-card, --phone" in message
+
+
+def test_business_list_company_for_scoped_user_includes_ids(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(tmp_path, resources=["hr.company"], actions=["read"])
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+
+    result = commands.run(["business", "list", "company"], repo=HrRepository(FakeSupabaseConnector()))
+
+    assert result["records"] == [
+        {
+            "id": "c2",
+            "name": "武汉未来天空音乐文化产业有限公司",
+            "short_name": None,
+            "scoped": True,
+        }
+    ]
+
+
+def test_business_get_company_by_id_uses_read_resource_aliases(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(tmp_path, resources=["hr.company"], actions=["read"])
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+
+    result = commands.run(["business", "get", "company", "--id", "c2"], repo=HrRepository(connector))
+
+    assert result["id"] == "c2"
+    assert result["name"] == "武汉未来天空音乐文化产业有限公司"
+    assert connector.rows["_query_log"][-2:] == [
+        {
+            "table": "companies",
+            "select": "id,name",
+            "filters": [("eq", "id", "c2")],
+        },
+        {
+            "table": "companies",
+            "select": "id,name,short_name,is_deleted,updated_by,updated_at",
+            "filters": [("eq", "id", "c2")],
+        },
+    ]
+
+
+def test_business_get_employee_by_id_returns_authorized_record_and_rejects_cross_scope(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.employee"],
+        actions=["read"],
+        companies=["武汉未来天空音乐文化产业有限公司"],
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    connector.rows["employees"].append(
+        {
+            "id": "e-other",
+            "name": "其它公司员工",
+            "company_id": "c1",
+            "department_id": "d1",
+            "status": "正式",
+        }
+    )
+
+    result = commands.run(["business", "get", "employee", "--id", "e1"], repo=HrRepository(connector))
+
+    assert result["id"] == "e1"
+    assert result["name"] == "刘松"
+    assert result["company"] == "武汉未来天空音乐文化产业有限公司"
+
+    with pytest.raises(RuntimeError) as exc_info:
+        connector.rows["_query_log"] = []
+        commands.run(["business", "get", "employee", "--id", "e-other"], repo=HrRepository(connector))
+
+    message = str(exc_info.value)
+    assert "当前账号无权访问公司数据" in message
+    assert "其它公司员工" not in message
+    assert connector.rows["_query_log"] == [
+        {
+            "table": "employees",
+            "select": "id,company_id,companies(name)",
+            "filters": [("eq", "id", "e-other")],
+        }
+    ]
+
+
+def test_employee_timeline_applies_limit_and_reports_truncation(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(tmp_path, resources=["hr.employee"], actions=["read"])
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    connector.rows["contracts"].extend(
+        [
+            {
+                "id": f"ct-extra-{index}",
+                "employee_id": "e1",
+                "type": "固定期限劳动合同",
+                "sequence": index + 2,
+                "start_date": f"202{index}-01-01",
+                "expiry_date": f"202{index}-12-31",
+                "is_permanent": False,
+            }
+            for index in range(3)
+        ]
+    )
+
+    result = commands.run(
+        ["business", "query", "employee-timeline", "--name", "刘松", "--limit", "2"],
+        repo=HrRepository(connector),
+    )
+
+    assert len(result["contracts"]) == 2
+    assert result["limits"]["contracts"] == {"count": 4, "limit": 2, "truncated": True}
+    assert result["limits"]["performance_reviews"] == {"count": 0, "limit": 2, "truncated": False}
+
+
+def test_personnel_changes_list_applies_limit_and_reports_truncation(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(tmp_path, resources=["hr.personnel_change"], actions=["query"])
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    connector.rows["personnel_changes"] = [
+        {
+            "id": f"pc{index}",
+            "employee_id": "e1",
+            "change_reason": "转正",
+            "effective_date": f"2026-01-0{index + 1}",
+            "hr_clerk": "测试 HR",
+        }
+        for index in range(3)
+    ]
+
+    result = commands.run(
+        ["business", "query", "personnel-change", "--year", "2026", "--limit", "2"],
+        repo=HrRepository(connector),
+    )
+
+    assert len(result["records"]) == 2
+    assert result["count"] == 3
+    assert result["limit"] == 2
+    assert result["truncated"] is True
+
+
+def test_risk_dashboard_limits_recommended_action_rows() -> None:
+    connector = FakeSupabaseConnector()
+    connector.rows["employees"].extend(
+        [
+            {
+                "id": f"e-extra-{index}",
+                "name": f"测试员工{index}",
+                "company_id": "c2",
+                "department_id": "d4",
+                "status": "正式",
+            }
+            for index in range(4)
+        ]
+    )
+    repo = HrRepository(connector)
+
+    result = repo.analyze_hr_risk_dashboard(limit=2)
+    action = next(item for item in result["recommended_actions"] if item["type"] == "missing_contract")
+
+    assert len(action["records"]) == 2
+    assert action["count"] == 4
+    assert action["limit"] == 2
+    assert action["truncated"] is True
 
 
 def test_business_schema_returns_plan_contract_for_performance_create() -> None:
@@ -513,9 +1349,7 @@ def test_business_schema_returns_old_new_value_contract_for_seal_usage_update() 
     assert result["accepted_aliases"]["current_reason"] == "match_reason"
     assert result["accepted_aliases"]["new_reason"] == "reason"
     assert result["plan_example"] == {
-        "company": "武汉赢城集团有限公司",
-        "usage_date": "2026-06-13",
-        "current_reason": "普通账号流程验收",
+        "match_id": "abc-123-uuid",
         "new_reason": "普通账号更新流程验收",
         "attachments": ["验收复核申请.pdf"],
     }
@@ -531,11 +1365,7 @@ def test_business_schema_returns_personnel_change_update_aliases() -> None:
     assert result["accepted_aliases"]["change_date"] == "effective_date"
     assert result["accepted_aliases"]["change_type"] == "match_change_reason"
     assert result["plan_example"] == {
-        "company": "武汉赢城集团有限公司",
-        "employee_name": "张三",
-        "change_date": "2026-06-11",
-        "current_position": "人事助理",
-        "change_type": "转正",
+        "match_id": "abc-123-uuid",
         "new_position": "高级人事专员",
         "change_reason": "转正后定岗",
     }
@@ -566,6 +1396,19 @@ def test_business_schema_covers_all_public_write_resources() -> None:
             assert result["command_sequence"][1].startswith(
                 "business preview" if workflow == "create" else "business preview-update"
             )
+
+
+def test_business_schema_update_exposes_match_id() -> None:
+    result = commands.run(
+        ["business", "schema", "employee", "--workflow", "update"],
+        repo=HrRepository(FakeSupabaseConnector()),
+    )
+
+    match_id = next(field for field in result["fields"] if field["name"] == "match_id")
+    assert match_id["match_key"] is True
+    assert match_id["writable"] is False
+    assert "business list/get" in match_id["description"]
+    assert result["plan_example"]["match_id"] == "abc-123-uuid"
 
 
 def test_hr_business_list_employee_returns_full_roster_fields() -> None:
@@ -675,11 +1518,100 @@ def test_hr_business_update_employee_updates_existing_record(
         {"field": "id_card_expiry", "before": None, "after": "2043-08-11"}
     ]
     assert result["write"] == [
-        {"name": "刘松", "action": "updated", "fields": ["id_card_expiry"]}
+        {
+            "name": "刘松",
+            "action": "updated",
+            "fields": ["id_card_expiry"],
+            "match_count": 1,
+            "matched_ids": ["e1"],
+        }
     ]
     assert result["verification"]["ok"] is True
     assert repo.db.rows["employees"][0]["id_card_expiry"] == "2043-08-11"
     assert repo.db.rows["employees"][0]["updated_by"] == actor_id
+
+
+def test_hr_business_update_employee_with_match_id_uses_id_lookup(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    actor_id = "11111111-1111-1111-1111-111111111111"
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.employee"],
+        actions=["read", "query", "write"],
+        companies=["武汉未来天空音乐文化产业有限公司"],
+    )
+    plan = tmp_path / "employee-update-by-id.json"
+    plan.write_text(
+        json.dumps({"records": [{"match_id": "e1", "position": "高级主管"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    repo = HrRepository(connector)
+
+    preview = commands.run(["business", "preview-update", "employee", "--input", str(plan)], repo=repo)
+    result = commands.run(["business", "update", "employee", "--input", str(plan)], repo=repo)
+
+    assert preview["records"][0]["action"] == "would_update"
+    assert preview["records"][0]["match_count"] == 1
+    assert preview["records"][0]["matched_ids"] == ["e1"]
+    assert result["write"][0]["action"] == "updated"
+    assert result["write"][0]["fields"] == ["position"]
+    assert result["write"][0]["matched_ids"] == ["e1"]
+    assert connector.rows["employees"][0]["position"] == "高级主管"
+    assert connector.rows["employees"][0]["updated_by"] == actor_id
+
+
+def test_hr_business_update_with_match_id_rejects_cross_write_scope(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.employee"],
+        actions=["read", "query", "write"],
+        companies=["乐潮里科技有限公司"],
+    )
+    plan = tmp_path / "employee-update-cross-scope.json"
+    plan.write_text(
+        json.dumps({"records": [{"match_id": "e1", "position": "高级主管"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+
+    with pytest.raises(RuntimeError, match="指定 id 不存在、已删除或无权访问"):
+        commands.run(
+            ["business", "preview-update", "employee", "--input", str(plan)],
+            repo=HrRepository(FakeSupabaseConnector()),
+        )
+
+
+def test_hr_business_update_with_match_id_rejects_logically_deleted_row(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.employee"],
+        actions=["read", "query", "write"],
+        companies=["武汉未来天空音乐文化产业有限公司"],
+    )
+    plan = tmp_path / "employee-update-deleted-id.json"
+    plan.write_text(
+        json.dumps({"records": [{"match_id": "e1", "position": "高级主管"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    connector.rows["employees"][0]["is_deleted"] = True
+
+    with pytest.raises(RuntimeError, match="指定 id 不存在、已删除或无权访问"):
+        commands.run(
+            ["business", "preview-update", "employee", "--input", str(plan)],
+            repo=HrRepository(connector),
+        )
 
 
 def test_hr_business_update_employee_updates_resignation_date_and_clears_notes(
@@ -738,7 +1670,13 @@ def test_hr_business_update_employee_updates_resignation_date_and_clears_notes(
         {"field": "notes", "before": "待清空", "after": None},
     ]
     assert result["write"] == [
-        {"name": "刘松", "action": "updated", "fields": ["resignation_date", "notes"]}
+        {
+            "name": "刘松",
+            "action": "updated",
+            "fields": ["resignation_date", "notes"],
+            "match_count": 1,
+            "matched_ids": ["e1"],
+        }
     ]
     assert result["verification"]["ok"] is True
     assert repo.db.rows["employees"][0]["resignation_date"] == "2026-06-10"
@@ -799,11 +1737,103 @@ def test_hr_business_update_contract_updates_existing_record(
     result = commands.run(["business", "update", "contract", "--input", str(plan)], repo=repo)
 
     assert result["write"] == [
-        {"name": "刘松", "action": "updated", "fields": ["expiry_date"]}
+        {
+            "name": "刘松",
+            "action": "updated",
+            "fields": ["expiry_date"],
+            "match_count": 1,
+            "matched_ids": ["ct1"],
+        }
     ]
     assert result["verification"]["ok"] is True
     assert repo.db.rows["contracts"][0]["expiry_date"] == "2028-12-31"
     assert repo.db.rows["contracts"][0]["updated_by"] == actor_id
+
+
+def test_generic_create_reports_partial_results_on_mid_batch_failure(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    policy_file = write_hr_policy(tmp_path, resources=["hr.contract", "hr.employee"], actions=["read", "write"])
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    plan = tmp_path / "contract-create-partial.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "records": [
+                    {
+                        "company": "武汉未来天空音乐文化产业有限公司",
+                        "employee_name": "刘松",
+                        "type": "固定期限劳动合同",
+                        "sequence": 2,
+                        "start_date": "2027-01-01",
+                        "expiry_date": "2027-12-31",
+                    },
+                    {
+                        "company": "武汉未来天空音乐文化产业有限公司",
+                        "employee_name": "刘松",
+                        "type": "固定期限劳动合同",
+                        "sequence": 3,
+                        "start_date": "2028-01-01",
+                        "expiry_date": "2028-12-31",
+                    },
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = commands.main(
+        ["business", "create", "contract", "--input", str(plan)],
+        repo=HrRepository(FailingContractInsertConnector(fail_sequence=3)),
+    )
+    stderr = capsys.readouterr().err
+    payload = json.loads(stderr)
+
+    assert exit_code == 1
+    assert payload["ok"] is False
+    assert payload["partial_results"] == [{"name": "刘松", "action": "created"}]
+    assert payload["failed"]["index"] == 1
+    assert payload["failed"]["name"] == "刘松"
+    assert payload["failed"]["error"] == "simulated contract insert failure"
+
+
+def test_generic_create_existing_result_explains_matched_record(monkeypatch, tmp_path: Path) -> None:
+    policy_file = write_hr_policy(tmp_path, resources=["hr.contract", "hr.employee"], actions=["read", "write"])
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    plan = tmp_path / "contract-create-existing.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "records": [
+                    {
+                        "company": "武汉未来天空音乐文化产业有限公司",
+                        "employee_name": "刘松",
+                        "type": "固定期限劳动合同",
+                        "sequence": 1,
+                        "start_date": "2026-01-01",
+                        "expiry_date": "2026-12-31",
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = commands.run(["business", "create", "contract", "--input", str(plan)], repo=HrRepository(FakeSupabaseConnector()))
+
+    assert result["write"] == [
+        {
+            "name": "刘松",
+            "action": "existing",
+            "reason": "contracts already exists",
+            "match_count": 1,
+            "matched_ids": ["ct1"],
+        }
+    ]
 
 
 def test_hr_business_update_contract_can_update_match_field_and_verify_target(
@@ -860,7 +1890,13 @@ def test_hr_business_update_contract_can_update_match_field_and_verify_target(
     result = commands.run(["business", "update", "contract", "--input", str(plan)], repo=repo)
 
     assert result["write"] == [
-        {"name": "刘松", "action": "updated", "fields": ["type"]}
+        {
+            "name": "刘松",
+            "action": "updated",
+            "fields": ["type"],
+            "match_count": 1,
+            "matched_ids": ["ct1"],
+        }
     ]
     assert result["verification"]["ok"] is True
     assert repo.db.rows["contracts"][0]["type"] == "劳动合同"
@@ -959,6 +1995,8 @@ def test_hr_business_update_personnel_change_matches_change_reason_and_clears_fi
             "name": "刘松",
             "action": "updated",
             "fields": ["probation_salary", "regular_salary", "notes"],
+            "match_count": 1,
+            "matched_ids": ["pc2"],
         }
     ]
     assert result["verification"]["ok"] is True
@@ -1412,6 +2450,8 @@ def test_hr_business_delete_contract_marks_deleted_and_audit_query_returns_it(
     )
 
     assert result["records"][0]["action"] == "deleted"
+    assert result["records"][0]["match_count"] == 1
+    assert result["records"][0]["matched_ids"] == ["ct1"]
     assert connector.rows["contracts"][0]["is_deleted"] is True
     assert connector.rows["contracts"][0]["updated_by"] == "11111111-1111-1111-1111-111111111111"
     assert contracts["records"] == []
@@ -1472,9 +2512,68 @@ def test_hr_business_scoped_user_can_logically_delete_authorized_contract(
 
     result = commands.run(["business", "delete", "contract", "--input", str(plan)], repo=repo)
 
-    assert result["records"] == [{"name": "刘松", "action": "deleted", "fields": ["is_deleted"]}]
+    assert result["records"] == [
+        {
+            "name": "刘松",
+            "action": "deleted",
+            "fields": ["is_deleted"],
+            "match_count": 1,
+            "matched_ids": ["ct1"],
+        }
+    ]
     assert connector.rows["contracts"][0]["is_deleted"] is True
     assert connector.rows["contracts"][0]["updated_by"] == actor_id
+
+
+def test_hr_business_delete_contract_with_match_id_uses_delete_scope(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.contract", "hr.employee"],
+        actions=["read", "query", "delete"],
+        companies=["武汉未来天空音乐文化产业有限公司"],
+    )
+    plan = tmp_path / "contract-delete-by-id.json"
+    plan.write_text(
+        json.dumps({"records": [{"match_id": "ct1"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    repo = HrRepository(connector)
+
+    result = commands.run(["business", "delete", "contract", "--input", str(plan)], repo=repo)
+
+    assert result["records"][0]["action"] == "deleted"
+    assert result["records"][0]["matched_ids"] == ["ct1"]
+    assert connector.rows["contracts"][0]["is_deleted"] is True
+    assert connector.rows["contracts"][0]["updated_by"] == "11111111-1111-1111-1111-111111111111"
+
+
+def test_hr_business_delete_contract_with_match_id_rejects_cross_delete_scope(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.contract", "hr.employee"],
+        actions=["read", "query", "delete"],
+        companies=["乐潮里科技有限公司"],
+    )
+    plan = tmp_path / "contract-delete-cross-scope.json"
+    plan.write_text(
+        json.dumps({"records": [{"match_id": "ct1"}]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+
+    with pytest.raises(RuntimeError, match="指定 id 不存在、已删除或无权访问"):
+        commands.run(
+            ["business", "delete", "contract", "--input", str(plan)],
+            repo=HrRepository(FakeSupabaseConnector()),
+        )
 
 
 def test_hr_business_scoped_user_cannot_delete_unauthorized_contract(
@@ -1587,6 +2686,8 @@ def test_hr_business_update_employee_matches_current_record_when_phone_changes(
             "name": "刘松",
             "action": "updated",
             "fields": ["position", "phone"],
+            "match_count": 1,
+            "matched_ids": ["e1"],
         }
     ]
     assert result["verification"]["ok"] is True
@@ -1635,6 +2736,8 @@ def test_hr_business_update_employee_can_match_by_old_phone(
             "name": "刘松",
             "action": "updated",
             "fields": ["phone"],
+            "match_count": 1,
+            "matched_ids": ["e1"],
         }
     ]
     assert result["verification"]["ok"] is True
@@ -2007,6 +3110,13 @@ def test_generic_child_record_payload_drops_natural_language_match_fields() -> N
     }
 
 
+def test_normalizers_accept_id_and_match_id_as_match_id_inputs() -> None:
+    assert normalize_employee_seed_record({"id": "e1", "name": "刘松"})["_match_id"] == "e1"
+    assert normalize_employee_seed_record({"match_id": "e1", "name": "刘松"})["_match_id"] == "e1"
+    assert normalize_contract_seed_record({"id": "ct1", "employee_name": "刘松"})["_match_id"] == "ct1"
+    assert normalize_contract_seed_record({"match_id": "ct1", "employee_name": "刘松"})["_match_id"] == "ct1"
+
+
 def test_employee_alias_is_normalized_for_child_record_plans() -> None:
     assert normalize_named_employee_record({"employee": "张三"})["employee_name"] == "张三"
     assert normalize_contract_seed_record({"employee": "张三"})["employee_name"] == "张三"
@@ -2171,6 +3281,15 @@ class FakeSupabaseConnector:
         return FakeQuery(self.rows, table)
 
 
+class FailingContractInsertConnector(FakeSupabaseConnector):
+    def __init__(self, *, fail_sequence: int) -> None:
+        super().__init__()
+        self.fail_sequence = fail_sequence
+
+    def table(self, table: str):
+        return FailingContractInsertQuery(self.rows, table, fail_sequence=self.fail_sequence)
+
+
 class FakeResponse:
     def __init__(self, data, count=None) -> None:
         self.data = data
@@ -2234,6 +3353,13 @@ class FakeQuery:
         return self
 
     def execute(self):
+        self.rows.setdefault("_query_log", []).append(
+            {
+                "table": self.table,
+                "select": self.select_value,
+                "filters": list(self.filters),
+            }
+        )
         if self.insert_body is not None:
             body = dict(self.insert_body)
             body.setdefault("id", f"{self.table[:1]}{len(self.rows.get(self.table, [])) + 1}")
@@ -2388,6 +3514,22 @@ class FakeQuery:
             ]
         if self.order_key:
             data = sorted(data, key=lambda row: str(row.get(self.order_key) or ""))
+        total_count = len(data)
         if self.limit_count is not None:
             data = data[: self.limit_count]
-        return FakeResponse(data, len(data))
+        return FakeResponse(data, total_count)
+
+
+class FailingContractInsertQuery(FakeQuery):
+    def __init__(self, rows, table: str, *, fail_sequence: int) -> None:
+        super().__init__(rows, table)
+        self.fail_sequence = fail_sequence
+
+    def execute(self):
+        if (
+            self.insert_body is not None
+            and self.table == "contracts"
+            and self.insert_body.get("sequence") == self.fail_sequence
+        ):
+            raise RuntimeError("simulated contract insert failure")
+        return super().execute()

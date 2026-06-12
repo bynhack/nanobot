@@ -24,34 +24,53 @@ HR_SCOPE_RESOURCES = [
 
 HR_COMMAND_RULES: dict[str, tuple[str, str, str | None]] = {
     "list-companies": ("hr.company", "read", None),
+    "get-company": ("hr.company", "read", None),
     "organization-tree": ("hr.organization", "query", None),
     "find-company": ("hr.company", "read", "name"),
     "list-departments": ("hr.department", "query", None),
+    "get-department": ("hr.department", "read", None),
     "find-department": ("hr.department", "read", None),
     "find-employee": ("hr.employee", "query", None),
     "find-employee-like": ("hr.employee", "query", None),
     "list-employees": ("hr.employee", "query", None),
+    "get-employee": ("hr.employee", "read", None),
     "employee-detail": ("hr.employee", "read", None),
     "employee-timeline": ("hr.employee", "read", None),
+    "list-contracts": ("hr.contract", "query", None),
+    "get-contract": ("hr.contract", "read", None),
     "contracts-by-employee": ("hr.contract", "read", None),
+    "list-performance-reviews": ("hr.performance", "query", None),
+    "get-performance-review": ("hr.performance", "read", None),
     "performance-by-employee": ("hr.performance", "read", None),
     "performance-by-month": ("hr.performance", "query", None),
+    "list-insurance-changes": ("hr.insurance", "query", None),
+    "get-insurance-change": ("hr.insurance", "read", None),
     "insurance-by-employee": ("hr.insurance", "read", None),
     "insurance-by-month": ("hr.insurance", "query", None),
+    "list-personnel-changes": ("hr.personnel_change", "query", None),
+    "get-personnel-change": ("hr.personnel_change", "read", None),
     "personnel-changes-by-employee": ("hr.personnel_change", "read", None),
     "personnel-changes-list": ("hr.personnel_change", "query", None),
+    "list-disciplinary-records": ("hr.disciplinary", "query", None),
+    "get-disciplinary-record": ("hr.disciplinary", "read", None),
     "disciplinary-by-employee": ("hr.disciplinary", "read", None),
+    "list-seal-usage": ("hr.seal_usage", "query", None),
+    "get-seal-usage": ("hr.seal_usage", "read", None),
     "seal-usage-list": ("hr.seal_usage", "query", None),
     "deleted-records": ("hr.employee", "read", None),
     "business-capabilities": ("hr.employee", "query", None),
     "business-plan-schema": ("hr.employee", "query", None),
+    "analyze-roster": ("hr.employee", "analyze", None),
     "analyze-headcount": ("hr.employee", "analyze", None),
     "analyze-contract-coverage": ("hr.contract", "analyze", None),
     "analyze-contract-expiry": ("hr.contract", "analyze", None),
     "analyze-performance-month": ("hr.performance", "analyze", None),
     "analyze-low-performance": ("hr.performance", "analyze", None),
     "analyze-insurance-month": ("hr.insurance", "analyze", None),
+    "analyze-personnel-change": ("hr.personnel_change", "analyze", None),
     "analyze-disciplinary": ("hr.disciplinary", "analyze", None),
+    "analyze-seal-usage": ("hr.seal_usage", "analyze", None),
+    "analyze-employee-profile": ("hr.employee", "analyze", None),
     "employee-summary": ("hr.employee", "analyze", None),
     "preview-org-seeds": ("hr.organization", "write", None),
     "apply-org-seeds": ("hr.organization", "write", None),
@@ -120,11 +139,18 @@ SCOPED_GLOBAL_DENY_COMMANDS = {
 }
 
 SCOPED_MULTI_COMPANY_COMMANDS = {
+    "list-companies",
     "find-employee",
     "find-employee-like",
     "organization-tree",
     "list-departments",
     "list-employees",
+    "list-contracts",
+    "list-performance-reviews",
+    "list-insurance-changes",
+    "list-personnel-changes",
+    "list-disciplinary-records",
+    "list-seal-usage",
     "employee-detail",
     "employee-timeline",
     "contracts-by-employee",
@@ -139,13 +165,17 @@ SCOPED_MULTI_COMPANY_COMMANDS = {
     "deleted-records",
     "business-capabilities",
     "business-plan-schema",
+    "analyze-roster",
     "analyze-headcount",
     "analyze-contract-coverage",
     "analyze-contract-expiry",
     "analyze-performance-month",
     "analyze-low-performance",
     "analyze-insurance-month",
+    "analyze-personnel-change",
     "analyze-disciplinary",
+    "analyze-seal-usage",
+    "analyze-employee-profile",
     "employee-summary",
 }
 
@@ -212,6 +242,8 @@ def authorize_hr_command(
 
     resource, action, option_key = HR_COMMAND_RULES.get(command or "", ("hr.employee", "query", None))
     assert_tenant_resource_allowed(policy, resource, action)
+    if command and command.startswith("get-"):
+        return
     company = clean(options.get("company")) or clean(options.get(option_key or ""))
     if company:
         assert_tenant_scope_allowed(policy, resource, action, "company", company)
@@ -220,6 +252,12 @@ def authorize_hr_command(
     if companies_from_plan:
         for item in companies_from_plan:
             assert_tenant_scope_allowed(policy, resource, action, "company", item)
+        return
+    if plan_has_match_id(plan) and command and (
+        command.startswith("preview-update-")
+        or command.startswith("update-")
+        or command.startswith("delete-")
+    ):
         return
     if command in SCOPED_MULTI_COMPANY_COMMANDS:
         return
@@ -315,6 +353,16 @@ def collect_scope_company_names(value: Any, fallback_company_name: str | None = 
         results.append(fallback)
     _collect_scope_company_names_into(value, "", results)
     return list(dict.fromkeys(results))
+
+
+def plan_has_match_id(value: Any) -> bool:
+    if isinstance(value, list):
+        return any(plan_has_match_id(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+    if clean(value.get("match_id")) or clean(value.get("id")):
+        return True
+    return any(plan_has_match_id(child) for child in value.values())
 
 
 def _collect_scope_company_names_into(value: Any, parent_key: str, results: list[str]) -> None:

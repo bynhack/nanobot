@@ -1,77 +1,54 @@
-# 人事自然语言查询分析路由表
+# 人事自然语言查询路由表
 
-所有查询和分析优先走标准业务命令：
+所有只读请求优先走标准业务命令：
 
 ```bash
-nanobot-webui-business hr business <query|get|analyze> <resource|topic> [options]
+nanobot-webui-business hr business <list|get|analyze|preview|create|preview-update|update|delete|schema|capabilities> <resource|topic> [options]
 ```
 
 默认不要传 `--company`，让当前账号 policy 自动限定授权公司范围。只有用户明确指定某家公司时才传 `--company "公司全称"`。
 
-## 高频快路径
+## 列表规则
+
+- 裸 `list` 返回分页结果，默认 `page-size` 为 100，可用 `--page` 和 `--page-size` 翻页。
+- 带业务过滤条件的 `list` 返回完整匹配结果；过滤列表不要使用 `--limit`。
+- 所有 `list` 记录都会返回 `id`，后续精确读取使用 `business get <resource> --id <id>`。
+
+## 高频路由
 
 | 用户问法 | 推荐命令 | 注意 |
 |---|---|---|
-| 我负责哪些公司？下面有哪些部门？ | `business query organization-tree` | 一条命令返回公司和部门树。 |
-| 花名册汇总、员工概况、人员结构 | `business analyze headcount` | 不要先运行逐行花名册。 |
-| 按公司、部门、在职状态汇总 | `business analyze headcount` | 已包含公司、部门和状态。 |
-| 员工资料质量、重复身份证、重复手机号 | `business analyze employee-summary` | 用于质量提示。 |
-| 合同覆盖率、哪些在职员工缺合同 | `business analyze contract-coverage` | 不要先列出所有员工。 |
-| 未来 N 天合同到期 | `business analyze contract-expiry --days N` | 默认可用 `--days 90`。 |
-| 月度绩效整体情况 | `business analyze performance --month YYYY-MM` | 只在用户要求明细时查逐行绩效。 |
-| 低绩效名单 | `business analyze low-performance --month YYYY-MM --threshold 60` | 阈值按用户要求调整。 |
-| 月度社医保增减员 | `business analyze insurance --month YYYY-MM` | 汇总和明细一起返回。 |
-| 奖惩整体情况、缺签字附件 | `business analyze disciplinary` | 可按公司过滤。 |
-
-## 员工与组织
-
-| 用户问法 | 推荐命令 |
-|---|---|
-| 当前账号可见公司和部门 | `business query organization-tree` |
-| 某公司有哪些部门 | `business query departments --company "公司全称"` |
-| 现在有哪些员工 / 员工花名册明细 / 员工所有主档信息 | `business query employee` |
-| 某公司现在有哪些员工 / 某公司花名册明细 | `business query employee --company "公司全称"` |
-| 查某个员工信息 | `business get employee --name "姓名" [--company "公司全称"]` |
-| 查某员工所有记录/生命周期 | `business query employee-timeline --name "姓名" [--company "公司全称"]` |
-| 这个手机号是谁 | `business get employee --phone "手机号"` |
-| 这个身份证是谁 | `business get employee --id-card "证件号"` |
-
-## 合同
-
-| 用户问法 | 推荐命令 |
-|---|---|
-| 某员工有没有合同 | `business query employee-contracts --name "姓名" [--company "公司全称"]` |
-| 合同覆盖率是多少 | `business analyze contract-coverage` |
-| 未来三个月哪些合同到期 | `business analyze contract-expiry --days 90` |
-| 未来 30 天合同到期的有哪些 | `business analyze contract-expiry --days 30` |
-
-## 绩效和社医保
-
-| 用户问法 | 推荐命令 |
-|---|---|
-| 某员工绩效记录 | `business query performance-by-employee --name "姓名" [--company "公司全称"]` |
-| 某月绩效明细 | `business query performance --month YYYY-MM [--company "公司全称"]` |
-| 某月绩效整体情况 | `business analyze performance --month YYYY-MM [--company "公司全称"]` |
-| 某月低于 60 分的人 | `business analyze low-performance --month YYYY-MM --threshold 60 [--company "公司全称"]` |
-| 某员工社保记录 | `business query insurance-by-employee --name "姓名" [--company "公司全称"]` |
-| 某月社保增减员 | `business analyze insurance --month YYYY-MM [--company "公司全称"]` |
-
-## 人事异动、奖惩和用章
-
-| 用户问法 | 推荐命令 |
-|---|---|
-| 某员工人事异动 | `business query personnel-change-by-employee --name "姓名" [--company "公司全称"]` |
-| 今年有哪些转正 | `business query personnel-change --year YYYY --reason "转正"` |
-| 某员工奖惩记录 | `business query disciplinary --name "姓名" [--company "公司全称"]` |
-| 奖惩整体情况 | `business analyze disciplinary [--company "公司全称"]` |
-| 某公司用章记录 | `business query seal-usage --company "公司全称"` |
-| 某日期范围用章记录 | `business query seal-usage --from YYYY-MM-DD --to YYYY-MM-DD` |
-| 某人相关用章记录 | `business query seal-usage --name "姓名"` |
+| 我负责哪些公司？ | `business list company` | 裸 list，可翻页。 |
+| 某公司有哪些部门 | `business list department --company "公司全称"` | 带过滤，返回完整匹配。 |
+| 员工花名册明细 | `business list employee --page-size 100` | 继续查看用 `--page`。 |
+| 员工人数 / 人员结构 / 花名册汇总 | `business analyze roster` | 用 summary 和 groups 回答，不要从 records 自行计数。 |
+| 某公司员工花名册 | `business list employee --company "公司全称"` | 带过滤。 |
+| 查某个员工信息 | `business list employee --name "姓名"` → `business get employee --id <id>` | 先定位 id，再精确读取。 |
+| 这个手机号是谁 | `business list employee --phone "手机号"` → `business get employee --id <id>` | 先定位 id。 |
+| 这个身份证是谁 | `business list employee --id-card "证件号"` → `business get employee --id <id>` | 先定位 id。 |
+| 员工资料风险 / 主档完整性 | `business analyze employee-profile` | 用资料质量 findings 回答，不自行数明细。 |
+| 某员工合同 | `business list contract --employee "姓名"` | 如需精确记录，再用 `business get contract --id <id>`。 |
+| 合同覆盖率 / 在职员工缺合同 | `business analyze contract-coverage` | 分清任意合同覆盖和当前有效合同覆盖。 |
+| 未来三个月合同到期 | `business analyze contract-expiry --days 90` | 汇总和到期名单使用 analyze；单条明细再 get。 |
+| 某月绩效明细 | `business list performance --month YYYY-MM` | 可追加 `--company` 或 `--employee`。 |
+| 某月绩效汇总 / 低绩效分析 | `business analyze performance-month --month YYYY-MM` | 用 summary/findings 回答，不自行数 records。 |
+| 某员工绩效记录 | `business list performance --employee "姓名"` | 如需精确记录，再用 `business get performance-review --id <id>`。 |
+| 某月社保增减员 | `business list insurance --month YYYY-MM` | 可追加 `--status`。 |
+| 某月社保异动汇总 | `business analyze insurance-month --month YYYY-MM` | 汇总增员、减员、签字件缺失等问题。 |
+| 某员工社保记录 | `business list insurance --employee "姓名"` | 如需精确记录，再用 `business get insurance-change --id <id>`。 |
+| 今年人事异动汇总 / 转正调岗离职统计 | `business analyze personnel-change --year YYYY` | 用 change reason 分组和 findings 回答。 |
+| 今年有哪些转正 | `business list personnel-change --year YYYY --reason "转正"` | 用户要明细名单时使用，可追加 `--company`。 |
+| 某员工人事异动 | `business list personnel-change --employee "姓名"` | 如需精确记录，再用 `business get personnel-change --id <id>`。 |
+| 某员工奖惩记录 | `business list disciplinary --employee "姓名"` | 如需精确记录，再用 `business get disciplinary-record --id <id>`。 |
+| 奖惩统计 / 处分异常 | `business analyze disciplinary` | 用 penalty type 分组和 findings 回答。 |
+| 某公司用章记录 | `business list seal-usage --company "公司全称"` | 可追加日期范围。 |
+| 用章统计 / 用章附件缺失 | `business analyze seal-usage --from YYYY-MM-DD --to YYYY-MM-DD` | 用 summary/findings 回答，明细再 list。 |
+| 某日期范围用章记录 | `business list seal-usage --from YYYY-MM-DD --to YYYY-MM-DD` | 带过滤。 |
+| 某人相关用章记录 | `business list seal-usage --applicant "姓名"` | 如需精确记录，再用 `business get seal-usage --id <id>`。 |
 
 ## 路由禁止项
 
 - 不要运行 `which` 或 `find` 查找 `nanobot-webui-business`。
 - 不要读取 `runtime/`、`scripts/`、`tenant-runtime.json`、policy 文件或数据库配置来确认已知命令。
-- 不要为汇总问题先运行 `business query employee` 或 legacy `list-employees`。
-- 不要用 `count-all`、`data-quality-check`、`analyze-hr-risk-dashboard` 回答 scoped 用户的普通业务问题；这些是全局/管理类命令，可能被 policy 拒绝。
-- 如果用户要新增、修改、导入、清理或删除，转到 `hr-db-ops` 的写入流程，先 preview，再确认，再执行和 verify。
+- 不要为汇总问题先拉取全量逐行明细；需要明细时使用带过滤的 `business list`。
+- 如果用户要新增、修改、导入、清理或删除，转到 `hr-db-ops` 的写入流程，先整理拟录入或拟更新信息，再确认执行。

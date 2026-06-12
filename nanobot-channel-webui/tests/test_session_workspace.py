@@ -106,6 +106,7 @@ def _load_channel_module() -> types.ModuleType:
     uploads_module = types.ModuleType(f"{package_name}.uploads")
     uploads_module.attachment_prompt_suffix = lambda *args, **kwargs: ""
     uploads_module.next_upload_path = lambda *args, **kwargs: Path("/tmp/uploaded")
+    uploads_module.upload_display_name = lambda filename: filename or "upload.bin"
     sys.modules[f"{package_name}.uploads"] = uploads_module
 
     channel_path = MODULE_PATH.parent / "channel.py"

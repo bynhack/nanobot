@@ -121,7 +121,7 @@
       "kind": "query",
       "commands": [
         "list-companies",
-        "business query companies"
+        "business list company"
       ],
       "resources": [
         {
@@ -146,9 +146,8 @@
       "title": "当前账号可见公司及部门树",
       "kind": "query",
       "commands": [
-        "organization-tree",
-        "business query organization-tree",
-        "business query organization"
+        "list-departments",
+        "business list department"
       ],
       "resources": [
         {
@@ -173,7 +172,7 @@
         "组织架构",
         "部门树",
         "organization",
-        "organization-tree"
+        "list-departments"
       ]
     },
     {
@@ -183,8 +182,8 @@
       "commands": [
         "list-departments",
         "find-department",
-        "business query departments",
-        "business get department"
+        "business list department",
+        "business get department --id <id>"
       ],
       "resources": [
         {
@@ -207,10 +206,8 @@
       "title": "员工概况和人数分析",
       "kind": "analysis",
       "commands": [
-        "employee-summary",
-        "analyze-headcount",
-        "business analyze headcount",
-        "business analyze employee-summary"
+        "business analyze roster",
+        "business analyze employee-profile"
       ],
       "resources": [
         {
@@ -225,6 +222,8 @@
         "人数",
         "员工概况",
         "员工统计",
+        "员工资料风险",
+        "主档完整性",
         "花名册汇总",
         "人员结构",
         "在职状态汇总",
@@ -238,13 +237,8 @@
       "title": "员工花名册查询",
       "kind": "query",
       "commands": [
-        "list-employees",
-        "employee-detail",
-        "find-employee",
-        "find-employee-like",
-        "business query employee",
-        "business query employees",
-        "business get employee"
+        "business list employee",
+        "business get employee --id <id>"
       ],
       "resources": [
         {
@@ -271,8 +265,14 @@
       "title": "员工履历查询",
       "kind": "query",
       "commands": [
-        "employee-timeline",
-        "business query employee-timeline"
+        "business list employee --name <name>",
+        "business get employee --id <id>",
+        "business list contract --employee <name>",
+        "business list performance --employee <name>",
+        "business list insurance --employee <name>",
+        "business list personnel-change --employee <name>",
+        "business list disciplinary --employee <name>",
+        "business list seal-usage --applicant <name>"
       ],
       "resources": [
         {
@@ -295,8 +295,8 @@
       "title": "单员工合同查询",
       "kind": "query",
       "commands": [
-        "contracts-by-employee",
-        "business query employee-contracts"
+        "business list contract --employee <name>",
+        "business get contract --id <id>"
       ],
       "resources": [
         {
@@ -309,8 +309,7 @@
       ],
       "focus_terms": [
         "合同",
-        "employee-contracts",
-        "contracts-by-employee"
+        "contract"
       ]
     },
     {
@@ -318,10 +317,8 @@
       "title": "合同覆盖率和到期分析",
       "kind": "analysis",
       "commands": [
-        "analyze-contract-coverage",
-        "analyze-contract-expiry",
         "business analyze contract-coverage",
-        "business analyze contract-expiry"
+        "business analyze contract-expiry --days 90"
       ],
       "resources": [
         {
@@ -346,14 +343,9 @@
       "title": "绩效记录查询和分析",
       "kind": "analysis",
       "commands": [
-        "performance-by-employee",
-        "performance-by-month",
-        "analyze-performance-month",
-        "analyze-low-performance",
-        "business query performance",
-        "business query performance-by-employee",
-        "business analyze performance",
-        "business analyze low-performance"
+        "business analyze performance-month --month YYYY-MM",
+        "business list performance --month YYYY-MM",
+        "business list performance --month YYYY-MM --employee <name>"
       ],
       "resources": [
         {
@@ -378,12 +370,9 @@
       "title": "社医保异动查询和分析",
       "kind": "analysis",
       "commands": [
-        "insurance-by-employee",
-        "insurance-by-month",
-        "analyze-insurance-month",
-        "business query insurance",
-        "business query insurance-by-employee",
-        "business analyze insurance"
+        "business analyze insurance-month --month YYYY-MM",
+        "business list insurance --month YYYY-MM",
+        "business list insurance --month YYYY-MM --employee <name>"
       ],
       "resources": [
         {
@@ -406,21 +395,21 @@
     },
     {
       "id": "hr.personnel_change.query",
-      "title": "人事异动查询",
-      "kind": "query",
+      "title": "人事异动查询和分析",
+      "kind": "analysis",
       "commands": [
-        "personnel-changes-list",
-        "personnel-changes-by-employee",
-        "business query personnel-change",
-        "business query personnel-changes",
-        "business query personnel-change-by-employee"
+        "business analyze personnel-change --year YYYY",
+        "business list personnel-change",
+        "business list personnel-change --employee <name>",
+        "business get personnel-change --id <id>"
       ],
       "resources": [
         {
           "resource": "hr.personnel_change",
           "actions": [
             "query",
-            "read"
+            "read",
+            "analyze"
           ],
           "scope_key": "company"
         }
@@ -439,10 +428,10 @@
       "title": "奖惩记录查询和分析",
       "kind": "analysis",
       "commands": [
-        "disciplinary-by-employee",
-        "analyze-disciplinary",
-        "business query disciplinary",
-        "business analyze disciplinary"
+        "business analyze disciplinary",
+        "business list disciplinary",
+        "business list disciplinary --employee <name>",
+        "business get disciplinary-record --id <id>"
       ],
       "resources": [
         {
@@ -466,17 +455,20 @@
     },
     {
       "id": "hr.seal_usage.query",
-      "title": "用章记录查询",
-      "kind": "query",
+      "title": "用章记录查询和分析",
+      "kind": "analysis",
       "commands": [
-        "seal-usage-list",
-        "business query seal-usage"
+        "business analyze seal-usage",
+        "business list seal-usage",
+        "business get seal-usage --id <id>"
       ],
       "resources": [
         {
           "resource": "hr.seal_usage",
           "actions": [
-            "query"
+            "query",
+            "read",
+            "analyze"
           ],
           "scope_key": "company"
         }
@@ -535,7 +527,7 @@
         "After confirmation, run business create employee --input <same-plan.json>.",
         "The create command performs the database write and internal verification against the same JSON plan; use the create result as the troubleshooting evidence if verification fails.",
         "A successful create result must include verification.ok true.",
-        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
+        "A successful create/update/delete result is sufficient; do not run extra readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "入职",
@@ -589,7 +581,7 @@
         "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
         "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
         "After confirmation, run business create contract --input <same-plan.json>; create includes verification.",
-        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
+        "A successful create/update/delete result is sufficient; do not run extra readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "录入合同",
@@ -684,14 +676,15 @@
       "recipe": [
         "Use the update workflow only when the user wants to modify an existing HR business record.",
         "Do not use this workflow to create new employee-related records. New contracts, performance reviews, insurance changes, personnel changes, disciplinary records, and seal usage records use preview/create instead.",
-        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Include company and enough business keys to uniquely match the existing record, then include only fields the user wants to change.",
+        "Before update, locate the existing record with business list/get and use match_id in the JSON plan. Business keys are fallback only when id is unavailable.",
+        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Include match_id plus only fields the user wants to change.",
         "Run business preview-update <resource> --input <plan.json> and summarize matches, skipped records, and field diffs in natural language.",
         "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
         "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
         "Wait for explicit user confirmation.",
         "After confirmation, run business update <resource> --input <same-plan.json>; update includes verification.",
-        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it.",
-        "If update fails, do not delete or recreate the record as a fallback. Report the failure or ask the user for a unique matching field; delete and recreate requires a separate explicit confirmation."
+        "A successful create/update/delete result is sufficient; do not run extra readback unless the user explicitly asks for it.",
+        "If update fails, do not delete or recreate the record as a fallback. Report the failure or ask the user for the current record id; delete and recreate requires a separate explicit confirmation."
       ],
       "focus_terms": [
         "员工维护",
@@ -733,7 +726,7 @@
         "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
         "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
         "After confirmation, run business create performance --input <same-plan.json>; create includes verification.",
-        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
+        "A successful create/update/delete result is sufficient; do not run extra readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "录入绩效",
@@ -768,7 +761,7 @@
         "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
         "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
         "After confirmation, run business create insurance --input <same-plan.json>. Create includes verification.",
-        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
+        "A successful create/update/delete result is sufficient; do not run extra readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "录入社保",
@@ -803,7 +796,7 @@
         "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
         "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
         "After confirmation, run business create personnel-change --input <same-plan.json>. Create includes verification.",
-        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
+        "A successful create/update/delete result is sufficient; do not run extra readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "录入异动",
@@ -840,7 +833,7 @@
         "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
         "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
         "After confirmation, run business create disciplinary --input <same-plan.json>. Create includes verification.",
-        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
+        "A successful create/update/delete result is sufficient; do not run extra readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "录入奖惩",
@@ -875,7 +868,7 @@
         "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
         "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
         "After confirmation, run business create seal-usage --input <same-plan.json>. Create includes verification.",
-        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
+        "A successful create/update/delete result is sufficient; do not run extra readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "录入用章",
@@ -928,7 +921,7 @@
         "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
         "After confirmation, run business create organization --input <same-plan.json>.",
         "The create command performs internal verification against the same JSON plan and must return verification.ok true; use the create result as the troubleshooting evidence if verification fails.",
-        "A successful create/update/delete result is sufficient; do not run extra get/query/analyze readback unless the user explicitly asks for it."
+        "A successful create/update/delete result is sufficient; do not run extra readback unless the user explicitly asks for it."
       ],
       "focus_terms": [
         "新增部门",
@@ -1038,7 +1031,7 @@
       "title": "逻辑删除记录审计查询",
       "kind": "query",
       "commands": [
-        "business query deleted-records"
+        "business list deleted-records"
       ],
       "resources": [
         {

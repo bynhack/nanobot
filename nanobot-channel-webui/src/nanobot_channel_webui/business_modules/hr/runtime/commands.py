@@ -12,6 +12,13 @@ from .policy import (
     load_access_policy,
     scoped_company_list,
 )
+from .registry import (
+    DEFAULT_PAGE_SIZE,
+    MAX_FILTERED_RESULT_ROWS,
+    MAX_PAGE_SIZE,
+    option_contract,
+    validate_options,
+)
 from .repository import (
     CONTRACT_WRITABLE_FIELDS,
     DISCIPLINARY_RECORD_WRITABLE_FIELDS,
@@ -19,6 +26,7 @@ from .repository import (
     PERFORMANCE_REVIEW_WRITABLE_FIELDS,
     PERSONNEL_CHANGE_WRITABLE_FIELDS,
     HrRepository,
+    PartialFailureError,
     contract_payload,
     contract_select,
     disciplinary_record_payload,
@@ -54,6 +62,17 @@ def main(argv: list[str] | None = None, repo: HrRepository | None = None) -> int
         if result is not None:
             print_json({"ok": True, "data": result})
         return 0
+    except PartialFailureError as exc:
+        print_json(
+            {
+                "ok": False,
+                "error": str(exc),
+                "partial_results": exc.partial_results,
+                "failed": exc.failed,
+            },
+            stream=sys.stderr,
+        )
+        return 1
     except Exception as exc:  # noqa: BLE001
         print_json({"ok": False, "error": str(exc)}, stream=sys.stderr)
         return 1
@@ -69,21 +88,27 @@ def run(argv: list[str], *, repo: HrRepository) -> Any:
         command, options = normalize_business_command(parsed)
     if options.get("help") or command in {"help", "--help", "-h", None}:
         return business_help()
+    explicit_options = set(options)
+    options = validate_options(command, options)
     policy = load_access_policy()
     apply_scoped_company_default(command=command, options=options, policy=policy)
     plan = read_json(options.get("input")) if options.get("input") else None
-    if command == "list-companies":
-        scoped = scoped_company_list(policy)
-        if scoped is not None:
-            return scoped
     authorize_hr_command(command=command, options=options, plan=plan, policy=policy)
-    return dispatch(command, options, plan, repo)
+    return dispatch(command, options, plan, repo, explicit_options=explicit_options)
 
 
-def dispatch(command: str, options: dict[str, Any], plan: Any, repo: HrRepository) -> Any:
+def dispatch(
+    command: str,
+    options: dict[str, Any],
+    plan: Any,
+    repo: HrRepository,
+    *,
+    explicit_options: set[str] | None = None,
+) -> Any:
     scoped = scoped_company_names(options)
     lookup = employee_lookup_options(options)
     lookup["company_names"] = scoped
+    explicit_options = explicit_options or set()
     match command:
         case "count-all":
             return repo.count_all_tables()
@@ -94,14 +119,32 @@ def dispatch(command: str, options: dict[str, Any], plan: Any, repo: HrRepositor
         case "business-plan-schema":
             return business_plan_schema(resource=options.get("resource"), workflow=options.get("workflow"))
         case "list-companies":
-            return repo.list_companies()
+            scoped_companies = scoped_company_list()
+            records = repo.list_companies(
+                name=options.get("name"),
+                company_names=[row["name"] for row in scoped_companies] if scoped_companies is not None else None,
+                scoped=scoped_companies is not None,
+            )
+            return list_result(
+                command=command,
+                options=options,
+                explicit_options=explicit_options,
+                records=records,
+            )
         case "organization-tree":
             organization_scope = scoped or ([options["company"]] if options.get("company") else None)
             return repo.list_organization_tree(company_names=organization_scope)
         case "find-company":
             return repo.find_company_by_name(options.get("name"))
         case "list-departments":
-            return repo.list_departments(company_name=options.get("company"), company_names=scoped)
+            result = repo.list_departments(company_name=options.get("company"), company_names=scoped)
+            return list_result(
+                command=command,
+                options=options,
+                explicit_options=explicit_options,
+                records=result["departments"],
+                extra={"companyMatches": result["companyMatches"]},
+            )
         case "find-department":
             return repo.find_department(company_name=options.get("company"), department_name=options.get("department"))
         case "find-employee":
@@ -109,11 +152,114 @@ def dispatch(command: str, options: dict[str, Any], plan: Any, repo: HrRepositor
         case "find-employee-like":
             return repo.find_employee_name_like(name=options.get("name"), company_name=options.get("company"), company_names=scoped)
         case "list-employees":
-            return repo.list_employees(company_name=options.get("company"), company_names=scoped, status=options.get("status"))
+            result = repo.list_employees(
+                company_name=options.get("company"),
+                company_names=scoped,
+                status=options.get("status"),
+                department_name=options.get("department"),
+                name=options.get("name"),
+                id_card=options.get("id-card"),
+                phone=options.get("phone"),
+            )
+            return list_result(
+                command=command,
+                options=options,
+                explicit_options=explicit_options,
+                records=result["records"],
+                extra={key: value for key, value in result.items() if key != "records"},
+            )
+        case "list-contracts":
+            return list_result(
+                command=command,
+                options=options,
+                explicit_options=explicit_options,
+                records=repo.list_resource_records(
+                    "contract",
+                    company_name=options.get("company"),
+                    company_names=scoped,
+                    employee_name=options.get("employee"),
+                    type=options.get("type"),
+                    expiry_before=options.get("expiry-before"),
+                    expiry_after=options.get("expiry-after"),
+                ),
+            )
+        case "list-performance-reviews":
+            return list_result(
+                command=command,
+                options=options,
+                explicit_options=explicit_options,
+                records=repo.list_resource_records(
+                    "performance",
+                    company_name=options.get("company"),
+                    company_names=scoped,
+                    employee_name=options.get("employee"),
+                    month=options.get("month"),
+                    year=options.get("year"),
+                    threshold=options.get("threshold"),
+                ),
+            )
+        case "list-insurance-changes":
+            return list_result(
+                command=command,
+                options=options,
+                explicit_options=explicit_options,
+                records=repo.list_resource_records(
+                    "insurance",
+                    company_name=options.get("company"),
+                    company_names=scoped,
+                    employee_name=options.get("employee"),
+                    month=options.get("month"),
+                    status=options.get("status"),
+                ),
+            )
+        case "list-personnel-changes":
+            return list_result(
+                command=command,
+                options=options,
+                explicit_options=explicit_options,
+                records=repo.list_resource_records(
+                    "personnel-change",
+                    company_name=options.get("company"),
+                    company_names=scoped,
+                    employee_name=options.get("employee"),
+                    year=options.get("year"),
+                    reason=options.get("reason"),
+                ),
+            )
+        case "list-disciplinary-records":
+            return list_result(
+                command=command,
+                options=options,
+                explicit_options=explicit_options,
+                records=repo.list_resource_records(
+                    "disciplinary",
+                    company_name=options.get("company"),
+                    company_names=scoped,
+                    employee_name=options.get("employee"),
+                    penalty_type=options.get("penalty-type"),
+                    year=options.get("year"),
+                ),
+            )
+        case "list-seal-usage":
+            return list_result(
+                command=command,
+                options=options,
+                explicit_options=explicit_options,
+                records=repo.list_resource_records(
+                    "seal-usage",
+                    company_name=options.get("company"),
+                    company_names=scoped,
+                    applicant=options.get("applicant"),
+                    date_from=options.get("from"),
+                    date_to=options.get("to"),
+                ),
+            )
+        case "get-company" | "get-department" | "get-employee" | "get-contract" | "get-performance-review" | "get-insurance-change" | "get-personnel-change" | "get-disciplinary-record" | "get-seal-usage":
+            return repo.get_resource_by_id(get_command_resource(command), options.get("id"))
         case "employee-detail":
             return repo.employee_detail(**lookup)
         case "employee-timeline":
-            return repo.employee_timeline(**lookup)
+            return repo.employee_timeline(**lookup, limit=options.get("limit"))
         case "contracts-by-employee":
             return repo.contracts_by_employee(**lookup)
         case "performance-by-employee":
@@ -127,7 +273,7 @@ def dispatch(command: str, options: dict[str, Any], plan: Any, repo: HrRepositor
         case "personnel-changes-by-employee":
             return repo.personnel_changes_by_employee(**lookup)
         case "personnel-changes-list":
-            return repo.personnel_changes_list(year=options.get("year"), change_reason=options.get("reason"), company_name=options.get("company"), company_names=scoped)
+            return repo.personnel_changes_list(year=options.get("year"), change_reason=options.get("reason"), company_name=options.get("company"), company_names=scoped, limit=options.get("limit"))
         case "disciplinary-by-employee":
             return repo.disciplinary_records_by_employee(**lookup)
         case "seal-usage-list":
@@ -138,10 +284,20 @@ def dispatch(command: str, options: dict[str, Any], plan: Any, repo: HrRepositor
             return repo.pending_review_list()
         case "data-quality-check":
             return repo.data_quality_check()
+        case "analyze-roster":
+            return repo.analyze_roster(
+                company_name=options.get("company"),
+                company_names=scoped,
+                as_of=options.get("as-of"),
+            )
         case "analyze-headcount":
             return repo.analyze_headcount(company_name=options.get("company"), company_names=scoped)
         case "analyze-contract-coverage":
-            return repo.analyze_contract_coverage(company_name=options.get("company"), company_names=scoped)
+            return repo.analyze_contract_coverage(
+                company_name=options.get("company"),
+                company_names=scoped,
+                as_of=options.get("as-of"),
+            )
         case "analyze-contract-expiry":
             return repo.analyze_contract_expiry(days=options.get("days"), company_name=options.get("company"), company_names=scoped)
         case "analyze-performance-month":
@@ -150,10 +306,25 @@ def dispatch(command: str, options: dict[str, Any], plan: Any, repo: HrRepositor
             return repo.analyze_low_performance(month=options.get("month"), company_name=options.get("company"), company_names=scoped, threshold=options.get("threshold"))
         case "analyze-insurance-month":
             return repo.analyze_insurance_month(month=options.get("month"), company_name=options.get("company"), company_names=scoped)
+        case "analyze-personnel-change":
+            return repo.analyze_personnel_change(year=options.get("year"), company_name=options.get("company"), company_names=scoped)
         case "analyze-disciplinary":
             return repo.analyze_disciplinary(company_name=options.get("company"), company_names=scoped)
+        case "analyze-seal-usage":
+            return repo.analyze_seal_usage(
+                company_name=options.get("company"),
+                company_names=scoped,
+                date_from=options.get("from"),
+                date_to=options.get("to"),
+            )
+        case "analyze-employee-profile":
+            return repo.analyze_employee_profile(
+                company_name=options.get("company"),
+                company_names=scoped,
+                as_of=options.get("as-of"),
+            )
         case "analyze-hr-risk-dashboard":
-            return repo.analyze_hr_risk_dashboard()
+            return repo.analyze_hr_risk_dashboard(limit=options.get("limit"))
         case "employee-summary":
             return repo.employee_summary(company_name=options.get("company"), company_names=scoped)
         case "employees-without-contracts":
@@ -268,6 +439,74 @@ def dispatch(command: str, options: dict[str, Any], plan: Any, repo: HrRepositor
             raise RuntimeError(f"Unknown command: {command or '(empty)'}. Run \"help\" to list commands.")
 
 
+LIST_FILTER_SUGGESTIONS = {
+    "list-companies": ["--name"],
+    "list-departments": ["--company", "--name"],
+    "list-employees": ["--company", "--department", "--status", "--name", "--id-card", "--phone"],
+    "list-contracts": ["--company", "--employee", "--type", "--expiry-before", "--expiry-after"],
+    "list-performance-reviews": ["--company", "--employee", "--month", "--year", "--threshold"],
+    "list-insurance-changes": ["--company", "--employee", "--month", "--status"],
+    "list-personnel-changes": ["--company", "--employee", "--year", "--reason"],
+    "list-disciplinary-records": ["--company", "--employee", "--penalty-type", "--year"],
+    "list-seal-usage": ["--company", "--applicant", "--from", "--to"],
+}
+
+PAGING_OPTIONS = {"page", "page-size", "limit"}
+
+
+def list_result(
+    *,
+    command: str,
+    options: dict[str, Any],
+    explicit_options: set[str],
+    records: list[dict[str, Any]],
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    explicit_filters = {option for option in explicit_options if option not in PAGING_OPTIONS}
+    if explicit_filters and "limit" in explicit_options:
+        raise RuntimeError("带过滤的 list 返回完整匹配结果，不支持 --limit；请移除 --limit 或改用裸 list 配合 --page-size")
+    base = dict(extra or {})
+    if explicit_filters:
+        if len(records) > MAX_FILTERED_RESULT_ROWS:
+            filters = ", ".join(LIST_FILTER_SUGGESTIONS.get(command, []))
+            raise RuntimeError(
+                f"带过滤的 list 结果集超过 {MAX_FILTERED_RESULT_ROWS} 行，请增加过滤条件后重试"
+                f"；suggested_filters: {filters}"
+            )
+        return {**base, "records": records}
+
+    page = int(options.get("page") or 1)
+    page_size = int(options.get("page-size") or options.get("limit") or DEFAULT_PAGE_SIZE)
+    page_size = max(1, min(page_size, MAX_PAGE_SIZE))
+    start = (page - 1) * page_size
+    end = start + page_size
+    total = len(records)
+    return {
+        **base,
+        "records": records[start:end],
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "has_next": end < total,
+        },
+    }
+
+
+def get_command_resource(command: str) -> str:
+    return {
+        "get-company": "company",
+        "get-department": "department",
+        "get-employee": "employee",
+        "get-contract": "contract",
+        "get-performance-review": "performance",
+        "get-insurance-change": "insurance",
+        "get-personnel-change": "personnel-change",
+        "get-disciplinary-record": "disciplinary",
+        "get-seal-usage": "seal-usage",
+    }[command]
+
+
 def apply_scoped_company_default(command: str | None, options: dict[str, Any], policy: Any) -> None:
     if not command or options.get("company") or policy.unrestricted:
         return
@@ -325,6 +564,39 @@ def normalize_business_command(parsed: dict[str, Any]) -> tuple[str, dict[str, A
 def business_command_aliases(options: dict[str, Any] | None = None) -> dict[str, str]:
     options = options or {}
     return {
+        "list:company": "list-companies",
+        "list:companies": "list-companies",
+        "list:department": "list-departments",
+        "list:departments": "list-departments",
+        "list:employee": "list-employees",
+        "list:employees": "list-employees",
+        "list:contract": "list-contracts",
+        "list:contracts": "list-contracts",
+        "list:performance": "list-performance-reviews",
+        "list:performance-review": "list-performance-reviews",
+        "list:performance-reviews": "list-performance-reviews",
+        "list:insurance": "list-insurance-changes",
+        "list:insurance-change": "list-insurance-changes",
+        "list:insurance-changes": "list-insurance-changes",
+        "list:personnel-change": "list-personnel-changes",
+        "list:personnel-changes": "list-personnel-changes",
+        "list:disciplinary": "list-disciplinary-records",
+        "list:disciplinary-record": "list-disciplinary-records",
+        "list:disciplinary-records": "list-disciplinary-records",
+        "list:seal-usage": "list-seal-usage",
+        "list:deleted-records": "deleted-records",
+        "get:company": "get-company",
+        "get:department": "get-department" if options.get("id") else "find-department",
+        "get:employee": "get-employee" if options.get("id") else "employee-detail",
+        "get:contract": "get-contract",
+        "get:performance": "get-performance-review",
+        "get:performance-review": "get-performance-review",
+        "get:insurance": "get-insurance-change",
+        "get:insurance-change": "get-insurance-change",
+        "get:personnel-change": "get-personnel-change",
+        "get:disciplinary": "get-disciplinary-record",
+        "get:disciplinary-record": "get-disciplinary-record",
+        "get:seal-usage": "get-seal-usage",
         "query:company": "list-companies",
         "query:companies": "list-companies",
         "query:organization-tree": "organization-tree",
@@ -332,11 +604,9 @@ def business_command_aliases(options: dict[str, Any] | None = None) -> dict[str,
         "query:organizations": "organization-tree",
         "query:employee": "list-employees",
         "query:employees": "list-employees",
-        "get:employee": "employee-detail",
         "query:employee-contracts": "contracts-by-employee",
         "query:employee-timeline": "employee-timeline",
         "query:departments": "list-departments",
-        "get:department": "find-department",
         "query:performance": "performance-by-month",
         "query:performance-by-employee": "performance-by-employee",
         "query:insurance": "insurance-by-month",
@@ -348,14 +618,22 @@ def business_command_aliases(options: dict[str, Any] | None = None) -> dict[str,
         "query:seal-usage": "seal-usage-list",
         "query:deleted-records": "deleted-records",
         "capabilities:": "business-capabilities",
+        "analyze:roster": "analyze-roster",
         "analyze:headcount": "analyze-headcount",
         "analyze:employee-summary": "employee-summary",
         "analyze:contract-coverage": "analyze-contract-coverage",
         "analyze:contract-expiry": "analyze-contract-expiry",
+        "analyze:performance-month": "analyze-performance-month",
         "analyze:performance": "analyze-performance-month",
+        "analyze:insurance-month": "analyze-insurance-month",
         "analyze:low-performance": "analyze-low-performance",
         "analyze:insurance": "analyze-insurance-month",
+        "analyze:personnel-change": "analyze-personnel-change",
+        "analyze:personnel-changes": "analyze-personnel-change",
         "analyze:disciplinary": "analyze-disciplinary",
+        "analyze:seal-usage": "analyze-seal-usage",
+        "analyze:employee-profile": "analyze-employee-profile",
+        "analyze:employee": "analyze-employee-profile",
         "preview:employee": "preview-employees",
         "preview:employees": "preview-employees",
         "create:employee": "apply-employees",
@@ -466,10 +744,20 @@ def plan_field(name: str, description: str, *, required_for_create: bool = False
     }
 
 
+def match_id_plan_field(resource_label: str = "目标记录") -> dict[str, Any]:
+    return plan_field(
+        "match_id",
+        f"{resource_label}的 id；通过 business list/get 拿到。提供 match_id 时优先按 id 精确匹配，忽略其他业务匹配键。",
+        match_key=True,
+        writable=False,
+    )
+
+
 PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
     "organization": {
         "table": "companies/departments",
         "fields": [
+            match_id_plan_field("公司或部门记录"),
             plan_field("company", "公司全称；创建部门时用于定位所属公司。", required_for_create=True, match_key=True),
             plan_field("short_name", "公司简称。"),
             plan_field("department", "部门名称；创建或更新部门时使用。", match_key=True),
@@ -478,7 +766,7 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
         ],
         "aliases": {"company_name": "company", "department_name": "department", "new_name": "new_department"},
         "create_example": {"company": "武汉赢城集团有限公司", "department": "行政部"},
-        "update_example": {"company": "武汉赢城集团有限公司", "department": "行政部", "new_department": "人力行政部"},
+        "update_example": {"match_id": "abc-123-uuid", "new_department": "人力行政部"},
     },
     "department": {
         "alias_of": "organization",
@@ -486,6 +774,7 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
     "employee": {
         "table": "employees",
         "fields": [
+            match_id_plan_field("员工记录"),
             plan_field("company", "公司全称，用于权限、公司匹配和员工匹配。", required_for_create=True, match_key=True),
             plan_field("name", "员工姓名；必须按用户原文完整保留。", required_for_create=True, match_key=True),
             plan_field("department", "部门名称。", required_for_create=True),
@@ -500,11 +789,12 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
         ],
         "aliases": {"employee_name": "name", "employee": "name", "id_card": "id_card_number", "household_address": "hukou_address", "remark": "notes", "employment_status": "status"},
         "create_example": {"company": "武汉赢城集团有限公司", "name": "张三", "department": "行政部", "position": "人事专员", "phone": "13800000000", "hire_date": "2026-06-10", "status": "正式"},
-        "update_example": {"company": "武汉赢城集团有限公司", "name": "张三", "match_phone": "13800000000", "phone": "13900000000", "position": "高级人事专员"},
+        "update_example": {"match_id": "abc-123-uuid", "phone": "13900000000", "position": "高级人事专员"},
     },
     "contract": {
         "table": "contracts",
         "fields": [
+            match_id_plan_field("合同记录"),
             plan_field("company", "公司全称，用于权限和员工匹配。", required_for_create=True, match_key=True),
             plan_field("employee_name", "员工姓名，用于匹配员工主档。", required_for_create=True, match_key=True),
             plan_field("type", "合同类型。", required_for_create=True, match_key=True),
@@ -517,11 +807,12 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
         ],
         "aliases": {"name": "employee_name", "employee": "employee_name", "contract_type": "type", "contract_start": "start_date", "contract_end": "expiry_date", "end_date": "expiry_date", "remark": "notes"},
         "create_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "type": "固定期限劳动合同", "sequence": 1, "start_date": "2026-06-10", "expiry_date": "2029-06-09"},
-        "update_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "type": "固定期限劳动合同", "sequence": 1, "expiry_date": "2029-12-31"},
+        "update_example": {"match_id": "abc-123-uuid", "expiry_date": "2029-12-31"},
     },
     "performance": {
         "table": "performance_reviews",
         "fields": [
+            match_id_plan_field("绩效记录"),
             plan_field("company", "公司全称，用于权限和员工匹配。", required_for_create=True, match_key=True),
             plan_field("employee_name", "员工姓名，用于匹配员工主档。", required_for_create=True, match_key=True),
             plan_field("review_date", "考核日期，格式 YYYY-MM-DD；用户只说月份时可用 review_month。", required_for_create=True, match_key=True),
@@ -534,11 +825,12 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
         ],
         "aliases": {"name": "employee_name", "employee": "employee_name", "month": "review_date", "review_month": "review_date", "score": "final_score", "remark": "notes"},
         "create_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "review_month": "2026-06", "final_score": 96, "performance_salary": 1200},
-        "update_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "review_month": "2026-06", "final_score": 98, "performance_salary": 1500},
+        "update_example": {"match_id": "abc-123-uuid", "final_score": 98, "performance_salary": 1500},
     },
     "insurance": {
         "table": "insurance_changes",
         "fields": [
+            match_id_plan_field("社医保异动记录"),
             plan_field("company", "公司全称，用于权限和员工匹配。", required_for_create=True, match_key=True),
             plan_field("employee_name", "员工姓名，用于匹配员工主档。", required_for_create=True, match_key=True),
             plan_field("change_date", "社医保异动日期，格式 YYYY-MM-DD。", required_for_create=True, match_key=True),
@@ -549,11 +841,12 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
         ],
         "aliases": {"name": "employee_name", "employee": "employee_name", "remark": "notes"},
         "create_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "change_date": "2026-06-10", "status": "新增", "signed_upload": ["社保确认单.pdf"]},
-        "update_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "change_date": "2026-06-10", "status": "新增", "signed_upload": ["社保复核单.pdf"]},
+        "update_example": {"match_id": "abc-123-uuid", "signed_upload": ["社保复核单.pdf"]},
     },
     "personnel-change": {
         "table": "personnel_changes",
         "fields": [
+            match_id_plan_field("人事异动记录"),
             plan_field("company", "公司全称，用于权限和员工匹配。", required_for_create=True, match_key=True),
             plan_field("employee_name", "员工姓名，用于匹配员工主档。", required_for_create=True, match_key=True),
             plan_field("effective_date", "异动生效日期，格式 YYYY-MM-DD。", required_for_create=True, match_key=True),
@@ -568,11 +861,12 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
         ],
         "aliases": {"name": "employee_name", "employee": "employee_name", "change_date": "effective_date", "change_type": "match_change_reason", "old_reason": "match_change_reason", "current_reason": "match_change_reason", "remark": "notes"},
         "create_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "change_date": "2026-06-11", "current_position": "人事助理", "new_position": "人事专员", "change_reason": "转正"},
-        "update_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "change_date": "2026-06-11", "current_position": "人事助理", "change_type": "转正", "new_position": "高级人事专员", "change_reason": "转正后定岗"},
+        "update_example": {"match_id": "abc-123-uuid", "new_position": "高级人事专员", "change_reason": "转正后定岗"},
     },
     "disciplinary": {
         "table": "disciplinary_records",
         "fields": [
+            match_id_plan_field("奖惩记录"),
             plan_field("company", "公司全称，用于权限和员工匹配。", required_for_create=True, match_key=True),
             plan_field("employee_name", "员工姓名，用于匹配员工主档。", required_for_create=True, match_key=True),
             plan_field("incident_date", "奖惩发生日期，格式 YYYY-MM-DD；会写入数据库 incident_dates 数组。", required_for_create=True, match_key=True),
@@ -584,11 +878,12 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
         ],
         "aliases": {"name": "employee_name", "employee": "employee_name", "incident_dates": "incident_date"},
         "create_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "incident_date": "2026-06-10", "penalty_type": "警告", "penalty_reason": "迟到"},
-        "update_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "match_incident_date": "2026-06-10", "incident_date": "2026-06-11", "penalty_type": "通报", "penalty_reason": "实测更新"},
+        "update_example": {"match_id": "abc-123-uuid", "incident_date": "2026-06-11", "penalty_type": "通报", "penalty_reason": "实测更新"},
     },
     "seal-usage": {
         "table": "seal_usage",
         "fields": [
+            match_id_plan_field("用章记录"),
             plan_field("company", "公司全称，用于权限和用章记录匹配。", required_for_create=True, match_key=True),
             plan_field("usage_date", "用章日期，格式 YYYY-MM-DD。", required_for_create=True, match_key=True),
             plan_field("reason", "用章事由；create 时是新事由，update 时可作为旧事由匹配。", required_for_create=True, match_key=True),
@@ -604,7 +899,7 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
         ],
         "aliases": {"current_reason": "match_reason", "old_reason": "match_reason", "new_reason": "reason", "seal_applicant_name": "seal_applicant", "applicant_name": "applicant", "remark": "notes"},
         "create_example": {"company": "武汉赢城集团有限公司", "usage_date": "2026-06-13", "seal_applicant_name": "张三", "reason": "合同盖章", "attachments": ["用章申请.pdf"]},
-        "update_example": {"company": "武汉赢城集团有限公司", "usage_date": "2026-06-13", "current_reason": "普通账号流程验收", "new_reason": "普通账号更新流程验收", "attachments": ["验收复核申请.pdf"]},
+        "update_example": {"match_id": "abc-123-uuid", "new_reason": "普通账号更新流程验收", "attachments": ["验收复核申请.pdf"]},
     },
 }
 
@@ -680,31 +975,34 @@ def business_plan_schema(*, resource: str | None, workflow: Any = None) -> dict[
 
 def business_command_catalog() -> dict[str, list[str]]:
     return {
-        "query": [
-            "business query companies",
-            "business query organization-tree",
-            "business query employee [--company <company>] [--status <status>]",
-            "business get employee --name <name> [--company <company>]",
-            "business query employee-timeline --name <name> [--company <company>]",
-            "business query employee-contracts --name <name> [--company <company>]",
-            "business query performance-by-employee --name <name> [--company <company>]",
-            "business query performance --month YYYY-MM [--company <company>]",
-            "business query insurance-by-employee --name <name> [--company <company>]",
-            "business query insurance --month YYYY-MM [--company <company>]",
-            "business query personnel-change-by-employee --name <name> [--company <company>]",
-            "business query personnel-change [--company <company>] [--year YYYY]",
-            "business query disciplinary --name <name> [--company <company>]",
-            "business query seal-usage [--company <company>]",
-            "business query departments [--company <company>]",
-        ],
-        "analysis": [
-            "business analyze headcount",
-            "business analyze employee-summary",
-            "business analyze contract-coverage",
-            "business analyze contract-expiry [--days 180]",
-            "business analyze performance --month YYYY-MM [--company <company>]",
-            "business analyze insurance --month YYYY-MM [--company <company>]",
+        "read": [
+            "business list company [--page <n>] [--page-size <n>]",
+            "business get company --id <id>",
+            "business list department [--company <company>] [--name <name>]",
+            "business get department --id <id>",
+            "business list employee [--company <company>] [--department <department>] [--status <status>] [--name <name>] [--id-card <id-card>] [--phone <phone>]",
+            "business get employee --id <id>",
+            "business list contract [--company <company>] [--employee <name>] [--type <type>] [--expiry-before YYYY-MM-DD] [--expiry-after YYYY-MM-DD]",
+            "business get contract --id <id>",
+            "business list performance [--company <company>] [--employee <name>] [--month YYYY-MM] [--year YYYY]",
+            "business get performance-review --id <id>",
+            "business list insurance [--company <company>] [--employee <name>] [--month YYYY-MM] [--status <status>]",
+            "business get insurance-change --id <id>",
+            "business list personnel-change [--company <company>] [--employee <name>] [--year YYYY] [--reason <reason>]",
+            "business get personnel-change --id <id>",
+            "business list disciplinary [--company <company>] [--employee <name>] [--penalty-type <type>] [--year YYYY]",
+            "business get disciplinary-record --id <id>",
+            "business list seal-usage [--company <company>] [--applicant <name>] [--from YYYY-MM-DD] [--to YYYY-MM-DD]",
+            "business get seal-usage --id <id>",
+            "business analyze roster [--company <company>] [--as-of YYYY-MM-DD]",
+            "business analyze contract-coverage [--company <company>] [--as-of YYYY-MM-DD]",
+            "business analyze contract-expiry [--company <company>] [--days <n>]",
+            "business analyze performance-month --month YYYY-MM [--company <company>]",
+            "business analyze insurance-month --month YYYY-MM [--company <company>]",
+            "business analyze personnel-change [--company <company>] [--year YYYY]",
             "business analyze disciplinary [--company <company>]",
+            "business analyze seal-usage [--company <company>] [--from YYYY-MM-DD] [--to YYYY-MM-DD]",
+            "business analyze employee-profile [--company <company>] [--as-of YYYY-MM-DD]",
         ],
         "write": [
             "business preview employee --input <plan.json>",
@@ -750,7 +1048,7 @@ def business_command_catalog() -> dict[str, list[str]]:
             "business delete seal-usage --input <plan.json>",
         ],
         "audit": [
-            "business query deleted-records --resource <resource>",
+            "business list deleted-records --resource <resource>",
         ],
         "meta": [
             "business capabilities",
@@ -761,13 +1059,13 @@ def business_command_catalog() -> dict[str, list[str]]:
 
 def business_capabilities() -> dict[str, Any]:
     return {
-        "usage": "nanobot-webui-business hr business <query|get|analyze|preview|create|preview-update|update|delete|schema|capabilities> <resource|topic> [options]",
+        "usage": "nanobot-webui-business hr business <list|get|analyze|preview|create|preview-update|update|delete|schema|capabilities> <resource|topic> [options]",
         "commands": business_command_catalog(),
         "logical_delete": {
             "field": "is_deleted",
             "default_queries_exclude_deleted": True,
             "delete_sets_is_deleted": True,
-            "audit_query": "business query deleted-records --resource <resource>",
+            "audit_query": "business list deleted-records --resource <resource>",
         },
         "deleted_record_resources": [
             "employee",
@@ -778,26 +1076,87 @@ def business_capabilities() -> dict[str, Any]:
             "disciplinary",
             "seal-usage",
         ],
+        "option_contract": option_contract(),
+        "workflow_recipes": business_workflow_recipes(),
         "notes": [
-            "business query employee returns full employee roster fields to avoid one-by-one detail lookups.",
+            "All business list results include stable id fields for follow-up business get <resource> --id <id> reads.",
+            "Bare business list <resource> uses pagination; pass --page and --page-size to move through large lists.",
+            "Filtered business list <resource> returns the full matching result set up to the hard limit; do not combine filtered list with --limit.",
             "Before drafting normal create/update JSON plans, call business schema <resource> --workflow create|update for field definitions and examples.",
             "Create new HR records with preview -> create; do not use preview-update/update for records that do not already exist.",
             "Modify existing HR records with preview-update -> update; preview-update requires one existing match.",
+            "Use business analyze <topic> for stable hard numbers; explain these summaries instead of recounting list rows.",
             "Logical delete commands require resource delete permission and authorized company scope.",
+            "Unknown options are rejected before authorization; value options must include a value.",
         ],
     }
+
+
+def business_workflow_recipes() -> list[dict[str, Any]]:
+    return [
+        {
+            "intent": "入职",
+            "description": "新员工主档录入；如用户同时提供合同、社医保或用章信息，按对应子资源新增流程分别整理计划。",
+            "command_sequence": [
+                "business schema employee --workflow create",
+                "business preview employee --input <employee-plan.json>",
+                "business create employee --input <employee-plan.json>",
+            ],
+        },
+        {
+            "intent": "转正",
+            "description": "记录员工转正异动；如需要同步员工状态或岗位，先更新员工主档，再新增一条人事异动记录。",
+            "command_sequence": [
+                "business schema employee --workflow update",
+                "business preview-update employee --input <employee-update-plan.json>",
+                "business update employee --input <employee-update-plan.json>",
+                "business schema personnel-change --workflow create",
+                "business preview personnel-change --input <personnel-change-plan.json>",
+                "business create personnel-change --input <personnel-change-plan.json>",
+            ],
+        },
+        {
+            "intent": "续签",
+            "description": "新增一份续签合同记录；不要用 update 覆盖旧合同，除非用户明确要求修改既有合同。",
+            "command_sequence": [
+                "business schema contract --workflow create",
+                "business preview contract --input <contract-plan.json>",
+                "business create contract --input <contract-plan.json>",
+            ],
+        },
+        {
+            "intent": "内部调动",
+            "description": "同步员工部门/岗位变化，并新增一条人事异动记录保留过程证据。",
+            "command_sequence": [
+                "business schema employee --workflow update",
+                "business preview-update employee --input <employee-update-plan.json>",
+                "business update employee --input <employee-update-plan.json>",
+                "business schema personnel-change --workflow create",
+                "business preview personnel-change --input <personnel-change-plan.json>",
+                "business create personnel-change --input <personnel-change-plan.json>",
+            ],
+        },
+        {
+            "intent": "离职",
+            "description": "更新员工离职状态、离职日期和原因；如涉及社医保停缴，另新增一条社医保异动记录。",
+            "command_sequence": [
+                "business schema employee --workflow update",
+                "business preview-update employee --input <employee-update-plan.json>",
+                "business update employee --input <employee-update-plan.json>",
+                "business schema insurance --workflow create",
+                "business preview insurance --input <insurance-plan.json>",
+                "business create insurance --input <insurance-plan.json>",
+            ],
+        },
+    ]
 
 
 def business_help(positionals: list[str] | None = None) -> dict[str, Any]:
     catalog = business_command_catalog()
     groups = [
         {
-            "group": "Business query",
-            "commands": catalog["query"] + catalog["audit"] + catalog["meta"],
-        },
-        {
-            "group": "Business analysis",
-            "commands": catalog["analysis"],
+            "group": "Business read",
+            "commands": catalog["read"] + catalog["audit"] + catalog["meta"],
         },
         {
             "group": "Business writes with confirmation",
@@ -812,15 +1171,18 @@ def business_help(positionals: list[str] | None = None) -> dict[str, Any]:
         ]
         groups = [group for group in groups if group["commands"]]
     return {
-        "usage": "nanobot-webui-business hr business <query|get|analyze|preview|create|preview-update|update|delete|schema> <resource|topic> [options]",
+        "usage": "nanobot-webui-business hr business <list|get|preview|create|preview-update|update|delete|schema|capabilities> <resource|topic> [options]",
         "rules": [
             "This is the scoped business command surface for WebUI tenant sessions.",
             "Run from workspace root: cd <workspace> && nanobot-webui-business hr business ...",
             "Omit --company to use the current account's authorized company scope automatically.",
+            "All list results include id; use get <resource> --id <id> for exact follow-up reads.",
+            "Bare list is paginated; filtered list returns complete matches up to the hard limit.",
             "For new records, run preview <resource> first, then create <resource> after user confirmation.",
             "For existing records, run preview-update <resource> first, then update <resource> after user confirmation.",
             "Before writing a normal create/update plan, run schema <resource> --workflow create|update for the resource-specific plan contract.",
             "Create/update performs the write and returns internal verification.",
+            "Unknown options are rejected before authorization; options such as --input, --company, --days and --threshold must include valid values.",
         ],
         "groups": groups,
     }

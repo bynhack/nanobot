@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .policy import allowed_company_names, collect_scope_company_names, load_access_policy
+from .registry import DEFAULT_RESULT_LIMIT, MAX_RESULT_LIMIT
 from .supabase_client import SupabaseConnector, execute, execute_one
 
 BUSINESS_TABLES = [
@@ -48,6 +49,13 @@ LOGICALLY_DELETED_TABLES = {item["table"] for item in BUSINESS_TABLES}
 
 ZERO_UUID = "00000000-0000-0000-0000-000000000000"
 DISCIPLINARY_DATE_FIELD = "incident_dates"
+
+
+class PartialFailureError(RuntimeError):
+    def __init__(self, message: str, *, partial_results: list[dict[str, Any]], failed: dict[str, Any]) -> None:
+        super().__init__(message)
+        self.partial_results = partial_results
+        self.failed = failed
 
 EMPLOYEE_WRITABLE_FIELDS = [
     "name",
@@ -141,6 +149,20 @@ SEAL_USAGE_WRITABLE_FIELDS = [
     "notes",
 ]
 
+MATCH_ID_NOT_FOUND_ERROR = "指定 id 不存在、已删除或无权访问"
+HR_RESOURCE_TO_READ_RESOURCE = {
+    "hr.company": "company",
+    "hr.organization": "organization",
+    "hr.department": "department",
+    "hr.employee": "employee",
+    "hr.contract": "contract",
+    "hr.performance": "performance",
+    "hr.insurance": "insurance",
+    "hr.personnel_change": "personnel-change",
+    "hr.disciplinary": "disciplinary",
+    "hr.seal_usage": "seal-usage",
+}
+
 
 class ActiveRecordTable:
     def __init__(self, table: Any, *, filter_active: bool) -> None:
@@ -207,8 +229,23 @@ class HrRepository:
     def count_all_tables(self) -> list[dict[str, Any]]:
         return [{**item, "count": self.count_table(item["table"])} for item in BUSINESS_TABLES]
 
-    def list_companies(self) -> list[dict[str, Any]]:
-        data, _count = execute(self.table("companies").select("id,name,short_name").order("name"))
+    def list_companies(
+        self,
+        *,
+        name: str | None = None,
+        company_names: list[str] | None = None,
+        scoped: bool = False,
+    ) -> list[dict[str, Any]]:
+        query = self.table("companies").select("id,name,short_name").order("name")
+        normalized_name = clean_optional(name)
+        if normalized_name:
+            query = query.eq("name", normalized_name)
+        normalized_names = [item for item in map(clean_optional, company_names or []) if item]
+        if normalized_names:
+            query = query.in_("name", normalized_names)
+        data, _count = execute(query)
+        if scoped:
+            return [{**row, "scoped": True} for row in data]
         return data
 
     def find_company_by_name(self, name: str | None) -> list[dict[str, Any]]:
@@ -348,6 +385,10 @@ class HrRepository:
         company_name: str | None = None,
         company_names: list[str] | None = None,
         status: str | None = None,
+        department_name: str | None = None,
+        name: str | None = None,
+        id_card: str | None = None,
+        phone: str | None = None,
     ) -> dict[str, Any]:
         query = self.table("employees").select(employee_detail_select()).order("name")
         company_ids = self.scoped_company_ids(company_name=company_name, company_names=company_names)
@@ -362,6 +403,29 @@ class HrRepository:
         normalized_status = clean_optional(status)
         if normalized_status:
             query = query.eq("status", normalized_status)
+        normalized_name = clean_optional(name)
+        if normalized_name:
+            query = query.eq("name", normalized_name)
+        normalized_id_card = clean_optional(id_card)
+        if normalized_id_card:
+            query = query.eq("id_card_number", normalized_id_card)
+        normalized_phone = clean_optional(phone)
+        if normalized_phone:
+            query = query.eq("phone", normalized_phone)
+        normalized_department = clean_optional(department_name)
+        if normalized_department:
+            departments = self.list_departments(company_name=company_name, company_names=company_names)[
+                "departments"
+            ]
+            department_ids = [row["id"] for row in departments if row.get("name") == normalized_department]
+            if not department_ids:
+                return {
+                    "total": 0,
+                    "company": scope_label(company_name, company_names),
+                    "status": normalized_status,
+                    "records": [],
+                }
+            query = query.in_("department_id", department_ids)
         data, _count = execute(query)
         return {
             "total": len(data),
@@ -369,6 +433,142 @@ class HrRepository:
             "status": normalized_status,
             "records": [employee_detail_business_row(row) for row in data],
         }
+
+    def list_resource_records(
+        self,
+        resource: str,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+        **filters: Any,
+    ) -> list[dict[str, Any]]:
+        config = resource_read_config(resource)
+        query = self.table(config["table"]).select(config["select"]).order(config["order"])
+        query = self.apply_resource_company_scope(
+            query,
+            config=config,
+            company_name=company_name,
+            company_names=company_names,
+        )
+        for key, value in resource_filter_specs(resource, filters):
+            normalized = clean_optional(value)
+            if normalized:
+                query = query.eq(key, normalized)
+        data, _count = execute(query)
+        employee_name = clean_optional(filters.get("employee_name"))
+        applicant = clean_optional(filters.get("applicant"))
+        date_from = clean_optional(filters.get("date_from"))
+        date_to = clean_optional(filters.get("date_to"))
+        expiry_before = clean_optional(filters.get("expiry_before"))
+        expiry_after = clean_optional(filters.get("expiry_after"))
+        year = clean_optional(filters.get("year"))
+        month = clean_optional(filters.get("month"))
+        threshold = filters.get("threshold")
+        records = [config["mapper"](row) for row in data]
+        if employee_name:
+            records = [row for row in records if row.get("employee") == employee_name]
+        if applicant:
+            records = [
+                row
+                for row in records
+                if row.get("applicant") == applicant or row.get("seal_applicant") == applicant
+            ]
+        if date_from:
+            records = [row for row in records if str(row.get("usage_date") or "") >= date_from]
+        if date_to:
+            records = [row for row in records if str(row.get("usage_date") or "") <= date_to]
+        if expiry_before:
+            records = [row for row in records if str(row.get("expiry_date") or "") <= expiry_before]
+        if expiry_after:
+            records = [row for row in records if str(row.get("expiry_date") or "") >= expiry_after]
+        if year:
+            records = [
+                row for row in records if any(str(row.get(field) or "").startswith(year) for field in config["date_fields"])
+            ]
+        if month:
+            records = [
+                row for row in records if any(str(row.get(field) or "").startswith(month) for field in config["date_fields"])
+            ]
+        if threshold is not None:
+            records = [row for row in records if (clean_numeric(row.get("final_score")) or 0) <= float(threshold)]
+        return records
+
+    def get_resource_by_id(self, resource: str, record_id: str | None) -> dict[str, Any]:
+        value = normalize_required(record_id, "id")
+        config = resource_read_config(resource)
+        allowed = repository_allowed_company_names(config["resource"], "read")
+        if allowed and "*" not in allowed:
+            scope_row = execute_one(
+                self.table_including_deleted(config["table"])
+                .select(config["scope_select"])
+                .eq("id", value)
+                .single()
+            )
+            if not scope_row:
+                raise RuntimeError(f"{config['name']} record not found")
+            self.assert_row_scope(config=config, row=scope_row, action="read")
+        row = execute_one(
+            self.table_including_deleted(config["table"])
+            .select(audit_select(config["select"]))
+            .eq("id", value)
+            .single()
+        )
+        if not row:
+            raise RuntimeError(f"{config['name']} record not found")
+        self.assert_row_scope(config=config, row=row, action="read")
+        return audit_business_row(row, config["mapper"])
+
+    def assert_read_row_scope(self, *, config: dict[str, Any], row: dict[str, Any]) -> None:
+        self.assert_row_scope(config=config, row=row, action="read")
+
+    def assert_row_scope(self, *, config: dict[str, Any], row: dict[str, Any], action: str) -> None:
+        allowed = repository_allowed_company_names(config["resource"], action)
+        if not allowed or "*" in allowed:
+            return
+        company_name = read_row_company(row, config)
+        if company_name not in allowed:
+            raise RuntimeError("当前账号无权访问公司数据")
+
+    def find_active_by_match_id(self, resource: str, record: dict[str, Any], *, action: str) -> list[dict[str, Any]] | None:
+        match_id = clean_optional(record.get("_match_id"))
+        if not match_id:
+            return None
+        read_resource = HR_RESOURCE_TO_READ_RESOURCE.get(resource, resource)
+        config = resource_read_config(read_resource)
+        row = execute_one(
+            self.table(config["table"])
+            .select(config["select"])
+            .eq("id", match_id)
+            .single()
+        )
+        if not row:
+            raise RuntimeError(MATCH_ID_NOT_FOUND_ERROR)
+        try:
+            self.assert_row_scope(config=config, row=row, action=action)
+        except RuntimeError as exc:
+            if str(exc) == "当前账号无权访问公司数据":
+                raise RuntimeError(MATCH_ID_NOT_FOUND_ERROR) from exc
+            raise
+        return [row]
+
+    def apply_resource_company_scope(
+        self,
+        query: Any,
+        *,
+        config: dict[str, Any],
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> Any:
+        if config["scope"] == "company_id":
+            return self.apply_company_scope(query, company_name=company_name, company_names=company_names)
+        if config["scope"] == "employee_id":
+            employee_ids = self.scoped_employee_ids(company_name=company_name, company_names=company_names)
+            if employee_ids is None:
+                return query
+            if not employee_ids:
+                return query.in_("employee_id", ["__no_employee__"])
+            return query.in_("employee_id", employee_ids)
+        return query
 
     def find_employee_by_id_card(
         self,
@@ -487,13 +687,26 @@ class HrRepository:
     def employee_timeline(self, **options: Any) -> dict[str, Any]:
         employee = self.require_unique_employee(**options)
         employee_id = employee["id"]
+        limit = bounded_result_limit(options.get("limit"))
+        contracts, contracts_meta = self.contracts_by_employee_id_limited(employee_id, limit=limit)
+        performance, performance_meta = self.performance_by_employee_id_limited(employee_id, limit=limit)
+        insurance, insurance_meta = self.insurance_changes_by_employee_id_limited(employee_id, limit=limit)
+        personnel, personnel_meta = self.personnel_changes_by_employee_id_limited(employee_id, limit=limit)
+        disciplinary, disciplinary_meta = self.disciplinary_records_by_employee_id_limited(employee_id, limit=limit)
         return {
             "employee": employee_detail_business_row(employee),
-            "contracts": self.contracts_by_employee_id(employee_id),
-            "performance_reviews": self.performance_by_employee_id(employee_id),
-            "insurance_changes": self.insurance_changes_by_employee_id(employee_id),
-            "personnel_changes": self.personnel_changes_by_employee_id(employee_id),
-            "disciplinary_records": self.disciplinary_records_by_employee_id(employee_id),
+            "contracts": contracts,
+            "performance_reviews": performance,
+            "insurance_changes": insurance,
+            "personnel_changes": personnel,
+            "disciplinary_records": disciplinary,
+            "limits": {
+                "contracts": contracts_meta,
+                "performance_reviews": performance_meta,
+                "insurance_changes": insurance_meta,
+                "personnel_changes": personnel_meta,
+                "disciplinary_records": disciplinary_meta,
+            },
         }
 
     def contracts_by_employee(self, **options: Any) -> dict[str, Any]:
@@ -529,49 +742,98 @@ class HrRepository:
         }
 
     def contracts_by_employee_id(self, employee_id: str) -> list[dict[str, Any]]:
-        data, _count = execute(
-            self.table("contracts")
-            .select(contract_select())
-            .eq("employee_id", employee_id)
-            .order("start_date", desc=True)
+        records, _meta = self.contracts_by_employee_id_limited(employee_id, limit=None)
+        return records
+
+    def contracts_by_employee_id_limited(self, employee_id: str, *, limit: int | None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        return self.records_by_employee_id_limited(
+            table="contracts",
+            select=contract_select(),
+            employee_id=employee_id,
+            order_key="start_date",
+            mapper=contract_business_row,
+            limit=limit,
         )
-        return [contract_business_row(row) for row in data]
 
     def performance_by_employee_id(self, employee_id: str) -> list[dict[str, Any]]:
-        data, _count = execute(
-            self.table("performance_reviews")
-            .select(performance_review_select())
-            .eq("employee_id", employee_id)
-            .order("review_date", desc=True)
+        records, _meta = self.performance_by_employee_id_limited(employee_id, limit=None)
+        return records
+
+    def performance_by_employee_id_limited(self, employee_id: str, *, limit: int | None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        return self.records_by_employee_id_limited(
+            table="performance_reviews",
+            select=performance_review_select(),
+            employee_id=employee_id,
+            order_key="review_date",
+            mapper=performance_business_row,
+            limit=limit,
         )
-        return [performance_business_row(row) for row in data]
 
     def insurance_changes_by_employee_id(self, employee_id: str) -> list[dict[str, Any]]:
-        data, _count = execute(
-            self.table("insurance_changes")
-            .select(insurance_change_select())
-            .eq("employee_id", employee_id)
-            .order("change_date", desc=True)
+        records, _meta = self.insurance_changes_by_employee_id_limited(employee_id, limit=None)
+        return records
+
+    def insurance_changes_by_employee_id_limited(self, employee_id: str, *, limit: int | None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        return self.records_by_employee_id_limited(
+            table="insurance_changes",
+            select=insurance_change_select(),
+            employee_id=employee_id,
+            order_key="change_date",
+            mapper=insurance_change_business_row,
+            limit=limit,
         )
-        return [insurance_change_business_row(row) for row in data]
 
     def personnel_changes_by_employee_id(self, employee_id: str) -> list[dict[str, Any]]:
-        data, _count = execute(
-            self.table("personnel_changes")
-            .select(personnel_change_select())
-            .eq("employee_id", employee_id)
-            .order("effective_date", desc=True)
+        records, _meta = self.personnel_changes_by_employee_id_limited(employee_id, limit=None)
+        return records
+
+    def personnel_changes_by_employee_id_limited(self, employee_id: str, *, limit: int | None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        return self.records_by_employee_id_limited(
+            table="personnel_changes",
+            select=personnel_change_select(),
+            employee_id=employee_id,
+            order_key="effective_date",
+            mapper=personnel_change_business_row,
+            limit=limit,
         )
-        return [personnel_change_business_row(row) for row in data]
 
     def disciplinary_records_by_employee_id(self, employee_id: str) -> list[dict[str, Any]]:
-        data, _count = execute(
-            self.table("disciplinary_records")
-            .select(disciplinary_record_select())
-            .eq("employee_id", employee_id)
-            .order(DISCIPLINARY_DATE_FIELD, desc=True)
+        records, _meta = self.disciplinary_records_by_employee_id_limited(employee_id, limit=None)
+        return records
+
+    def disciplinary_records_by_employee_id_limited(self, employee_id: str, *, limit: int | None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        return self.records_by_employee_id_limited(
+            table="disciplinary_records",
+            select=disciplinary_record_select(),
+            employee_id=employee_id,
+            order_key=DISCIPLINARY_DATE_FIELD,
+            mapper=disciplinary_record_business_row,
+            limit=limit,
         )
-        return [disciplinary_record_business_row(row) for row in data]
+
+    def records_by_employee_id_limited(
+        self,
+        *,
+        table: str,
+        select: str,
+        employee_id: str,
+        order_key: str,
+        mapper: Callable[[dict[str, Any]], dict[str, Any]],
+        limit: int | None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        query = (
+            self.table(table)
+            .select(select, count="exact")
+            .eq("employee_id", employee_id)
+            .order(order_key, desc=True)
+        )
+        if limit is not None:
+            query = query.limit(limit)
+        data, _count = execute(
+            query
+        )
+        records = [mapper(row) for row in data]
+        return records, result_limit_meta(_count, len(records), limit)
 
     def performance_by_month(
         self,
@@ -634,11 +896,13 @@ class HrRepository:
         change_reason: str | None = None,
         company_name: str | None = None,
         company_names: list[str] | None = None,
+        limit: int | None = None,
     ) -> dict[str, Any]:
         range_ = year_range(year)
+        effective_limit = bounded_result_limit(limit)
         query = (
             self.table("personnel_changes")
-            .select(personnel_change_select())
+            .select(personnel_change_select(), count="exact")
             .gte("effective_date", range_["from"])
             .lte("effective_date", range_["to"])
             .order("effective_date", desc=True)
@@ -648,14 +912,16 @@ class HrRepository:
         employee_ids = self.scoped_employee_ids(company_name=company_name, company_names=company_names)
         if employee_ids is not None:
             if not employee_ids:
-                return {"year": range_["label"], "company": scope_label(company_name, company_names), "records": []}
+                return {"year": range_["label"], "company": scope_label(company_name, company_names), "records": [], **result_limit_meta(0, 0, effective_limit)}
             query = query.in_("employee_id", employee_ids)
-        data, _count = execute(query)
+        data, _count = execute(query.limit(effective_limit))
+        records = [personnel_change_business_row(row) for row in data]
         return {
             "year": range_["label"],
             "company": scope_label(company_name, company_names),
             "reason": clean_optional(change_reason),
-            "records": [personnel_change_business_row(row) for row in data],
+            "records": records,
+            **result_limit_meta(_count, len(records), effective_limit),
         }
 
     def seal_usage_list(
@@ -793,54 +1059,212 @@ class HrRepository:
             },
         }
 
+    def active_employee_rows(
+        self,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        query = self.table("employees").select(
+            "id,name,status,phone,id_card_number,position,hire_date,companies(name),departments(name)"
+        ).order("name")
+        company_ids = self.scoped_company_ids(company_name=company_name, company_names=company_names)
+        if company_ids is not None:
+            if not company_ids:
+                return []
+            query = query.in_("company_id", company_ids)
+        rows, _count = execute(query)
+        return [row for row in rows if employee_status_is_active(row.get("status"))]
+
+    def analyze_roster(
+        self,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+        as_of: str | None = None,
+    ) -> dict[str, Any]:
+        analysis_date = parse_analysis_date(as_of)
+        summary = self.employee_summary(company_name=company_name, company_names=company_names)
+        status_counts: dict[str, int] = defaultdict(int)
+        active_employees = 0
+        inactive_employees = 0
+        for company in summary["byCompany"]:
+            for status, count in company["statuses"].items():
+                status_counts[status] += count
+                if employee_status_is_active(status):
+                    active_employees += count
+                else:
+                    inactive_employees += count
+        result = {
+            "topic": "roster",
+            "as_of": analysis_date.isoformat(),
+            "scope": analysis_scope(company_name, company_names),
+            "summary": {
+                "total_employees": summary["total"],
+                "active_employees": active_employees,
+                "inactive_employees": inactive_employees,
+                "companies": len(summary["byCompany"]),
+                "departments": len(summary["byDepartment"]),
+            },
+            "groups": {
+                "by_status": [
+                    {"status": status, "employee_count": count}
+                    for status, count in sort_object(status_counts).items()
+                ],
+                "by_company": [
+                    employee_summary_analysis_group(item, ["company"]) for item in summary["byCompany"]
+                ],
+                "by_department": [
+                    employee_summary_analysis_group(item, ["company", "department"])
+                    for item in summary["byDepartment"]
+                ],
+            },
+            "findings": roster_quality_findings(summary),
+        }
+        return with_analytics_consistency(
+            result,
+            [
+                (
+                    "roster.total_equals_status_groups",
+                    summary["total"] == sum(item["employee_count"] for item in result["groups"]["by_status"]),
+                ),
+                (
+                    "roster.total_equals_company_groups",
+                    summary["total"] == sum(item["employee_count"] for item in result["groups"]["by_company"]),
+                ),
+                (
+                    "roster.active_plus_inactive_equals_total",
+                    active_employees + inactive_employees == summary["total"],
+                ),
+                (
+                    "roster.company_groups_active_inactive_partition",
+                    all(
+                        item["active_employees"] + item["inactive_employees"] == item["employee_count"]
+                        for item in result["groups"]["by_company"]
+                    ),
+                ),
+                (
+                    "roster.department_groups_active_inactive_partition",
+                    all(
+                        item["active_employees"] + item["inactive_employees"] == item["employee_count"]
+                        for item in result["groups"]["by_department"]
+                    ),
+                ),
+            ],
+        )
+
     def analyze_contract_coverage(
         self,
         *,
         company_name: str | None = None,
         company_names: list[str] | None = None,
+        as_of: str | None = None,
     ) -> dict[str, Any]:
+        analysis_date = parse_analysis_date(as_of)
         employee_ids = self.scoped_employee_ids(company_name=company_name, company_names=company_names)
         employee_query = self.table("employees").select(
             "id,name,status,phone,id_card_number,companies(name),departments(name)"
         ).order("name")
         if employee_ids is not None:
             if not employee_ids:
-                return {
-                    "employees_total": 0,
-                    "active_employees": 0,
-                    "contract_records": 0,
-                    "active_with_contracts": 0,
-                    "active_without_contracts": 0,
-                    "active_contract_coverage_rate": None,
-                    "contract_type_distribution": {},
-                    "active_without_contract_records": [],
-                }
+                return empty_contract_coverage_analysis(company_name, company_names, analysis_date)
             employee_query = employee_query.in_("id", employee_ids)
         employees, _count = execute(employee_query)
-        contract_query = self.table("contracts").select("employee_id,type,expiry_date,is_permanent")
+        contract_query = self.table("contracts").select(
+            "id,employee_id,type,start_date,expiry_date,is_permanent,"
+            "employees(id,name,phone,id_card_number,status,companies(name),departments(name))"
+        )
         if employee_ids is not None:
             contract_query = contract_query.in_("employee_id", employee_ids)
         contracts, _count = execute(contract_query)
-        employee_ids_with_contracts = {row.get("employee_id") for row in contracts}
-        active_employees = [row for row in employees if row.get("status") != "离职"]
-        active_without_contracts = [
+        active_employees = [row for row in employees if employee_status_is_active(row.get("status"))]
+        active_employee_ids = {row.get("id") for row in active_employees}
+        contract_employee_ids = {row.get("employee_id") for row in contracts}
+        active_contracts = [
+            row
+            for row in contracts
+            if row.get("employee_id") in active_employee_ids
+            and contract_is_active(row, as_of=analysis_date)
+        ]
+        active_contract_employee_ids = {row.get("employee_id") for row in active_contracts}
+        without_any_contract = [
             employee_business_row(row)
             for row in active_employees
-            if row.get("id") not in employee_ids_with_contracts
+            if row.get("id") not in contract_employee_ids
         ]
-        active_with_contracts = len(active_employees) - len(active_without_contracts)
-        return {
-            "employees_total": len(employees),
-            "active_employees": len(active_employees),
-            "contract_records": len(contracts),
-            "active_with_contracts": active_with_contracts,
-            "active_without_contracts": len(active_without_contracts),
-            "active_contract_coverage_rate": round(active_with_contracts / len(active_employees), 4)
-            if active_employees
-            else None,
-            "contract_type_distribution": count_by(contracts, "type"),
-            "active_without_contract_records": active_without_contracts,
+        without_active_contract = [
+            employee_business_row(row)
+            for row in active_employees
+            if row.get("id") in contract_employee_ids and row.get("id") not in active_contract_employee_ids
+        ]
+        denominator = len(active_employees)
+        with_any_contract = denominator - len(without_any_contract)
+        with_active_contract = denominator - len(without_any_contract) - len(without_active_contract)
+        expiring_contracts = [
+            contract_business_row_for_analysis(row)
+            for row in active_contracts
+            if contract_expires_within(row, as_of=analysis_date, days=30)
+        ]
+        overlap_employees = overlapping_contract_employee_rows(contracts, active_employee_ids)
+        result = {
+            "topic": "contract-coverage",
+            "as_of": analysis_date.isoformat(),
+            "scope": analysis_scope(company_name, company_names),
+            "summary": {
+                "total_employees": len(employees),
+                "coverage_denominator": denominator,
+                "active_employees": denominator,
+                "contract_records": len(contracts),
+                "active_contract_records": len(active_contracts),
+                "employees_with_any_contract": with_any_contract,
+                "employees_without_any_contract": len(without_any_contract),
+                "employees_with_active_contract": with_active_contract,
+                "employees_without_active_contract": len(without_any_contract) + len(without_active_contract),
+                "coverage_rate_any": round(with_any_contract / denominator, 4) if denominator else None,
+                "coverage_rate_active": round(with_active_contract / denominator, 4) if denominator else None,
+            },
+            "groups": {
+                "by_contract_type": [
+                    {"type": key, "contract_count": value}
+                    for key, value in count_by(contracts, "type").items()
+                ],
+            },
+            "findings": contract_coverage_findings(
+                without_any_contract=without_any_contract,
+                without_active_contract=without_active_contract,
+                expiring_contracts=expiring_contracts,
+                overlap_employees=overlap_employees,
+            ),
+            "legacy": {
+                "employees_total": len(employees),
+                "active_employees": denominator,
+                "contract_records": len(contracts),
+                "active_with_contracts": with_any_contract,
+                "active_without_contracts": len(without_any_contract),
+                "active_contract_coverage_rate": round(with_any_contract / denominator, 4) if denominator else None,
+                "contract_type_distribution": count_by(contracts, "type"),
+                "active_without_contract_records": without_any_contract,
+            },
         }
+        result.update(result["legacy"])
+        return with_analytics_consistency(
+            result,
+            [
+                (
+                    "contract_coverage.any_contract_partition",
+                    with_any_contract + len(without_any_contract) == denominator,
+                ),
+                (
+                    "contract_coverage.active_contract_partition",
+                    with_active_contract + len(without_any_contract) + len(without_active_contract)
+                    == denominator,
+                ),
+                (
+                    "contract_coverage.active_not_greater_than_any",
+                    with_active_contract <= with_any_contract,
+                ),
+            ],
+        )
 
     def analyze_contract_expiry(
         self,
@@ -877,26 +1301,129 @@ class HrRepository:
             and today <= expiry <= end
         ]
         records.sort(key=lambda row: str(row.get("expiry_date") or ""))
-        return {"days": range_days, "from": today.isoformat(), "to": end.isoformat(), "count": len(records), "records": records}
+        result = {
+            "topic": "contract-expiry",
+            "as_of": today.isoformat(),
+            "scope": analysis_scope(company_name, company_names),
+            "summary": {
+                "days": range_days,
+                "from": today.isoformat(),
+                "to": end.isoformat(),
+                "expiring_contracts": len(records),
+            },
+            "groups": {
+                "by_company": count_records_group(records, "company", "company"),
+                "by_contract_type": count_records_group(records, "type", "type"),
+            },
+            "findings": [
+                analytics_finding(
+                    kind="contract_expiring",
+                    severity="medium",
+                    basis=f"current contract expiry date between {today.isoformat()} and {end.isoformat()}",
+                    records=records,
+                )
+            ]
+            if records
+            else [],
+            "days": range_days,
+            "from": today.isoformat(),
+            "to": end.isoformat(),
+            "count": len(records),
+            "records": records,
+        }
+        return with_analytics_consistency(
+            result,
+            [
+                ("contract_expiry.count_matches_records", len(records) == result["summary"]["expiring_contracts"]),
+                *finding_consistency_checks(result["findings"]),
+            ],
+        )
 
     def analyze_performance_month(self, **options: Any) -> dict[str, Any]:
         result = self.performance_by_month(**options)
         records = result["records"]
         scores = [float(row["final_score"]) for row in records if is_number(row.get("final_score"))]
-        return {
+        active_employees = self.active_employee_rows(
+            company_name=options.get("company_name"),
+            company_names=options.get("company_names"),
+        )
+        reviewed_employee_ids = {row.get("employee_id") for row in records if row.get("employee_id")}
+        reviewed_employee_names = {row.get("employee") for row in records if row.get("employee")}
+        missing_reviews = [
+            employee_business_row(row)
+            for row in active_employees
+            if row.get("id") not in reviewed_employee_ids and row.get("name") not in reviewed_employee_names
+        ]
+        low_scores = sorted(
+            [row for row in records if to_float(row.get("final_score")) < 60],
+            key=lambda row: to_float(row.get("final_score")),
+        )
+        findings = []
+        if missing_reviews:
+            findings.append(
+                analytics_finding(
+                    kind="missing_performance_review",
+                    severity="medium",
+                    basis=f"active employee without performance review in {result['month']}",
+                    records=missing_reviews,
+                )
+            )
+        if low_scores:
+            findings.append(
+                analytics_finding(
+                    kind="low_performance_score",
+                    severity="medium",
+                    basis=f"final_score below 60 in {result['month']}",
+                    records=low_scores,
+                )
+            )
+        data = {
+            "topic": "performance-month",
+            "as_of": date.today().isoformat(),
             "month": result["month"],
+            "scope": analysis_scope(options.get("company_name"), options.get("company_names")),
+            "summary": {
+                "month": result["month"],
+                "coverage_denominator": len(active_employees),
+                "review_records": len(records),
+                "reviewed_employees": len(reviewed_employee_ids or reviewed_employee_names),
+                "missing_review_employees": len(missing_reviews),
+                "average_final_score": average(scores),
+                "min_final_score": min(scores) if scores else None,
+                "max_final_score": max(scores) if scores else None,
+                "low_score_count_below_60": len(low_scores),
+                "performance_salary_total": sum_numeric(records, "performance_salary"),
+                "actual_performance_salary_total": sum_numeric(records, "actual_performance_salary"),
+                "performance_adjustment_total": sum_numeric(records, "performance_adjustment"),
+            },
+            "groups": {
+                "by_company": performance_summary_groups(records),
+                "by_score_band": score_band_groups(records),
+            },
+            "findings": findings,
             "company": result["company"],
             "count": len(records),
             "average_final_score": average(scores),
             "min_final_score": min(scores) if scores else None,
             "max_final_score": max(scores) if scores else None,
-            "low_score_count_below_60": len([row for row in records if to_float(row.get("final_score")) < 60]),
+            "low_score_count_below_60": len(low_scores),
             "performance_salary_total": sum_numeric(records, "performance_salary"),
             "actual_performance_salary_total": sum_numeric(records, "actual_performance_salary"),
             "performance_adjustment_total": sum_numeric(records, "performance_adjustment"),
             "by_company": summarize_performance_by(records, "company"),
             "records": records,
         }
+        return with_analytics_consistency(
+            data,
+            [
+                (
+                    "performance_month.reviewed_plus_missing_matches_denominator",
+                    data["summary"]["reviewed_employees"] + data["summary"]["missing_review_employees"]
+                    == data["summary"]["coverage_denominator"],
+                ),
+                *finding_consistency_checks(findings),
+            ],
+        )
 
     def analyze_low_performance(self, *, threshold: str | int | None = None, **options: Any) -> dict[str, Any]:
         limit = float(clean_optional(threshold) or 60)
@@ -910,8 +1437,32 @@ class HrRepository:
     def analyze_insurance_month(self, **options: Any) -> dict[str, Any]:
         result = self.insurance_changes_by_month(**options)
         records = result["records"]
-        return {
+        missing_signed = [row for row in records if not clean_optional(row.get("signed_upload"))]
+        findings = [
+            analytics_finding(
+                kind="missing_signed_upload",
+                severity="medium",
+                basis=f"insurance change in {result['month']} without signed upload",
+                records=missing_signed,
+            )
+        ] if missing_signed else []
+        data = {
+            "topic": "insurance-month",
+            "as_of": date.today().isoformat(),
             "month": result["month"],
+            "scope": analysis_scope(options.get("company_name"), options.get("company_names")),
+            "summary": {
+                "month": result["month"],
+                "total_changes": len(records),
+                "add_count": len([row for row in records if clean_optional(row.get("insurance_add_date"))]),
+                "remove_count": len([row for row in records if clean_optional(row.get("insurance_remove_date"))]),
+                "missing_signed_upload_count": len(missing_signed),
+            },
+            "groups": {
+                "by_status": count_records_group(records, "status", "status"),
+                "by_company": count_records_group(records, "company", "company"),
+            },
+            "findings": findings,
             "company": result["company"],
             "count": len(records),
             "by_status": count_by(records, "status"),
@@ -920,6 +1471,98 @@ class HrRepository:
             "remove_count": len([row for row in records if clean_optional(row.get("insurance_remove_date"))]),
             "records": records,
         }
+        return with_analytics_consistency(
+            data,
+            [
+                (
+                    "insurance_month.total_matches_status_groups",
+                    len(records) == sum(item["record_count"] for item in data["groups"]["by_status"]),
+                ),
+                *finding_consistency_checks(findings),
+            ],
+        )
+
+    def analyze_personnel_change(
+        self,
+        *,
+        year: str | int | None = None,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+    ) -> dict[str, Any]:
+        range_ = year_range(str(year) if year is not None else None)
+        query = (
+            self.table("personnel_changes")
+            .select(personnel_change_select())
+            .gte("effective_date", range_["from"])
+            .lte("effective_date", range_["to"])
+            .order("effective_date", desc=True)
+        )
+        employee_ids = self.scoped_employee_ids(company_name=company_name, company_names=company_names)
+        if employee_ids is not None:
+            if not employee_ids:
+                records: list[dict[str, Any]] = []
+            else:
+                query = query.in_("employee_id", employee_ids)
+                data, _count = execute(query)
+                records = [personnel_change_business_row(row) for row in data]
+        else:
+            data, _count = execute(query)
+            records = [personnel_change_business_row(row) for row in data]
+        incomplete = [row for row in records if row.get("procedures_complete") is not True]
+        missing_signed = [row for row in records if not clean_optional(row.get("signed_upload"))]
+        findings = []
+        if incomplete:
+            findings.append(
+                analytics_finding(
+                    kind="incomplete_personnel_change_procedure",
+                    severity="medium",
+                    basis=f"personnel change in {range_['label']} with incomplete procedure",
+                    records=incomplete,
+                )
+            )
+        if missing_signed:
+            findings.append(
+                analytics_finding(
+                    kind="missing_signed_upload",
+                    severity="medium",
+                    basis=f"personnel change in {range_['label']} without signed upload",
+                    records=missing_signed,
+                )
+            )
+        result = {
+            "topic": "personnel-change",
+            "as_of": date.today().isoformat(),
+            "scope": analysis_scope(company_name, company_names),
+            "summary": {
+                "year": range_["label"],
+                "from": range_["from"],
+                "to": range_["to"],
+                "total_changes": len(records),
+                "incomplete_procedures_count": len(incomplete),
+                "missing_signed_upload_count": len(missing_signed),
+            },
+            "groups": {
+                "by_company": count_records_group(records, "company", "company"),
+                "by_change_reason": count_records_group(records, "change_reason", "change_reason"),
+            },
+            "findings": findings,
+            "year": range_["label"],
+            "company": scope_label(company_name, company_names),
+            "count": len(records),
+            "by_company": count_by(records, "company"),
+            "by_change_reason": count_by(records, "change_reason"),
+            "records": records,
+        }
+        return with_analytics_consistency(
+            result,
+            [
+                (
+                    "personnel_change.total_matches_reason_groups",
+                    len(records) == sum(item["record_count"] for item in result["groups"]["by_change_reason"]),
+                ),
+                *finding_consistency_checks(findings),
+            ],
+        )
 
     def analyze_disciplinary(
         self,
@@ -935,14 +1578,174 @@ class HrRepository:
             query = query.in_("employee_id", employee_ids)
         data, _count = execute(query)
         records = [disciplinary_record_business_row(row) for row in data]
-        return {
+        missing_signed = [row for row in records if not row.get("signed_upload")]
+        findings = [
+            analytics_finding(
+                kind="missing_signed_upload",
+                severity="medium",
+                basis="disciplinary record without signed upload",
+                records=missing_signed,
+            )
+        ] if missing_signed else []
+        result = {
+            "topic": "disciplinary",
+            "as_of": date.today().isoformat(),
+            "scope": analysis_scope(company_name, company_names),
+            "summary": {
+                "total_records": len(records),
+                "missing_signed_upload_count": len(missing_signed),
+            },
+            "groups": {
+                "by_company": count_records_group(records, "company", "company"),
+                "by_penalty_type": count_records_group(records, "penalty_type", "penalty_type"),
+            },
+            "findings": findings,
             "company": scope_label(company_name, company_names),
             "count": len(records),
             "by_company": count_by(records, "company"),
             "by_penalty_type": count_by(records, "penalty_type"),
-            "missing_signed_upload_count": len([row for row in records if not row.get("signed_upload")]),
+            "missing_signed_upload_count": len(missing_signed),
             "records": records,
         }
+        return with_analytics_consistency(
+            result,
+            [
+                (
+                    "disciplinary.total_matches_penalty_groups",
+                    len(records) == sum(item["record_count"] for item in result["groups"]["by_penalty_type"]),
+                ),
+                *finding_consistency_checks(findings),
+            ],
+        )
+
+    def analyze_seal_usage(
+        self,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+    ) -> dict[str, Any]:
+        result = self.seal_usage_list(
+            company_name=company_name,
+            company_names=company_names,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        records = result["records"]
+        missing_attachments = [
+            row for row in records if not row.get("attachments")
+        ]
+        missing_seal_applicant = [
+            row for row in records if not clean_optional(row.get("seal_applicant"))
+        ]
+        findings = []
+        if missing_attachments:
+            findings.append(
+                analytics_finding(
+                    kind="missing_seal_usage_attachment",
+                    severity="medium",
+                    basis="seal usage without attachment",
+                    records=missing_attachments,
+                )
+            )
+        if missing_seal_applicant:
+            findings.append(
+                analytics_finding(
+                    kind="missing_seal_applicant",
+                    severity="medium",
+                    basis="seal usage without seal applicant",
+                    records=missing_seal_applicant,
+                )
+            )
+        data = {
+            "topic": "seal-usage",
+            "as_of": date.today().isoformat(),
+            "scope": analysis_scope(company_name, company_names),
+            "summary": {
+                "from": clean_optional(date_from),
+                "to": clean_optional(date_to),
+                "total_usages": len(records),
+                "missing_attachments_count": len(missing_attachments),
+                "missing_seal_applicant_count": len(missing_seal_applicant),
+            },
+            "groups": {
+                "by_company": count_records_group(records, "company", "company"),
+                "by_applicant": count_records_group(records, "applicant", "applicant"),
+            },
+            "findings": findings,
+            "company": result["company"],
+            "count": len(records),
+            "by_company": count_by(records, "company"),
+            "records": records,
+        }
+        return with_analytics_consistency(
+            data,
+            [
+                (
+                    "seal_usage.total_matches_company_groups",
+                    len(records) == sum(item["record_count"] for item in data["groups"]["by_company"]),
+                ),
+                *finding_consistency_checks(findings),
+            ],
+        )
+
+    def analyze_employee_profile(
+        self,
+        *,
+        company_name: str | None = None,
+        company_names: list[str] | None = None,
+        as_of: str | None = None,
+    ) -> dict[str, Any]:
+        analysis_date = parse_analysis_date(as_of)
+        summary = self.employee_summary(company_name=company_name, company_names=company_names)
+        status_counts: dict[str, int] = defaultdict(int)
+        for company in summary["byCompany"]:
+            for status, count in company["statuses"].items():
+                status_counts[status] += count
+        checks = summary["checks"]
+        result = {
+            "topic": "employee-profile",
+            "as_of": analysis_date.isoformat(),
+            "scope": analysis_scope(company_name, company_names),
+            "summary": {
+                "total_employees": summary["total"],
+                "missing_department_count": len(checks["emptyDepartment"]),
+                "missing_id_card_count": len(checks["emptyIdCard"]),
+                "duplicate_id_card_groups": len(checks["duplicateIdCards"]),
+                "duplicate_phone_groups": len(checks["duplicatePhones"]),
+            },
+            "groups": {
+                "by_status": [
+                    {"status": status, "employee_count": count}
+                    for status, count in sort_object(status_counts).items()
+                ],
+                "by_company": [
+                    employee_summary_analysis_group(item, ["company"]) for item in summary["byCompany"]
+                ],
+            },
+            "findings": roster_quality_findings(summary),
+        }
+        return with_analytics_consistency(
+            result,
+            [
+                (
+                    "employee_profile.total_matches_status_groups",
+                    summary["total"] == sum(item["employee_count"] for item in result["groups"]["by_status"]),
+                ),
+                (
+                    "employee_profile.total_matches_company_groups",
+                    summary["total"] == sum(item["employee_count"] for item in result["groups"]["by_company"]),
+                ),
+                (
+                    "employee_profile.company_groups_active_inactive_partition",
+                    all(
+                        item["active_employees"] + item["inactive_employees"] == item["employee_count"]
+                        for item in result["groups"]["by_company"]
+                    ),
+                ),
+            ],
+        )
 
     def pending_review_list(self) -> list[dict[str, Any]]:
         modules = [
@@ -973,7 +1776,8 @@ class HrRepository:
             ],
         }
 
-    def analyze_hr_risk_dashboard(self) -> dict[str, Any]:
+    def analyze_hr_risk_dashboard(self, *, limit: int | None = None) -> dict[str, Any]:
+        effective_limit = bounded_result_limit(limit)
         headcount = self.analyze_headcount()
         coverage = self.analyze_contract_coverage()
         expiry = self.analyze_contract_expiry(days=90)
@@ -1001,7 +1805,7 @@ class HrRepository:
                 {"module": item["module"], "count": item["count"], "source": item["source"]}
                 for item in pending
             ],
-            "recommended_actions": hr_risk_recommended_actions(headcount, coverage, expiry, disciplinary, pending),
+            "recommended_actions": hr_risk_recommended_actions(headcount, coverage, expiry, disciplinary, pending, limit=effective_limit),
         }
 
     def employees_without_contracts(self) -> dict[str, Any]:
@@ -1118,8 +1922,8 @@ class HrRepository:
         companies = []
         departments = []
         for company in plan.get("companies", []):
-            match_name = organization_match_name(company)
-            matches = self.find_company_by_name(match_name)
+            match_name = organization_match_name(company) if not company.get("_match_id") else company.get("_match_id")
+            matches = self.find_organization_company_matches(company, action="write")
             payload = organization_company_update_payload(company)
             companies.append(update_preview_item(name=match_name, matches=matches, payload=payload))
             for department in company.get("departments", []):
@@ -1129,11 +1933,11 @@ class HrRepository:
                         continue
                     department = {"name": department_name}
                 department_name = organization_department_match_name(department)
-                if not clean_optional(department_name):
+                if not clean_optional(department_name) and not clean_optional(department.get("_match_id")):
                     continue
-                lookup = self.find_department(company_name=organization_department_match_company(company, department), department_name=department_name)
+                matches = self.find_organization_department_matches(company, department, action="write")
                 payload = self.organization_department_update_payload(department)
-                departments.append(update_preview_item(name=department_name, matches=lookup["departmentMatches"], payload=payload, extra={"company": organization_department_match_company(company, department)}))
+                departments.append(update_preview_item(name=department_name or department.get("_match_id"), matches=matches, payload=payload, extra={"company": clean_optional(department.get("match_company") or company.get("name"))}))
         return {"companies": companies, "departments": departments}
 
     def apply_org_updates(self, *, plan: Any, confirm: str | None, company_name: str | None = None) -> dict[str, Any]:
@@ -1143,8 +1947,8 @@ class HrRepository:
         self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.organization", action="write")
         results = {"companies": [], "departments": []}
         for company in plan.get("companies", []):
-            match_name = organization_match_name(company)
-            company_matches = self.find_company_by_name(match_name)
+            match_name = organization_match_name(company) if not company.get("_match_id") else company.get("_match_id")
+            company_matches = self.find_organization_company_matches(company, action="write")
             department_updates = []
             for department in company.get("departments", []):
                 if not isinstance(department, dict):
@@ -1153,15 +1957,14 @@ class HrRepository:
                         continue
                     department = {"name": department_name}
                 department_name = organization_department_match_name(department)
-                if not clean_optional(department_name):
+                if not clean_optional(department_name) and not clean_optional(department.get("_match_id")):
                     continue
-                match_company = organization_department_match_company(company, department)
-                lookup = self.find_department(company_name=match_company, department_name=department_name)
+                match_company = clean_optional(department.get("match_company") or company.get("name")) or ""
                 department_updates.append(
                     {
                         "match_company": match_company,
-                        "department_name": department_name,
-                        "matches": lookup["departmentMatches"],
+                        "department_name": department_name or department.get("_match_id"),
+                        "matches": self.find_organization_department_matches(company, department, action="write"),
                         "payload": self.organization_department_update_payload(department),
                     }
                 )
@@ -1177,8 +1980,8 @@ class HrRepository:
         companies = []
         departments = []
         for company in plan.get("companies", []):
-            expected_name = clean_optional(company.get("name")) or organization_match_name(company)
-            company_matches = self.find_company_by_name(expected_name)
+            expected_name = clean_optional(company.get("name")) or clean_optional(company.get("_match_id")) or organization_match_name(company)
+            company_matches = self.find_organization_company_matches(company, action="read") if company.get("_match_id") else self.find_company_by_name(expected_name)
             companies.append(verify_update_matches(name=expected_name, matches=company_matches, payload=organization_company_update_payload(company), label="company"))
             for department in company.get("departments", []):
                 if not isinstance(department, dict):
@@ -1186,10 +1989,10 @@ class HrRepository:
                     if not department_name:
                         continue
                     department = {"name": department_name}
-                expected_company = clean_optional(department.get("target_company") or department.get("new_company")) or organization_department_match_company(company, department)
-                expected_name = clean_optional(department.get("new_name") or department.get("name")) or organization_department_match_name(department)
-                lookup = self.find_department(company_name=expected_company, department_name=expected_name)
-                departments.append(verify_update_matches(name=expected_name, matches=lookup["departmentMatches"], payload=self.organization_department_update_payload(department), label="department") | {"company": expected_company})
+                expected_company = clean_optional(department.get("target_company") or department.get("new_company") or company.get("name")) or ""
+                expected_name = clean_optional(department.get("new_name") or department.get("name")) or organization_department_match_name(department) or department.get("_match_id")
+                matches = self.find_organization_department_matches(company, department, action="read") if department.get("_match_id") else self.find_department(company_name=expected_company, department_name=expected_name)["departmentMatches"]
+                departments.append(verify_update_matches(name=expected_name, matches=matches, payload=self.organization_department_update_payload(department), label="department") | {"company": expected_company})
         items = companies + departments
         return {"ok": all(item["ok"] for item in items), "results": items}
 
@@ -1210,6 +2013,21 @@ class HrRepository:
             if len(company_matches) == 1:
                 payload["company_id"] = company_matches[0]["id"]
         return {key: value for key, value in payload.items() if key in DEPARTMENT_WRITABLE_FIELDS}
+
+    def find_organization_company_matches(self, company: dict[str, Any], *, action: str) -> list[dict[str, Any]]:
+        match = self.find_active_by_match_id("company", company, action=action)
+        if match is not None:
+            return match
+        return self.find_company_by_name(organization_match_name(company))
+
+    def find_organization_department_matches(self, company: dict[str, Any], department: dict[str, Any], *, action: str) -> list[dict[str, Any]]:
+        match = self.find_active_by_match_id("department", department, action=action)
+        if match is not None:
+            return match
+        return self.find_department(
+            company_name=organization_department_match_company(company, department),
+            department_name=organization_department_match_name(department),
+        )["departmentMatches"]
 
     def delete_empty_departments(self, *, plan: Any, confirm: str | None) -> list[dict[str, Any]]:
         self.assert_plan_company_scope(plan=plan, resource="hr.department", action="write")
@@ -1360,11 +2178,9 @@ class HrRepository:
         return [data or matches[0]]
 
     def find_update_employee(self, record: dict[str, Any]) -> list[dict[str, Any]]:
-        if clean_optional(record.get("id")):
-            data, _count = execute(
-                self.table("employees").select(employee_select()).eq("id", record.get("id")).limit(5)
-            )
-            return data
+        match = self.find_active_by_match_id("employee", record, action="write")
+        if match is not None:
+            return match
         match_id_card = clean_optional(match_field_value(record, "id_card_number"))
         if match_id_card and "match_id_card_number" in record:
             return self.find_employee_by_id_card(match_id_card)
@@ -1391,8 +2207,10 @@ class HrRepository:
         if confirm != "删除员工记录":
             raise RuntimeError("deleteEmployeeRecords requires confirm: 删除员工记录")
         results = []
-        for record in normalize_records_plan(plan).get("records", []):
-            matches = [row for row in self.find_existing_employee(record) if employee_matches_expected(row, record)]
+        for record in normalize_records_plan(plan, normalize_employee_seed_record).get("records", []):
+            matches = self.find_active_by_match_id("employee", record, action="delete")
+            if matches is None:
+                matches = [row for row in self.find_existing_employee(record) if employee_matches_expected(row, record)]
             if len(matches) != 1:
                 results.append({"name": record.get("name"), "action": "skipped", "reason": f"expected one exact employee match, found {len(matches)}"})
                 continue
@@ -1542,22 +2360,40 @@ class HrRepository:
             raise RuntimeError(f"{label} requires confirm: {expected_confirm}")
         plan = self.prepare_generic_employee_plan(plan, normalizer)
         results = []
-        for record in plan["records"]:
-            employee = deep_get(record, "match.employee")
-            if not employee:
-                results.append({"name": record.get(name_field), "action": "skipped", "reason": "employee not matched"})
-                continue
-            existing = existing_finder(record)
-            if existing:
-                results.append({"name": record.get(name_field), "action": "existing", "reason": f"{table} already exists"})
-                continue
-            data = execute_one(
-                self.table(table)
-                .insert(self.audit_insert(payload_builder(record, employee["id"])))
-                .select(select)
-                .single()
-            )
-            results.append({"name": deep_get(data, "employees.name") or record.get(name_field), "action": "created"})
+        for index, record in enumerate(plan["records"]):
+            try:
+                employee = deep_get(record, "match.employee")
+                if not employee:
+                    results.append({"name": record.get(name_field), "action": "skipped", "reason": "employee not matched"})
+                    continue
+                existing = existing_finder(record)
+                if existing:
+                    results.append(
+                        {
+                            "name": record.get(name_field),
+                            "action": "existing",
+                            "reason": f"{table} already exists",
+                            **matched_records_summary(existing),
+                        }
+                    )
+                    continue
+                data = execute_one(
+                    self.table(table)
+                    .insert(self.audit_insert(payload_builder(record, employee["id"])))
+                    .select(select)
+                    .single()
+                )
+                results.append({"name": deep_get(data, "employees.name") or record.get(name_field), "action": "created"})
+            except Exception as exc:  # noqa: BLE001
+                raise PartialFailureError(
+                    f"{label} failed at record {index + 1}: {exc}",
+                    partial_results=results,
+                    failed={
+                        "index": index,
+                        "name": record.get(name_field),
+                        "error": str(exc),
+                    },
+                ) from exc
         return {"write": results, "verification": self.verify_generic_seeds(plan=plan, resource=resource, normalizer=normalizer, fields=[], existing_finder=existing_finder, label=label)}
 
     def verify_generic_seeds(self, *, plan: Any, resource: str, normalizer: Callable[[dict[str, Any]], dict[str, Any]], fields: list[str], existing_finder: Callable[[dict[str, Any]], list[dict[str, Any]]], label: str) -> dict[str, Any]:
@@ -1651,10 +2487,13 @@ class HrRepository:
         plan = self.prepare_generic_employee_plan(plan, normalizer)
         results = []
         for record in plan["records"]:
+            matches = self.find_active_by_match_id(resource, record, action="delete")
+            if matches is None:
+                matches = record_finder(record)
             results.append(
                 self.soft_delete_single_match(
                     table=table,
-                    matches=record_finder(record),
+                    matches=matches,
                     label=label,
                     name=record.get("employee_name"),
                 )
@@ -1711,12 +2550,12 @@ class HrRepository:
         return data
 
     def find_update_contract(self, record: dict[str, Any]) -> list[dict[str, Any]]:
+        match = self.find_active_by_match_id("contract", record, action="write")
+        if match is not None:
+            return match
         employee = deep_get(record, "match.employee")
         if not employee:
             return []
-        if clean_optional(record.get("id")):
-            data, _count = execute(self.table("contracts").select(contract_select()).eq("id", record.get("id")).limit(5))
-            return data
         query = self.table("contracts").select(contract_select()).eq("employee_id", employee["id"]).eq("type", normalize_required(match_field_value(record, "type"), "contract type"))
         sequence = clean_optional(match_field_value(record, "sequence"))
         start_date = clean_optional(match_field_value(record, "start_date"))
@@ -1728,12 +2567,17 @@ class HrRepository:
         return data
 
     def find_update_by_employee_fields(self, table: str, select: str, record: dict[str, Any], key_fields: list[str]) -> list[dict[str, Any]]:
+        resource_by_table = {
+            "performance_reviews": "performance",
+            "insurance_changes": "insurance",
+            "disciplinary_records": "disciplinary",
+        }
+        match = self.find_active_by_match_id(resource_by_table.get(table, table), record, action="write")
+        if match is not None:
+            return match
         employee = deep_get(record, "match.employee")
         if not employee:
             return []
-        if clean_optional(record.get("id")):
-            data, _count = execute(self.table(table).select(select).eq("id", record.get("id")).limit(5))
-            return data
         query = self.table(table).select(select).eq("employee_id", employee["id"])
         for field in key_fields:
             value = query_field_value(record, field, use_match=True)
@@ -1742,18 +2586,12 @@ class HrRepository:
         return data
 
     def find_update_personnel_change(self, record: dict[str, Any]) -> list[dict[str, Any]]:
+        match = self.find_active_by_match_id("personnel-change", record, action="write")
+        if match is not None:
+            return match
         employee = deep_get(record, "match.employee")
         if not employee:
             return []
-        if clean_optional(record.get("id")):
-            data, _count = execute(
-                self.table("personnel_changes")
-                .select(personnel_change_select())
-                .eq("id", record.get("id"))
-                .limit(5)
-            )
-            return data
-
         def query_with(fields: list[str]) -> list[dict[str, Any]]:
             query = (
                 self.table("personnel_changes")
@@ -1940,7 +2778,7 @@ class HrRepository:
         records = []
         for record in plan["records"]:
             payload = seal_usage_update_payload(record)
-            records.append(update_preview_item(name=record.get("reason"), matches=self.find_existing_seal_usage(record, strict_people=False), payload=payload))
+            records.append(update_preview_item(name=record.get("reason"), matches=self.find_update_seal_usage(record, action="write"), payload=payload))
         return {"summary": update_summary(records), "records": records}
 
     def apply_seal_usage_updates(self, *, plan: Any, confirm: str | None) -> dict[str, Any]:
@@ -1951,7 +2789,7 @@ class HrRepository:
         results = []
         for record in plan["records"]:
             payload = seal_usage_update_payload(record)
-            results.append(apply_update_to_matches(repo=self, table="seal_usage", matches=self.find_existing_seal_usage(record, strict_people=False), payload=payload, label=record.get("reason")))
+            results.append(apply_update_to_matches(repo=self, table="seal_usage", matches=self.find_update_seal_usage(record, action="write"), payload=payload, label=record.get("reason")))
         return {"write": results, "verification": self.verify_seal_usage_updates(plan=plan)}
 
     def delete_seal_usage_records(self, *, plan: Any, confirm: str | None) -> dict[str, Any]:
@@ -1961,10 +2799,11 @@ class HrRepository:
         plan = self.prepare_seal_usage_plan(plan)
         results = []
         for record in plan["records"]:
+            matches = self.find_update_seal_usage(record, action="delete")
             results.append(
                 self.soft_delete_single_match(
                     table="seal_usage",
-                    matches=self.find_existing_seal_usage(record, strict_people=False),
+                    matches=matches,
                     label="seal_usage",
                     name=record.get("reason"),
                 )
@@ -1977,7 +2816,7 @@ class HrRepository:
         results = []
         for record in plan["records"]:
             payload = seal_usage_update_payload(record)
-            results.append(verify_update_matches(name=record.get("reason"), matches=self.find_existing_seal_usage(seal_usage_target_match_record(record), strict_people=False), payload=payload, label="seal_usage"))
+            results.append(verify_update_matches(name=record.get("reason"), matches=self.find_update_seal_usage(seal_usage_target_match_record(record), action="read"), payload=payload, label="seal_usage"))
         return {"ok": all(item["ok"] for item in results), "results": results}
 
     def prepare_seal_usage_plan(self, plan: Any) -> dict[str, Any]:
@@ -2055,6 +2894,12 @@ class HrRepository:
         data, _count = execute(query.limit(5))
         return data
 
+    def find_update_seal_usage(self, record: dict[str, Any], *, action: str) -> list[dict[str, Any]]:
+        match = self.find_active_by_match_id("seal-usage", record, action=action)
+        if match is not None:
+            return match
+        return self.find_existing_seal_usage(record, strict_people=False)
+
     def soft_delete_single_match(
         self,
         *,
@@ -2064,13 +2909,23 @@ class HrRepository:
         name: Any,
     ) -> dict[str, Any]:
         if len(matches) != 1:
-            return {"name": name, "action": "skipped", "reason": f"expected one exact {label} match, found {len(matches)}"}
+            return {
+                "name": name,
+                "action": "skipped",
+                "reason": f"expected one exact {label} match, found {len(matches)}",
+                **matched_records_summary(matches),
+            }
         execute(
             self.table_including_deleted(table)
             .update(self.audit_update({"is_deleted": True}))
             .eq("id", matches[0]["id"])
         )
-        return {"name": name, "action": "deleted", "fields": ["is_deleted"]}
+        return {
+            "name": name,
+            "action": "deleted",
+            "fields": ["is_deleted"],
+            **matched_records_summary(matches),
+        }
 
 
 def employee_select() -> str:
@@ -2153,6 +3008,7 @@ def scope_label(company_name: str | None, company_names: list[str] | None) -> st
 
 def employee_business_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
+        "id": row.get("id"),
         "name": row.get("name"),
         "company": deep_get(row, "companies.name"),
         "department": deep_get(row, "departments.name"),
@@ -2188,23 +3044,24 @@ def employee_detail_business_row(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def contract_business_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {field: row.get(field) for field in ["type", "sequence", "sign_date", "duration_years", "start_date", "expiry_date", "is_permanent", "scan_file_url", "notes"]} | {"employee": deep_get(row, "employees.name")}
+    return {field: row.get(field) for field in ["id", "type", "sequence", "sign_date", "duration_years", "start_date", "expiry_date", "is_permanent", "scan_file_url", "notes"]} | {"employee": deep_get(row, "employees.name"), "company": deep_get(row, "employees.companies.name")}
 
 
 def performance_business_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {field: row.get(field) for field in ["review_date", "self_score", "supervisor_score", "final_score", "performance_ratio", "performance_salary", "actual_performance_salary", "performance_adjustment", "notes"]} | {"employee": deep_get(row, "employees.name"), "company": deep_get(row, "employees.companies.name")}
+    return {field: row.get(field) for field in ["id", "review_date", "self_score", "supervisor_score", "final_score", "performance_ratio", "performance_salary", "actual_performance_salary", "performance_adjustment", "notes"]} | {"employee_id": row.get("employee_id") or deep_get(row, "employees.id"), "employee": deep_get(row, "employees.name"), "company": deep_get(row, "employees.companies.name")}
 
 
 def insurance_change_business_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {field: row.get(field) for field in ["change_date", "hire_date", "probation_end_date", "resignation_date", "insurance_add_date", "insurance_remove_date", "status", "signed_upload", "hr_clerk", "notes"]} | {"employee": deep_get(row, "employees.name"), "company": deep_get(row, "employees.companies.name")}
+    return {field: row.get(field) for field in ["id", "change_date", "hire_date", "probation_end_date", "resignation_date", "insurance_add_date", "insurance_remove_date", "status", "signed_upload", "hr_clerk", "notes"]} | {"employee_id": row.get("employee_id") or deep_get(row, "employees.id"), "employee": deep_get(row, "employees.name"), "company": deep_get(row, "employees.companies.name")}
 
 
 def personnel_change_business_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {field: row.get(field) for field in ["current_department", "current_position", "probation_salary", "regular_salary", "new_department", "new_position", "change_reason", "salary_before", "salary_after", "effective_date", "procedures_complete", "signed_upload", "hr_clerk", "notes"]} | {"employee": deep_get(row, "employees.name"), "company": deep_get(row, "employees.companies.name")}
+    return {field: row.get(field) for field in ["id", "current_department", "current_position", "probation_salary", "regular_salary", "new_department", "new_position", "change_reason", "salary_before", "salary_after", "effective_date", "procedures_complete", "signed_upload", "hr_clerk", "notes"]} | {"employee": deep_get(row, "employees.name"), "company": deep_get(row, "employees.companies.name")}
 
 
 def disciplinary_record_business_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
+        "id": row.get("id"),
         "incident_date": row.get(DISCIPLINARY_DATE_FIELD) or row.get("incident_date"),
         **{field: row.get(field) for field in ["penalty_type", "penalty_reason", "signed_upload", "hr_clerk"]},
     } | {"employee": deep_get(row, "employees.name"), "company": deep_get(row, "employees.companies.name")}
@@ -2212,6 +3069,7 @@ def disciplinary_record_business_row(row: dict[str, Any]) -> dict[str, Any]:
 
 def seal_usage_business_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
+        "id": row.get("id"),
         "company": deep_get(row, "companies.name"),
         "usage_date": row.get("usage_date"),
         "applicant": deep_get(row, "applicant.name"),
@@ -2301,9 +3159,180 @@ def deleted_record_config(resource: str | None) -> dict[str, Any]:
     return configs[normalized]
 
 
+def resource_read_config(resource: str | None) -> dict[str, Any]:
+    normalized = normalize_read_resource(resource)
+    configs: dict[str, dict[str, Any]] = {
+        "company": {
+            "name": "company",
+            "resource": "hr.company",
+            "table": "companies",
+            "select": "id,name,short_name",
+            "scope_select": "id,name",
+            "order": "name",
+            "scope": "self",
+            "mapper": lambda row: {
+                "id": row.get("id"),
+                "name": row.get("name"),
+                "short_name": row.get("short_name"),
+            },
+        },
+        "department": {
+            "name": "department",
+            "resource": "hr.department",
+            "table": "departments",
+            "select": "id,name,company_id,companies(name)",
+            "scope_select": "id,company_id,companies(name)",
+            "order": "name",
+            "scope": "company_id",
+            "mapper": lambda row: {
+                "id": row.get("id"),
+                "name": row.get("name"),
+                "company": deep_get(row, "companies.name"),
+            },
+        },
+        "employee": {
+            "name": "employee",
+            "resource": "hr.employee",
+            "table": "employees",
+            "select": employee_detail_select(),
+            "scope_select": "id,company_id,companies(name)",
+            "order": "name",
+            "scope": "company_id",
+            "mapper": employee_detail_business_row,
+        },
+        "contract": {
+            "name": "contract",
+            "resource": "hr.contract",
+            "table": "contracts",
+            "select": contract_select(),
+            "scope_select": "id,employee_id,employees(id,company_id,companies(name))",
+            "order": "start_date",
+            "scope": "employee_id",
+            "mapper": contract_business_row,
+            "date_fields": ["start_date", "expiry_date", "sign_date"],
+        },
+        "performance": {
+            "name": "performance",
+            "resource": "hr.performance",
+            "table": "performance_reviews",
+            "select": performance_review_select(),
+            "scope_select": "id,employee_id,employees(id,company_id,companies(name))",
+            "order": "review_date",
+            "scope": "employee_id",
+            "mapper": performance_business_row,
+            "date_fields": ["review_date"],
+        },
+        "insurance": {
+            "name": "insurance",
+            "resource": "hr.insurance",
+            "table": "insurance_changes",
+            "select": insurance_change_select(),
+            "scope_select": "id,employee_id,employees(id,company_id,companies(name))",
+            "order": "change_date",
+            "scope": "employee_id",
+            "mapper": insurance_change_business_row,
+            "date_fields": ["change_date"],
+        },
+        "personnel-change": {
+            "name": "personnel-change",
+            "resource": "hr.personnel_change",
+            "table": "personnel_changes",
+            "select": personnel_change_select(),
+            "scope_select": "id,employee_id,employees(id,company_id,companies(name))",
+            "order": "effective_date",
+            "scope": "employee_id",
+            "mapper": personnel_change_business_row,
+            "date_fields": ["effective_date"],
+        },
+        "disciplinary": {
+            "name": "disciplinary",
+            "resource": "hr.disciplinary",
+            "table": "disciplinary_records",
+            "select": disciplinary_record_select(),
+            "scope_select": "id,employee_id,employees(id,company_id,companies(name))",
+            "order": DISCIPLINARY_DATE_FIELD,
+            "scope": "employee_id",
+            "mapper": disciplinary_record_business_row,
+            "date_fields": ["incident_date"],
+        },
+        "seal-usage": {
+            "name": "seal-usage",
+            "resource": "hr.seal_usage",
+            "table": "seal_usage",
+            "select": seal_usage_select(),
+            "scope_select": "id,company_id,companies(name)",
+            "order": "usage_date",
+            "scope": "company_id",
+            "mapper": seal_usage_business_row,
+            "date_fields": ["usage_date"],
+        },
+    }
+    return configs[normalized]
+
+
+def normalize_read_resource(resource: str | None) -> str:
+    normalized = normalize_required(resource, "resource").replace("_", "-")
+    aliases = {
+        "company": "company",
+        "companies": "company",
+        "organization": "department",
+        "organizations": "department",
+        "department": "department",
+        "departments": "department",
+        "employee": "employee",
+        "employees": "employee",
+        "contract": "contract",
+        "contracts": "contract",
+        "performance": "performance",
+        "performance-review": "performance",
+        "performance-reviews": "performance",
+        "insurance": "insurance",
+        "insurance-change": "insurance",
+        "insurance-changes": "insurance",
+        "personnel-change": "personnel-change",
+        "personnel-changes": "personnel-change",
+        "disciplinary": "disciplinary",
+        "disciplinary-record": "disciplinary",
+        "disciplinary-records": "disciplinary",
+        "seal-usage": "seal-usage",
+    }
+    if normalized not in aliases:
+        raise RuntimeError(f"unsupported read resource: {resource}")
+    return aliases[normalized]
+
+
+def resource_filter_specs(resource: str, filters: dict[str, Any]) -> list[tuple[str, Any]]:
+    normalized = normalize_deleted_resource(resource)
+    if normalized == "contract":
+        return [("type", filters.get("type"))]
+    if normalized == "insurance":
+        return [("status", filters.get("status"))]
+    if normalized == "personnel-change":
+        return [("change_reason", filters.get("reason"))]
+    if normalized == "disciplinary":
+        return [("penalty_type", filters.get("penalty_type"))]
+    return []
+
+
+def read_row_company(row: dict[str, Any], config: dict[str, Any]) -> str | None:
+    if config["scope"] == "self":
+        return row.get("name")
+    if config["scope"] == "company_id":
+        return deep_get(row, "companies.name")
+    if config["scope"] == "employee_id":
+        return deep_get(row, "employees.companies.name")
+    return None
+
+
 def normalize_deleted_resource(resource: str | None) -> str:
     normalized = normalize_required(resource, "resource").replace("_", "-")
     aliases = {
+        "company": "company",
+        "companies": "company",
+        "organization": "department",
+        "organizations": "department",
+        "department": "department",
+        "departments": "department",
         "employees": "employee",
         "contracts": "contract",
         "performance-review": "performance",
@@ -2401,7 +3430,17 @@ def normalize_org_plan(plan: Any, fallback_company_name: str | None = None) -> d
             companies.extend(normalized.get("companies") or [])
         return {**plan, "companies": companies}
     if isinstance(plan.get("companies"), list):
-        companies = [{**company, "departments": list(company.get("departments") or [])} for company in plan["companies"]]
+        companies = [
+            {
+                **normalize_match_id(company),
+                "departments": [
+                    normalize_match_id(department) if isinstance(department, dict) else department
+                    for department in list(company.get("departments") or [])
+                ],
+            }
+            for company in plan["companies"]
+            if isinstance(company, dict)
+        ]
         for department in plan.get("departments") or []:
             company_name = clean_optional(department.get("company") or department.get("companyName") or department.get("company_name") or fallback_company_name)
             if not company_name:
@@ -2414,9 +3453,33 @@ def normalize_org_plan(plan: Any, fallback_company_name: str | None = None) -> d
         return {**plan, "companies": companies}
     company_name = clean_optional(plan.get("company") or plan.get("companyName") or plan.get("company_name") or fallback_company_name)
     if not company_name:
+        if clean_optional(plan.get("match_id") or plan.get("id")):
+            return {**plan, "companies": [{**normalize_match_id(plan), "departments": []}]}
         return {"companies": []}
     departments = plan.get("departments") if isinstance(plan.get("departments"), list) else ([plan.get("department")] if isinstance(plan.get("department"), dict) else ([{"name": plan.get("name"), "remark": plan.get("remark"), "notes": plan.get("notes")}] if clean_optional(plan.get("name")) else []))
-    return {**plan, "companies": [{"name": company_name, "departments": departments}]}
+    return {
+        **plan,
+        "companies": [
+            {
+                **normalize_match_id(plan),
+                "name": company_name,
+                "departments": [
+                    normalize_match_id(department) if isinstance(department, dict) else department
+                    for department in departments
+                ],
+            }
+        ],
+    }
+
+
+def normalize_match_id(record: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(record)
+    if "_match_id" not in normalized:
+        value = clean_optional(record.get("match_id")) or clean_optional(record.get("id"))
+        if value:
+            normalized["_match_id"] = value
+    normalized.pop("match_id", None)
+    return normalized
 
 
 def assert_non_empty_org_plan(plan: dict[str, Any]) -> None:
@@ -2458,7 +3521,7 @@ def organization_department_match_company(company: dict[str, Any], department: d
 
 
 def normalize_employee_seed_record(record: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(record)
+    normalized = normalize_match_id(record)
     if "id_card_number" not in normalized and "id_card" in record:
         normalized["id_card_number"] = clean_optional(record.get("id_card"))
     if "hukou_address" not in normalized:
@@ -2472,7 +3535,7 @@ def normalize_employee_seed_record(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_contract_seed_record(record: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(record)
+    normalized = normalize_match_id(record)
     if "employee_name" not in normalized:
         for alias in ["name", "employee"]:
             if alias in record:
@@ -2496,7 +3559,7 @@ def normalize_contract_seed_record(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_named_employee_record(record: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(record)
+    normalized = normalize_match_id(record)
     if "employee_name" not in normalized:
         for alias in ["name", "employee"]:
             if alias in record:
@@ -2521,7 +3584,7 @@ def normalize_personnel_change_record(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_seal_usage_seed_record(record: dict[str, Any]) -> dict[str, Any]:
-    normalized = dict(record)
+    normalized = normalize_match_id(record)
     if "seal_applicant" not in normalized and "seal_applicant_name" in record:
         normalized["seal_applicant"] = clean_optional(record.get("seal_applicant_name"))
     if "applicant" not in normalized and "applicant_name" in record:
@@ -2745,7 +3808,7 @@ def update_preview_item(
     payload: dict[str, Any],
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    base = {"name": name, **(extra or {})}
+    base = {"name": name, **(extra or {}), **matched_records_summary(matches)}
     if len(matches) != 1:
         return {**base, "action": "skipped", "reason": f"expected one match, found {len(matches)}", "diffs": []}
     diffs = update_diffs(matches[0], payload)
@@ -2783,10 +3846,15 @@ def apply_update_to_matches(
     label: Any,
 ) -> dict[str, Any]:
     if len(matches) != 1:
-        return {"name": label, "action": "skipped", "reason": f"expected one match, found {len(matches)}"}
+        return {
+            "name": label,
+            "action": "skipped",
+            "reason": f"expected one match, found {len(matches)}",
+            **matched_records_summary(matches),
+        }
     changed = changed_payload(matches[0], payload)
     if not changed:
-        return {"name": label, "action": "unchanged", "fields": []}
+        return {"name": label, "action": "unchanged", "fields": [], **matched_records_summary(matches)}
     data = execute_one(
         repo.table(table)
         .update(repo.audit_update(changed))
@@ -2794,7 +3862,12 @@ def apply_update_to_matches(
         .select("*")
         .single()
     )
-    return {"name": label, "action": "updated", "fields": list(changed), "id": data.get("id")} if not label else {"name": label, "action": "updated", "fields": list(changed)}
+    return {
+        "name": label,
+        "action": "updated",
+        "fields": list(changed),
+        **matched_records_summary(matches),
+    } | ({"id": data.get("id")} if not label else {})
 
 
 def verify_update_matches(
@@ -2819,9 +3892,9 @@ def generic_update_payload(
     payload_builder: Callable[..., dict[str, Any]],
     update_fields: list[str],
 ) -> dict[str, Any]:
-    if not employee:
+    if not employee and not clean_optional(record.get("_match_id")):
         return {}
-    payload = payload_builder(record, employee["id"], strip_nulls=False)
+    payload = payload_builder(record, employee["id"] if employee else "", strip_nulls=False)
     ignored = {"employee_id"}
     return {
         field: value
@@ -2879,6 +3952,336 @@ def summary_item(mapping: dict[str, dict[str, Any]], key: str, extra: dict[str, 
 
 def duplicate_groups(mapping: dict[str, list[dict[str, Any]]]) -> list[dict[str, Any]]:
     return [{"value": key, "rows": rows} for key, rows in mapping.items() if len(rows) > 1]
+
+
+def count_records_group(rows: list[dict[str, Any]], source_field: str, output_field: str) -> list[dict[str, Any]]:
+    return [
+        {output_field: key, "record_count": value}
+        for key, value in count_by(rows, source_field).items()
+    ]
+
+
+def employee_summary_analysis_group(item: dict[str, Any], label_fields: list[str]) -> dict[str, Any]:
+    statuses = dict(item.get("statuses") or {})
+    active = sum(count for status, count in statuses.items() if employee_status_is_active(status))
+    inactive = sum(count for status, count in statuses.items() if not employee_status_is_active(status))
+    total = int(item.get("total") or 0)
+    return {
+        **{field: item.get(field) for field in label_fields},
+        "employee_count": total,
+        "active_employees": active,
+        "inactive_employees": inactive,
+        "statuses": statuses,
+    }
+
+
+def performance_summary_groups(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups = []
+    for company, rows in group_records(records, "company").items():
+        scores = [float(row["final_score"]) for row in rows if is_number(row.get("final_score"))]
+        groups.append(
+            {
+                "company": company,
+                "record_count": len(rows),
+                "average_final_score": average(scores),
+                "low_score_count_below_60": len([row for row in rows if to_float(row.get("final_score")) < 60]),
+            }
+        )
+    return groups
+
+
+def score_band_groups(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    bands = {"below_60": 0, "60_to_79": 0, "80_to_89": 0, "90_and_above": 0, "unknown": 0}
+    for row in records:
+        score = row.get("final_score")
+        if not is_number(score):
+            bands["unknown"] += 1
+        elif to_float(score) < 60:
+            bands["below_60"] += 1
+        elif to_float(score) < 80:
+            bands["60_to_79"] += 1
+        elif to_float(score) < 90:
+            bands["80_to_89"] += 1
+        else:
+            bands["90_and_above"] += 1
+    return [{"band": key, "record_count": value} for key, value in bands.items() if value]
+
+
+def group_records(records: list[dict[str, Any]], field: str) -> dict[str, list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in records:
+        groups[clean_optional(row.get(field)) or "(空)"].append(row)
+    return dict(sorted(groups.items(), key=lambda item: item[0]))
+
+
+def finding_consistency_checks(findings: list[dict[str, Any]]) -> list[tuple[str, bool]]:
+    checks: list[tuple[str, bool]] = []
+    for index, finding in enumerate(findings):
+        kind = finding.get("kind") or index
+        count = finding.get("count")
+        record_ids = finding.get("record_ids") or []
+        employee_names = finding.get("employee_names") or []
+        records = finding.get("records") or []
+        if record_ids:
+            checks.append((f"findings.{kind}.count_matches_record_ids", count == len(record_ids)))
+        if employee_names:
+            checks.append((f"findings.{kind}.count_matches_employee_names", count == len(employee_names)))
+        checks.append((f"findings.{kind}.count_matches_records", count == len(records)))
+    return checks
+
+
+def parse_analysis_date(value: str | None) -> date:
+    text = clean_optional(value)
+    if not text:
+        return date.today()
+    try:
+        parsed = date.fromisoformat(text)
+    except ValueError as exc:
+        raise RuntimeError("Option --as-of must use YYYY-MM-DD") from exc
+    if parsed > date.today():
+        raise RuntimeError("Option --as-of cannot be in the future")
+    return parsed
+
+
+def analysis_scope(company_name: str | None, company_names: list[str] | None) -> dict[str, Any]:
+    return {
+        "company": clean_optional(company_name),
+        "company_scope": [item for item in map(clean_optional, company_names or []) if item] or None,
+    }
+
+
+def employee_status_is_active(status: Any) -> bool:
+    return clean_optional(status) != "离职"
+
+
+def with_analytics_consistency(
+    result: dict[str, Any],
+    checks: list[tuple[str, bool]],
+) -> dict[str, Any]:
+    errors = [name for name, passed in checks if not passed]
+    return {
+        **result,
+        "consistency": {
+            "checked": True,
+            "passed": not errors,
+            "errors": errors,
+        },
+    }
+
+
+def roster_quality_findings(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    checks = summary.get("checks") or {}
+    findings = []
+    if checks.get("emptyDepartment"):
+        findings.append(
+            analytics_finding(
+                kind="missing_department",
+                severity="medium",
+                basis="员工主档部门为空",
+                records=checks["emptyDepartment"],
+            )
+        )
+    if checks.get("emptyIdCard"):
+        findings.append(
+            analytics_finding(
+                kind="missing_id_card",
+                severity="medium",
+                basis="员工主档身份证号为空",
+                records=checks["emptyIdCard"],
+            )
+        )
+    if checks.get("duplicateIdCards"):
+        findings.append(
+            {
+                "kind": "duplicate_id_card",
+                "severity": "high",
+                "basis": "同一身份证号匹配多名员工",
+                "count": len(checks["duplicateIdCards"]),
+                "groups": checks["duplicateIdCards"],
+            }
+        )
+    if checks.get("duplicatePhones"):
+        findings.append(
+            {
+                "kind": "duplicate_phone",
+                "severity": "medium",
+                "basis": "同一手机号匹配多名员工",
+                "count": len(checks["duplicatePhones"]),
+                "groups": checks["duplicatePhones"],
+            }
+        )
+    return findings
+
+
+def contract_is_active(row: dict[str, Any], *, as_of: date) -> bool:
+    start_date = parse_optional_date(row.get("start_date"))
+    if start_date and start_date > as_of:
+        return False
+    if row.get("is_permanent") is True:
+        return True
+    expiry_date = parse_optional_date(row.get("expiry_date"))
+    return expiry_date is None or expiry_date >= as_of
+
+
+def contract_expires_within(row: dict[str, Any], *, as_of: date, days: int) -> bool:
+    if row.get("is_permanent") is True:
+        return False
+    expiry_date = parse_optional_date(row.get("expiry_date"))
+    return expiry_date is not None and as_of <= expiry_date <= as_of + timedelta(days=days)
+
+
+def parse_optional_date(value: Any) -> date | None:
+    text = clean_optional(value)
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def contract_business_row_for_analysis(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("id"),
+        "employee": deep_get(row, "employees.name"),
+        "company": deep_get(row, "employees.companies.name"),
+        "type": row.get("type"),
+        "start_date": row.get("start_date"),
+        "expiry_date": row.get("expiry_date"),
+        "is_permanent": row.get("is_permanent"),
+    }
+
+
+def overlapping_contract_employee_rows(
+    contracts: list[dict[str, Any]],
+    active_employee_ids: set[Any],
+) -> list[dict[str, Any]]:
+    grouped: dict[Any, list[dict[str, Any]]] = defaultdict(list)
+    for row in contracts:
+        employee_id = row.get("employee_id")
+        if employee_id in active_employee_ids:
+            grouped[employee_id].append(row)
+    results = []
+    for rows in grouped.values():
+        sorted_rows = sorted(rows, key=lambda item: parse_optional_date(item.get("start_date")) or date.min)
+        previous_end: date | None = None
+        for row in sorted_rows:
+            start = parse_optional_date(row.get("start_date"))
+            end = parse_optional_date(row.get("expiry_date")) or date.max
+            if start and previous_end and start <= previous_end:
+                employee = row.get("employees") if isinstance(row.get("employees"), dict) else {}
+                results.append(employee_business_row(employee))
+                break
+            previous_end = max(previous_end or date.min, end)
+    return results
+
+
+def contract_coverage_findings(
+    *,
+    without_any_contract: list[dict[str, Any]],
+    without_active_contract: list[dict[str, Any]],
+    expiring_contracts: list[dict[str, Any]],
+    overlap_employees: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    findings = []
+    if without_any_contract:
+        findings.append(
+            analytics_finding(
+                kind="missing_any_contract",
+                severity="high",
+                basis="在职员工没有任何合同记录",
+                records=without_any_contract,
+            )
+        )
+    if without_active_contract:
+        findings.append(
+            analytics_finding(
+                kind="missing_active_contract",
+                severity="high",
+                basis="在职员工有历史合同，但 as_of 日期没有有效合同",
+                records=without_active_contract,
+            )
+        )
+    if expiring_contracts:
+        findings.append(
+            analytics_finding(
+                kind="contract_expiring_30_days",
+                severity="medium",
+                basis="当前有效合同将在 30 天内到期",
+                records=expiring_contracts,
+            )
+        )
+    if overlap_employees:
+        findings.append(
+            analytics_finding(
+                kind="contract_overlap",
+                severity="medium",
+                basis="同一员工存在合同期间重叠",
+                records=overlap_employees,
+            )
+        )
+    return findings
+
+
+def analytics_finding(
+    *,
+    kind: str,
+    severity: str,
+    basis: str,
+    records: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "severity": severity,
+        "basis": basis,
+        "count": len(records),
+        "record_ids": [row.get("id") for row in records if row.get("id")],
+        "employee_names": [
+            row.get("name") or row.get("employee")
+            for row in records
+            if row.get("name") or row.get("employee")
+        ],
+        "records": records,
+    }
+
+
+def empty_contract_coverage_analysis(
+    company_name: str | None,
+    company_names: list[str] | None,
+    as_of: date,
+) -> dict[str, Any]:
+    result = {
+        "topic": "contract-coverage",
+        "as_of": as_of.isoformat(),
+        "scope": analysis_scope(company_name, company_names),
+        "summary": {
+            "total_employees": 0,
+            "coverage_denominator": 0,
+            "active_employees": 0,
+            "contract_records": 0,
+            "active_contract_records": 0,
+            "employees_with_any_contract": 0,
+            "employees_without_any_contract": 0,
+            "employees_with_active_contract": 0,
+            "employees_without_active_contract": 0,
+            "coverage_rate_any": None,
+            "coverage_rate_active": None,
+        },
+        "groups": {"by_contract_type": []},
+        "findings": [],
+        "legacy": {
+            "employees_total": 0,
+            "active_employees": 0,
+            "contract_records": 0,
+            "active_with_contracts": 0,
+            "active_without_contracts": 0,
+            "active_contract_coverage_rate": None,
+            "contract_type_distribution": {},
+            "active_without_contract_records": [],
+        },
+    }
+    result.update(result["legacy"])
+    return with_analytics_consistency(result, [])
 
 
 def count_by(rows: list[dict[str, Any]], field: str) -> dict[str, int]:
@@ -2943,19 +4346,109 @@ def preview_summary(records: list[dict[str, Any]], name_field: str = "name") -> 
     return {"records": len(records), "matched": len([row for row in records if deep_get(row, "match.employee")]), "unmatched": len([row for row in records if not deep_get(row, "match.employee")]), "by_company": count_by(records, "company"), "by_name": count_by(records, name_field)}
 
 
-def hr_risk_recommended_actions(headcount: dict[str, Any], coverage: dict[str, Any], expiry: dict[str, Any], disciplinary: dict[str, Any], pending: list[dict[str, Any]]) -> list[str]:
+def bounded_result_limit(limit: Any) -> int:
+    if limit is None:
+        return DEFAULT_RESULT_LIMIT
+    value = int(limit)
+    if value < 1:
+        return DEFAULT_RESULT_LIMIT
+    return min(value, MAX_RESULT_LIMIT)
+
+
+def result_limit_meta(count: int | None, returned_count: int, limit: int | None) -> dict[str, Any]:
+    total = count if count is not None and count >= returned_count else returned_count
+    return {
+        "count": total,
+        "limit": limit,
+        "truncated": bool(limit is not None and total > limit),
+    }
+
+
+def limited_action(
+    *,
+    type_: str,
+    message: str,
+    records: list[dict[str, Any]],
+    limit: int,
+) -> dict[str, Any]:
+    limited_records = records[:limit]
+    return {
+        "type": type_,
+        "message": message,
+        "records": limited_records,
+        **result_limit_meta(len(records), len(limited_records), limit),
+    }
+
+
+def matched_records_summary(records: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "match_count": len(records),
+        "matched_ids": [row.get("id") for row in records if row.get("id")],
+    }
+
+
+def hr_risk_recommended_actions(
+    headcount: dict[str, Any],
+    coverage: dict[str, Any],
+    expiry: dict[str, Any],
+    disciplinary: dict[str, Any],
+    pending: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> list[dict[str, Any]]:
     actions = []
     if headcount["quality_flags"]["empty_department_count"] > 0:
-        actions.append(f"核对 {headcount['quality_flags']['empty_department_count']} 名空部门员工")
+        actions.append(
+            limited_action(
+                type_="empty_department",
+                message=f"核对 {headcount['quality_flags']['empty_department_count']} 名空部门员工",
+                records=[],
+                limit=limit,
+            )
+        )
     if coverage["active_without_contracts"] > 0:
-        actions.append(f"补齐 {coverage['active_without_contracts']} 名在职员工合同")
+        actions.append(
+            limited_action(
+                type_="missing_contract",
+                message=f"补齐 {coverage['active_without_contracts']} 名在职员工合同",
+                records=coverage.get("active_without_contract_records") or [],
+                limit=limit,
+            )
+        )
     if expiry["count"] > 0:
-        actions.append(f"跟进未来 90 天内到期的 {expiry['count']} 条合同")
+        actions.append(
+            limited_action(
+                type_="contract_expiry",
+                message=f"跟进未来 90 天内到期的 {expiry['count']} 条合同",
+                records=expiry.get("records") or [],
+                limit=limit,
+            )
+        )
     if disciplinary["missing_signed_upload_count"] > 0:
-        actions.append(f"补齐 {disciplinary['missing_signed_upload_count']} 条奖惩记录签字附件")
+        missing_uploads = [row for row in disciplinary.get("records") or [] if not row.get("signed_upload")]
+        actions.append(
+            limited_action(
+                type_="disciplinary_missing_signed_upload",
+                message=f"补齐 {disciplinary['missing_signed_upload_count']} 条奖惩记录签字附件",
+                records=missing_uploads,
+                limit=limit,
+            )
+        )
     pending_total = sum(item["count"] for item in pending)
     if pending_total > 0:
-        actions.append(f"处理 {pending_total} 条待人事确认记录")
+        pending_rows = [
+            {**row, "module": item["module"], "source": item["source"]}
+            for item in pending
+            for row in item.get("rows", [])
+        ]
+        actions.append(
+            limited_action(
+                type_="pending_review",
+                message=f"处理 {pending_total} 条待人事确认记录",
+                records=pending_rows,
+                limit=limit,
+            )
+        )
     return actions
 
 

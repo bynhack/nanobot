@@ -34,7 +34,7 @@ from .media import MediaService
 from .session_workspace import SessionWorkspaceService
 from .supabase_account import SupabaseAccountClient
 from .user_context import CurrentUser, bind_current_user
-from .uploads import next_upload_path
+from .uploads import next_upload_path, upload_display_name
 
 STATIC_DIR = Path(__file__).parent / "static"
 PACKAGE_ROOT = Path(__file__).resolve().parent.parent
@@ -1034,10 +1034,9 @@ class WebUIChannel(BaseChannel):
                 while chunk := await part.read_chunk():
                     handle.write(chunk)
 
-            media_item = self._media.build_media_item(str(destination))
             uploaded.append({
                 "path": str(destination),
-                "name": media_item.get("name") or destination.name,
+                "name": upload_display_name(filename),
                 "mime": part.headers.get("Content-Type", "") or mimetypes.guess_type(destination.name)[0] or "",
                 "url": self._public_upload_media_url(destination),
             })

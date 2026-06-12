@@ -96,7 +96,7 @@
       "kind": "query",
       "commands": [
         "list-companies",
-        "business query companies"
+        "business list company"
       ],
       "resources": [
         {
@@ -123,8 +123,8 @@
       "commands": [
         "list-departments",
         "find-department",
-        "business query departments",
-        "business get department"
+        "business list department",
+        "business get department --id <id>"
       ],
       "resources": [
         {
@@ -147,10 +147,8 @@
       "title": "员工概况和人数分析",
       "kind": "analysis",
       "commands": [
-        "employee-summary",
-        "analyze-headcount",
-        "business analyze headcount",
-        "business analyze employee-summary"
+        "business analyze roster",
+        "business analyze employee-profile"
       ],
       "resources": [
         {
@@ -165,6 +163,8 @@
         "人数",
         "员工概况",
         "员工统计",
+        "员工资料风险",
+        "主档完整性",
         "花名册汇总",
         "人员结构",
         "在职状态汇总",
@@ -178,13 +178,8 @@
       "title": "员工花名册查询",
       "kind": "query",
       "commands": [
-        "list-employees",
-        "employee-detail",
-        "find-employee",
-        "find-employee-like",
-        "business query employee",
-        "business query employees",
-        "business get employee"
+        "business list employee",
+        "business get employee --id <id>"
       ],
       "resources": [
         {
@@ -211,8 +206,14 @@
       "title": "员工履历查询",
       "kind": "query",
       "commands": [
-        "employee-timeline",
-        "business query employee-timeline"
+        "business list employee --name <name>",
+        "business get employee --id <id>",
+        "business list contract --employee <name>",
+        "business list performance --employee <name>",
+        "business list insurance --employee <name>",
+        "business list personnel-change --employee <name>",
+        "business list disciplinary --employee <name>",
+        "business list seal-usage --applicant <name>"
       ],
       "resources": [
         {
@@ -235,8 +236,8 @@
       "title": "单员工合同查询",
       "kind": "query",
       "commands": [
-        "contracts-by-employee",
-        "business query employee-contracts"
+        "business list contract --employee <name>",
+        "business get contract --id <id>"
       ],
       "resources": [
         {
@@ -249,8 +250,7 @@
       ],
       "focus_terms": [
         "合同",
-        "employee-contracts",
-        "contracts-by-employee"
+        "contract"
       ]
     },
     {
@@ -258,10 +258,8 @@
       "title": "合同覆盖率和到期分析",
       "kind": "analysis",
       "commands": [
-        "analyze-contract-coverage",
-        "analyze-contract-expiry",
         "business analyze contract-coverage",
-        "business analyze contract-expiry"
+        "business analyze contract-expiry --days 90"
       ],
       "resources": [
         {
@@ -286,14 +284,9 @@
       "title": "绩效记录查询和分析",
       "kind": "analysis",
       "commands": [
-        "performance-by-employee",
-        "performance-by-month",
-        "analyze-performance-month",
-        "analyze-low-performance",
-        "business query performance",
-        "business query performance-by-employee",
-        "business analyze performance",
-        "business analyze low-performance"
+        "business analyze performance-month --month YYYY-MM",
+        "business list performance --month YYYY-MM",
+        "business list performance --month YYYY-MM --employee <name>"
       ],
       "resources": [
         {
@@ -318,12 +311,9 @@
       "title": "社医保异动查询和分析",
       "kind": "analysis",
       "commands": [
-        "insurance-by-employee",
-        "insurance-by-month",
-        "analyze-insurance-month",
-        "business query insurance",
-        "business query insurance-by-employee",
-        "business analyze insurance"
+        "business analyze insurance-month --month YYYY-MM",
+        "business list insurance --month YYYY-MM",
+        "business list insurance --month YYYY-MM --employee <name>"
       ],
       "resources": [
         {
@@ -346,21 +336,21 @@
     },
     {
       "id": "hr.personnel_change.query",
-      "title": "人事异动查询",
-      "kind": "query",
+      "title": "人事异动查询和分析",
+      "kind": "analysis",
       "commands": [
-        "personnel-changes-list",
-        "personnel-changes-by-employee",
-        "business query personnel-change",
-        "business query personnel-changes",
-        "business query personnel-change-by-employee"
+        "business analyze personnel-change --year YYYY",
+        "business list personnel-change",
+        "business list personnel-change --employee <name>",
+        "business get personnel-change --id <id>"
       ],
       "resources": [
         {
           "resource": "hr.personnel_change",
           "actions": [
             "query",
-            "read"
+            "read",
+            "analyze"
           ],
           "scope_key": "company"
         }
@@ -379,10 +369,10 @@
       "title": "奖惩记录查询和分析",
       "kind": "analysis",
       "commands": [
-        "disciplinary-by-employee",
-        "analyze-disciplinary",
-        "business query disciplinary",
-        "business analyze disciplinary"
+        "business analyze disciplinary",
+        "business list disciplinary",
+        "business list disciplinary --employee <name>",
+        "business get disciplinary-record --id <id>"
       ],
       "resources": [
         {
@@ -406,17 +396,20 @@
     },
     {
       "id": "hr.seal_usage.query",
-      "title": "用章记录查询",
-      "kind": "query",
+      "title": "用章记录查询和分析",
+      "kind": "analysis",
       "commands": [
-        "seal-usage-list",
-        "business query seal-usage"
+        "business analyze seal-usage",
+        "business list seal-usage",
+        "business get seal-usage --id <id>"
       ],
       "resources": [
         {
           "resource": "hr.seal_usage",
           "actions": [
-            "query"
+            "query",
+            "read",
+            "analyze"
           ],
           "scope_key": "company"
         }

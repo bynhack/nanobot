@@ -10,7 +10,7 @@ description: "HR 写入、导入、删除、匹配歧义、附件处理、确认
 
 ## Read vs Write
 
-- 只读请求可以直接使用 `nanobot-webui-business hr business query|get|analyze`。
+- 只读请求可以直接使用 `nanobot-webui-business hr business list|get`。
 - 默认不要传 `--company`，让当前账号 policy 自动限定授权公司范围；只有用户明确指定公司时
   才传 `--company "公司全称"`。
 - 新增、修改、导入、作废、清理和删除必须先 preview，并在用户明确确认后执行。
@@ -19,12 +19,16 @@ description: "HR 写入、导入、删除、匹配歧义、附件处理、确认
 
 ## Matching Rules
 
-- Prefer identity document number for employee matching.
-- If no identity document number exists, use phone number.
-- If neither exists, use weaker matches such as name plus company and/or
-  department.
+- 写入 plan 匹配既有记录的优先级：
+  1. `match_id`（首选）—— 通过 business list/get 拿到的 id；精确匹配，无歧义。
+  2. 身份证号。
+  3. 手机号。
+  4. 姓名 + 公司 + 部门（最弱）。
+- 如果智能体已经从 list/get 拿到 id，必须用 `match_id`，不要降级到业务键。
+- 只在 id 不可用时使用业务键 fallback。
 - If multiple records can match, stop and present candidates for user
   confirmation.
+- 读取场景下，先 list 拿候选和 id，再用 `business get <resource> --id <id>` 精确读取最可靠。
 
 ## Update Rules
 
@@ -41,9 +45,10 @@ description: "HR 写入、导入、删除、匹配歧义、附件处理、确认
 
 1. Parse the source data.
 2. Use `hr-schema` to map columns to business objects and fields.
-3. 使用标准 `business` read/preview 命令完成匹配和预览。
-4. 输出简洁的确认摘要。
-5. 用户确认后再执行 create、delete 或其他写入命令，最后 verify。
+3. 使用 `business schema <resource> --workflow create|update` 获取字段契约和示例。
+4. 使用标准 `business` read/preview 命令完成匹配和预览。
+5. 输出简洁的确认摘要。
+6. 用户确认后再执行 create、delete 或其他写入命令，最后 verify。
 
 确认摘要需要说明：
 

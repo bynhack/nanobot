@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -11,12 +10,14 @@ from nanobot_channel_webui.permissions import PolicyContext, bind_policy_context
 from nanobot_channel_webui.permissions.resolver import PolicyResolver
 from nanobot_channel_webui.tenant_runtime import TenantContext, bind_tenant_context
 from nanobot_channel_webui.tenant_runtime.audit import TenantAuditLogger, normalize_audit_event
+from nanobot_channel_webui.tenant_runtime.contract_validator import (
+    validate_workspace_skill_contracts,
+)
 from nanobot_channel_webui.tenant_runtime.contracts import TenantPolicy
-from nanobot_channel_webui.tenant_runtime.contract_validator import validate_workspace_skill_contracts
 from nanobot_channel_webui.tenant_runtime.guard import TenantAccessDenied, TenantGuard
 from nanobot_channel_webui.tenant_runtime.memory_gateway import MemoryGateway
-from nanobot_channel_webui.tenant_runtime.skill_gateway import SkillGateway
 from nanobot_channel_webui.tenant_runtime.skill_contract import load_skill_contract
+from nanobot_channel_webui.tenant_runtime.skill_gateway import SkillGateway
 from nanobot_channel_webui.tenant_runtime.tool_gateway import ToolGateway
 
 
@@ -340,7 +341,7 @@ def write_organization_tree_skill_contract(workspace: Path) -> None:
     {
       "id": "hr.organization.tree",
       "kind": "query",
-      "commands": ["organization-tree", "business query organization-tree"],
+      "commands": ["business list department"],
       "resources": [
         { "resource": "hr.organization", "actions": ["query"], "scope_key": "company" },
         { "resource": "hr.department", "actions": ["query"], "scope_key": "company" }
@@ -613,12 +614,12 @@ def test_organization_tree_business_command_gets_policy_env(tmp_path: Path) -> N
     with bind_policy_context(policy):
         _tool, params, error = registry.prepare_call(
             "exec",
-            {"command": "nanobot-webui-business hr business query organization-tree"},
+            {"command": "nanobot-webui-business hr business list department"},
         )
 
     assert error is None
     assert params["command"].startswith("NANOBOT_WEBUI_POLICY_FILE=")
-    assert "business query organization-tree" in params["command"]
+    assert "business list department" in params["command"]
 
 
 def test_scoped_user_can_write_json_runtime_input_file(tmp_path: Path) -> None:

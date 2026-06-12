@@ -66,6 +66,8 @@ class CommandPolicyGuard:
             return CommandDecision(True, "unmanaged_exec_passthrough", command)
 
         contract, declared_command, command_index = contract_match
+        if self._is_hr_business_cli(argv, command_index):
+            return CommandDecision(False, "hr_business_cli_requires_tool", command)
         if not policy.policy_file:
             return CommandDecision(False, "policy_file_required", command)
         if re.search(r"(^|[^\\])(&&|\|\||;|\||>|<)|`|\$\(", policy_check_command):
@@ -214,6 +216,19 @@ class CommandPolicyGuard:
                 break
             tokens.append(token)
         return " ".join(tokens)
+
+    @staticmethod
+    def _is_hr_business_cli(argv: list[str], command_index: int) -> bool:
+        if command_index < 0:
+            return False
+        if command_index + 1 >= len(argv):
+            return False
+        if argv[command_index + 1] == "business":
+            return True
+        if command_index + 2 < len(argv) and argv[command_index + 1] == "hr":
+            return argv[command_index + 2] == "business"
+        first = argv[command_index + 1]
+        return first == "business" or first.startswith("business ")
 
     @staticmethod
     def _contract_allowed(

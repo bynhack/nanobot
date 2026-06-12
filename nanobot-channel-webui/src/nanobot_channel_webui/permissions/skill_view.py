@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import shlex
 import shutil
 import sys
 from pathlib import Path
@@ -61,15 +63,15 @@ class DynamicSkillViewRenderer:
             [
                 "",
                 "## Execution rules",
-                "- Prefer `business query`, `business get`, and `business analyze` commands when available.",
-                f"- Always run HR business CLI commands from the workspace root with the absolute plugin entrypoint shown in each capability example; do not use workspace `skills/hr-*` paths, bare `nanobot-webui-business`, or `~` in the command.",
+                "- Use the structured `hr_business` tool for HR business operations. Do not call HR business CLI through `exec`.",
+                "- Prefer `hr_business` actions `list`, `get`, and `analyze` for read-only requests when available.",
                 "- Treat phrases like `我负责`, `我能看`, `我管辖`, and `权限范围` as the current account's authorized data scope; do not inspect memory, user files, or hidden commands to infer a separate identity.",
                 "- This view is already task-focused when possible. Do not read other HR skill files, schema files, policy files, or raw implementation files for the same request.",
-                "- For create/update/delete capabilities, first write one JSON plan, then present a business preview and wait for explicit user confirmation. Use the `business create ... --input <same-plan.json>` command only after the user confirms the preview.",
-                f"- For commands that require `--input <plan.json>`, first call the `write_file` tool with a valid JSON payload under `{self._workspace}/.nanobot_channel_webui/runtime-inputs/{policy.chat_id or '<chat_id>'}/`, then pass that `.json` file path to `--input`.",
+                "- For create/update/delete capabilities, first write one JSON plan, then present a business preview and wait for explicit user confirmation. Use the same plan path with `hr_business` only after the user confirms.",
+                f"- For actions that require `input`, first call the `write_file` tool with a valid JSON payload under `{self._workspace}/.nanobot_channel_webui/runtime-inputs/{policy.chat_id or '<chat_id>'}/`, then pass that `.json` file path as `input`.",
                 f"- Put authorized reusable outputs for Word, Excel, browser, chart, or report skills under `{self._workspace}/{_ARTIFACT_DIR}/{policy.chat_id or '<chat_id>'}/`; other skills may consume those authorized artifacts without knowing this business skill's internals.",
                 "- Never create input plans with shell redirects, heredocs, process substitution, `echo >`, pipes, `/tmp` files, or inline JSON inside an `exec` command; those are blocked by the runtime permission boundary.",
-                "- Confirmed `business create ...` commands perform verification against the same JSON plan and return the verification result; do not run a separate verify command unless troubleshooting a failed create result.",
+                "- Confirmed `hr_business` create/update/delete actions perform verification against the same JSON plan and return the verification result; do not run a separate verify command unless troubleshooting a failed result.",
                 "- Omit company filters unless the user asks for one specific authorized company; the CLI applies the current account scope automatically.",
                 "- If a needed action is not listed above, explain that the current account does not have that business capability instead of probing hidden commands.",
             ]
@@ -116,10 +118,14 @@ class DynamicSkillViewRenderer:
             lines.append(f"  Triggers: {', '.join(f'`{item}`' for item in capability.triggers)}")
         if capability.commands:
             lines.append(f"  Commands: {', '.join(f'`{item}`' for item in capability.commands)}")
+            tool_examples = [_hr_business_tool_example(item) for item in capability.commands]
+            tool_examples = [item for item in tool_examples if item]
+            if tool_examples:
+                lines.append(f"  Tool call: {', '.join(f'`{item}`' for item in tool_examples)}")
             if contract.commands:
                 executable = _resolve_command(contract.commands[0])
                 examples = [f"`cd {workspace} && {executable} {item}`" for item in capability.commands]
-                lines.append(f"  Run from workspace root: {', '.join(examples)}")
+                lines.append(f"  Human/debug CLI fallback: {', '.join(examples)}")
         if capability.resources:
             resources = []
             for requirement in capability.resources:
@@ -165,6 +171,42 @@ def _resolve_command(command: str) -> str:
             executable = str(candidate) if candidate.exists() else "nanobot-webui-business"
         return command.replace("nanobot-webui-business", executable, 1)
     return command
+
+
+def _hr_business_tool_example(command: str) -> str:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return ""
+    if not parts or parts[0] != "business":
+        return ""
+    action = parts[1] if len(parts) > 1 else ""
+    resource = parts[2] if len(parts) > 2 and not parts[2].startswith("--") else ""
+    params: dict[str, str] = {"action": action}
+    if resource:
+        params["resource"] = resource
+    index = 3 if resource else 2
+    while index < len(parts):
+        token = parts[index]
+        if not token.startswith("--"):
+            index += 1
+            continue
+        key = _tool_param_name(token[2:])
+        value = "true"
+        if index + 1 < len(parts) and not parts[index + 1].startswith("--"):
+            value = parts[index + 1]
+            index += 1
+        params[key] = value
+        index += 1
+    args = ", ".join(f"{key}={json.dumps(value, ensure_ascii=False)}" for key, value in params.items())
+    return f"hr_business({args})"
+
+
+def _tool_param_name(option: str) -> str:
+    return {
+        "from": "from_date",
+        "to": "to_date",
+    }.get(option, option.replace("-", "_"))
 
 
 def _capability_matches_text(capability: SkillCapability, text: str) -> bool:

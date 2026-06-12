@@ -1,6 +1,7 @@
 # 人事自然语言查询路由表
 
-所有只读请求优先走标准业务命令：
+所有只读请求优先走结构化 `hr_business` 工具。下面的 CLI 形式只作为人工排障和兼容
+fallback，并与 tool 参数一一对应：
 
 ```bash
 nanobot-webui-business hr business <list|get|analyze|preview|create|preview-update|update|delete|schema|capabilities> <resource|topic> [options]

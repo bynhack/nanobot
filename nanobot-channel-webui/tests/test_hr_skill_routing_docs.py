@@ -223,7 +223,7 @@ def test_hr_db_ops_documents_error_recovery_for_common_cli_failures() -> None:
 def test_hr_policy_matches_schema_first_write_contract() -> None:
     policy = (HR_SKILLS / "hr-policy" / "SKILL.md").read_text(encoding="utf-8")
 
-    assert "business schema <resource> --workflow create|update" in policy
+    assert 'hr_business(action="schema", resource="<resource>", workflow="create|update")' in policy
     assert "`match_id`（首选）" in policy
     assert "必须用 `match_id`" in policy
     assert "业务键 fallback" in policy

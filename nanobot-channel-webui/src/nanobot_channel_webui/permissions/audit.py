@@ -31,6 +31,7 @@ class PermissionAuditLogger:
         decision: str,
         reason: str,
         command: str = "",
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         if policy is None:
             return
@@ -50,6 +51,8 @@ class PermissionAuditLogger:
             "scopes": {key: list(values) for key, values in policy.effective_scopes.items()},
             "tenant_policy": policy.to_tenant_policy().to_payload(),
         }
+        if metadata:
+            payload["metadata"] = metadata
         with self._path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
@@ -95,6 +98,7 @@ def normalize_audit_event(payload: dict[str, Any]) -> dict[str, Any]:
         "reason": str(payload.get("reason") or ""),
         "scopes": _normalize_audit_scopes(payload, tenant_policy),
         "tenant_policy": tenant_policy,
+        "metadata": payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {},
     }
 
 

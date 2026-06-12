@@ -5,12 +5,18 @@ description: "HR 写入和数据维护操作手册。Use only for preview/create
 
 # HR DB Ops
 
-本技能只描述模型可使用的 HR 标准业务命令面。真实实现位于插件内
+本技能只描述模型可使用的 HR 标准业务工具面。真实实现位于插件内
 Python HR runtime，模型不要读取、导入或调用 runtime 内部文件。
 
 ## First Rule
 
-在 WebUI 多实例会话中，已知入口固定为：
+在 WebUI 多实例会话中，模型默认使用结构化 `hr_business` 工具：
+
+```text
+hr_business(action="<list|get|analyze|preview|create|preview-update|update|delete|schema|capabilities>", resource="<resource|topic>", ...)
+```
+
+CLI 只作为人工排障和兼容 fallback，不要通过 `exec` 调用 HR business CLI：
 
 ```bash
 nanobot-webui-business hr business <list|get|analyze|preview|create|preview-update|update|delete|schema|capabilities> <resource|topic> [options]
@@ -21,7 +27,7 @@ nanobot-webui-business hr business <list|get|analyze|preview|create|preview-upda
 
 ## Execution Rules
 
-- 默认使用标准 `business` 命令，不优先使用 legacy 命令。
+- 默认使用 `hr_business` 工具，不优先使用 legacy 命令或 shell `exec`。
 - 命令参数是严格校验的；不要猜测参数名。未知参数会被拒绝，`--input`、
   `--company`、`--days`、`--threshold` 等 value 参数必须带有效值。
 - 不确定参数时先运行 `business capabilities` 或 `business help`，不要试错多个拼写。

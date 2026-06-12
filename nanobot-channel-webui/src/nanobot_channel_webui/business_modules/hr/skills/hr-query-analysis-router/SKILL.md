@@ -5,10 +5,16 @@ description: "默认 HR 只读入口。Use first for natural-language HR read re
 
 # HR Query Analysis Router
 
-本技能把 HR 人员的自然语言问题路由到标准业务 CLI。优先使用确定性的业务命令，
+本技能把 HR 人员的自然语言问题路由到标准 `hr_business` 工具。优先使用确定性的业务动作，
 不要探索脚本、runtime、policy 文件或数据库连接信息。
 
-标准入口固定为：
+模型默认入口：
+
+```text
+hr_business(action="<list|get|analyze|schema|capabilities>", resource="<resource|topic>", ...)
+```
+
+CLI 只作为人工排障和兼容 fallback，不要通过 `exec` 调用 HR business CLI：
 
 ```bash
 nanobot-webui-business hr business <list|get|analyze|preview|create|preview-update|update|delete|schema|capabilities> <resource|topic> [options]
@@ -20,16 +26,16 @@ nanobot-webui-business hr business <list|get|analyze|preview|create|preview-upda
 ## Required Order
 
 1. 判断请求是只读查看，还是新增、修改、导入、清理、删除等写入类意图。
-2. 只读请求使用 `references/query-routing-map.md` 选择最接近的 `business list`、
-   `business get` 或 `business analyze` 命令。
+2. 只读请求使用 `references/query-routing-map.md` 选择最接近的 `hr_business` `list`、
+   `get` 或 `analyze` 动作。
 3. 裸 `list` 使用分页；需要明细时传 `--page-size`，需要完整匹配时先加业务过滤条件。
 4. 执行命令后先用 HR 业务语言给结论，再按需要展示关键数据。
 5. 写入类请求转到 `hr-db-ops` 的写入流程：先整理拟录入或拟更新信息，用户确认后执行。
 
 ## Fast Paths
 
-- 用户明确要求“员工所有信息”“花名册明细”“员工主档明细”时，运行
-  `nanobot-webui-business hr business list employee --page-size 100`。
+- 用户明确要求“员工所有信息”“花名册明细”“员工主档明细”时，调用
+  `hr_business(action="list", resource="employee", page_size=100)`。
 - 用户要求人数、人员结构、花名册汇总、员工资料风险、合同覆盖率、合同到期、月度绩效、月度社保、人事异动、奖惩统计或用章统计等分析口径时，优先运行
   `business analyze roster`、`business analyze contract-coverage`、`business analyze contract-expiry`、
   `business analyze performance-month`、`business analyze insurance-month`、`business analyze personnel-change`、

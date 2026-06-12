@@ -6,6 +6,7 @@ import json
 import sys
 from typing import Any
 
+from .context import BusinessCommandContext
 from .policy import (
     SCOPED_MULTI_COMPANY_COMMANDS,
     authorize_hr_command,
@@ -78,7 +79,12 @@ def main(argv: list[str] | None = None, repo: HrRepository | None = None) -> int
         return 1
 
 
-def run(argv: list[str], *, repo: HrRepository) -> Any:
+def run(
+    argv: list[str],
+    *,
+    repo: HrRepository,
+    context: BusinessCommandContext | None = None,
+) -> Any:
     parsed = parse_args(argv)
     command = parsed["command"]
     options = parsed["options"]
@@ -90,11 +96,33 @@ def run(argv: list[str], *, repo: HrRepository) -> Any:
         return business_help()
     explicit_options = set(options)
     options = validate_options(command, options)
-    policy = load_access_policy()
+    policy = context.policy if context and context.policy is not None else load_access_policy()
     apply_scoped_company_default(command=command, options=options, policy=policy)
     plan = read_json(options.get("input")) if options.get("input") else None
     authorize_hr_command(command=command, options=options, plan=plan, policy=policy)
-    return dispatch(command, options, plan, repo, explicit_options=explicit_options)
+    return dispatch(command, options, plan, repo, explicit_options=explicit_options, policy=policy)
+
+
+def run_business_command(
+    argv: list[str],
+    *,
+    repo: HrRepository | None = None,
+    context: BusinessCommandContext | None = None,
+) -> dict[str, Any]:
+    """Run an HR business command for in-process tools using the CLI envelope."""
+    repo = repo or HrRepository()
+    try:
+        result = run(argv, repo=repo, context=context)
+        return {"ok": True, "data": result}
+    except PartialFailureError as exc:
+        return {
+            "ok": False,
+            "error": str(exc),
+            "partial_results": exc.partial_results,
+            "failed": exc.failed,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": str(exc)}
 
 
 def dispatch(
@@ -104,8 +132,9 @@ def dispatch(
     repo: HrRepository,
     *,
     explicit_options: set[str] | None = None,
+    policy: Any = None,
 ) -> Any:
-    scoped = scoped_company_names(options)
+    scoped = scoped_company_names(options, policy=policy)
     lookup = employee_lookup_options(options)
     lookup["company_names"] = scoped
     explicit_options = explicit_options or set()
@@ -119,7 +148,7 @@ def dispatch(
         case "business-plan-schema":
             return business_plan_schema(resource=options.get("resource"), workflow=options.get("workflow"))
         case "list-companies":
-            scoped_companies = scoped_company_list()
+            scoped_companies = scoped_company_list(policy)
             records = repo.list_companies(
                 name=options.get("name"),
                 company_names=[row["name"] for row in scoped_companies] if scoped_companies is not None else None,
@@ -516,10 +545,10 @@ def apply_scoped_company_default(command: str | None, options: dict[str, Any], p
         options["company"] = policy.company_scope[0]
 
 
-def scoped_company_names(options: dict[str, Any]) -> list[str] | None:
+def scoped_company_names(options: dict[str, Any], *, policy: Any = None) -> list[str] | None:
     if options.get("company"):
         return None
-    policy = load_access_policy()
+    policy = policy or load_access_policy()
     if policy.unrestricted:
         return None
     return policy.company_scope

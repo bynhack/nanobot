@@ -5,17 +5,17 @@ description: "HR 写入、导入、删除、匹配歧义、附件处理、确认
 
 # HR Policy
 
-本技能定义 HR 数据操作的业务安全规则。权限边界由 WebUI business runtime、标准业务 CLI
+本技能定义 HR 数据操作的业务安全规则。权限边界由 WebUI business runtime、结构化 `hr_business` 工具
 和数据查询层共同执行；模型不要读取 policy 文件、runtime 文件或数据库配置来判断权限。
 
 ## Read vs Write
 
-- 只读请求可以直接使用 `nanobot-webui-business hr business list|get`。
+- 只读请求可以直接使用 `hr_business` 的 `list|get|analyze` 动作。
 - 默认不要传 `--company`，让当前账号 policy 自动限定授权公司范围；只有用户明确指定公司时
   才传 `--company "公司全称"`。
 - 新增、修改、导入、作废、清理和删除必须先 preview，并在用户明确确认后执行。
 - 写入信息不完整、有歧义或有风险时，只追问继续处理必需的业务信息。
-- 不要猜测 HR 事实，不要绕过标准业务 CLI 直接访问数据库。
+- 不要猜测 HR 事实，不要绕过 `hr_business` 直接访问数据库或通过 `exec` 调 HR business CLI。
 
 ## Matching Rules
 
@@ -45,8 +45,8 @@ description: "HR 写入、导入、删除、匹配歧义、附件处理、确认
 
 1. Parse the source data.
 2. Use `hr-schema` to map columns to business objects and fields.
-3. 使用 `business schema <resource> --workflow create|update` 获取字段契约和示例。
-4. 使用标准 `business` read/preview 命令完成匹配和预览。
+3. 使用 `hr_business(action="schema", resource="<resource>", workflow="create|update")` 获取字段契约和示例。
+4. 使用标准 `hr_business` read/preview 动作完成匹配和预览。
 5. 输出简洁的确认摘要。
 6. 用户确认后再执行 create、delete 或其他写入命令，最后 verify。
 

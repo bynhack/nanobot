@@ -14,6 +14,9 @@ dependencies = [
 [project.entry-points."nanobot.channels"]
 webui_plugin = "nanobot_channel_webui:WebUIChannel"
 
+[project.entry-points."nanobot.tools"]
+hr_business = "nanobot_channel_webui.tools.hr_business:HrBusinessTool"
+
 [project.scripts]
 nanobot-webui = "nanobot_channel_webui.cli:main"
 nanobot-webui-business = "nanobot_channel_webui.business_modules.hr.cli:main"

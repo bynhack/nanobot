@@ -505,7 +505,14 @@ def test_audit_logger_writes_structured_events_and_filters_by_user(tmp_path: Pat
         chat_id="chat-2",
     )
 
-    audit.record(policy=scoped, tool="exec", command="cmd1", decision="allow", reason="hr_cli_allowed")
+    audit.record(
+        policy=scoped,
+        tool="exec",
+        command="cmd1",
+        decision="allow",
+        reason="hr_cli_allowed",
+        metadata={"persisted": True},
+    )
     audit.record(policy=other, tool="exec", command="cmd2", decision="deny", reason="tenant_scope_denied")
 
     own_events = audit.recent(email="hr@example.com", include_all=False)
@@ -515,6 +522,7 @@ def test_audit_logger_writes_structured_events_and_filters_by_user(tmp_path: Pat
     assert own_events[0]["version"] == "tenant-runtime/audit/v1"
     assert own_events[0]["tenant_policy"]["version"] == "tenant-runtime/v1"
     assert own_events[0]["command"] == "cmd1"
+    assert own_events[0]["metadata"] == {"persisted": True}
     assert len(all_events) == 2
 
 
@@ -526,7 +534,7 @@ def test_normalize_legacy_audit_event() -> None:
     assert event["decision"] == "deny"
 
 
-def test_hr_exec_command_gets_policy_env_for_scoped_user(tmp_path: Path) -> None:
+def test_hr_exec_business_cli_is_denied_for_scoped_user(tmp_path: Path) -> None:
     write_skill_contract(tmp_path)
     registry = ToolGateway(FakeRegistry(), audit=TenantAuditLogger(tmp_path), workspace=tmp_path)
     with bind_policy_context(scoped_policy(tmp_path)):
@@ -612,14 +620,13 @@ def test_organization_tree_business_command_gets_policy_env(tmp_path: Path) -> N
     registry = ToolGateway(FakeRegistry(), audit=TenantAuditLogger(tmp_path), workspace=tmp_path)
 
     with bind_policy_context(policy):
-        _tool, params, error = registry.prepare_call(
+        _tool, _params, error = registry.prepare_call(
             "exec",
             {"command": "nanobot-webui-business hr business list department"},
         )
 
-    assert error is None
-    assert params["command"].startswith("NANOBOT_WEBUI_POLICY_FILE=")
-    assert "business list department" in params["command"]
+    assert error is not None
+    assert "hr_business_cli_requires_tool" in error
 
 
 def test_scoped_user_can_write_json_runtime_input_file(tmp_path: Path) -> None:
@@ -772,40 +779,40 @@ def test_capability_contract_allows_declared_standard_business_command(tmp_path:
     registry = ToolGateway(FakeRegistry(), audit=TenantAuditLogger(tmp_path), workspace=tmp_path)
 
     with bind_policy_context(scoped_policy(tmp_path)):
-        _tool, params, error = registry.prepare_call(
+        _tool, _params, error = registry.prepare_call(
             "exec",
             {"command": "skills/hr-db-ops/scripts/run-hr-cli.sh business analyze headcount"},
         )
 
-    assert error is None
-    assert "business analyze headcount" in params["command"]
+    assert error is not None
+    assert "hr_business_cli_requires_tool" in error
 
     with bind_policy_context(scoped_policy(tmp_path)):
-        _tool, params, error = registry.prepare_call(
+        _tool, _params, error = registry.prepare_call(
             "exec",
             {"command": 'skills/hr-db-ops/scripts/run-hr-cli.sh "business analyze headcount"'},
         )
 
-    assert error is None
-    assert '"business analyze headcount"' in params["command"]
+    assert error is not None
+    assert "hr_business_cli_requires_tool" in error
 
     with bind_policy_context(scoped_policy(tmp_path)):
-        _tool, params, error = registry.prepare_call(
+        _tool, _params, error = registry.prepare_call(
             "exec",
             {"command": "skills/hr-db-ops/scripts/run-hr-cli.sh business analyze headcount 2>&1"},
         )
 
-    assert error is None
-    assert "business analyze headcount" in params["command"]
+    assert error is not None
+    assert "hr_business_cli_requires_tool" in error
 
     with bind_policy_context(scoped_policy(tmp_path)):
-        _tool, params, error = registry.prepare_call(
+        _tool, _params, error = registry.prepare_call(
             "exec",
             {"command": "skills/hr-db-ops/scripts/run-hr-cli.sh business analyze headcount 2>&1 | head -50"},
         )
 
-    assert error is None
-    assert "business analyze headcount" in params["command"]
+    assert error is not None
+    assert "hr_business_cli_requires_tool" in error
 
     with bind_policy_context(scoped_policy(tmp_path)):
         _tool, params, error = registry.prepare_call(
@@ -833,6 +840,8 @@ def test_dynamic_skill_view_exposes_split_business_resources(tmp_path: Path) -> 
     assert "Resources: hr.contract:analyze scoped by `company`" in content
     assert "Resources: hr.performance:query,analyze scoped by `company`" in content
     assert "Resources: hr.insurance:query,analyze scoped by `company`" in content
+    assert "hr_business" in content
+    assert "Always run HR business CLI" not in content
     assert ".nanobot_channel_webui/runtime-inputs/" in content
     assert "write_file" in content
     assert "Never create input plans with shell redirects" in content
@@ -1317,6 +1326,8 @@ def test_dynamic_skill_view_renders_contract_declared_recipe(tmp_path: Path) -> 
     assert "## Capability recipes" in rendered
     assert "### `hr.employee.create`" in rendered
     assert "top-level records" in rendered
+    assert "Tool call: `hr_business(action=\"create\", resource=\"employee\")`" in rendered
+    assert "Human/debug CLI fallback" in rendered
     assert "business create employee --input <plan.json> --confirm 导入员工主档" in rendered
 
 
@@ -1466,15 +1477,15 @@ def test_employee_create_confirm_is_not_rewritten_by_plugin(tmp_path: Path) -> N
     registry = ToolGateway(FakeRegistry(), audit=TenantAuditLogger(tmp_path), workspace=tmp_path)
 
     with bind_policy_context(scoped_policy(tmp_path)):
-        _tool, params, error = registry.prepare_call(
+        _tool, _params, error = registry.prepare_call(
             "exec",
             {
                 "command": "skills/hr-db-ops/scripts/run-hr-cli.sh business create employee --input plan.json --confirm \"确认录入\"",
             },
         )
 
-    assert error is None
-    assert '--confirm "确认录入"' in params["command"]
+    assert error is not None
+    assert "hr_business_cli_requires_tool" in error
 
 
 def test_hr_db_ops_dynamic_view_focuses_employee_create_capabilities(tmp_path: Path, monkeypatch) -> None:

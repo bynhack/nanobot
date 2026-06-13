@@ -114,7 +114,7 @@ async def test_hr_business_persists_large_results(tmp_path: Path, monkeypatch: p
 
     monkeypatch.setattr(hr_business, "run_business_command", fake_run_business_command)
     with bind_policy_context(policy):
-        result = await tool.execute(action="list", resource="employee")
+        result = json.loads(await tool.execute(action="list", resource="employee"))
 
     assert result["ok"] is True
     assert result["persisted"] is True

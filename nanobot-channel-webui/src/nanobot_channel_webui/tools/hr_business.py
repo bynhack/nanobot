@@ -135,7 +135,7 @@ class HrBusinessTool(Tool):
             "required": ["action"],
         }
 
-    async def execute(self, **kwargs: Any) -> dict[str, Any]:
+    async def execute(self, **kwargs: Any) -> str:
         action = str(kwargs.get("action") or "").strip()
         resource = _clean_optional(kwargs.get("resource"))
         policy = get_policy_context()
@@ -174,7 +174,7 @@ class HrBusinessTool(Tool):
                 "full_output_path": str(response.get("full_output_path") or ""),
             },
         )
-        return response
+        return json.dumps(response, ensure_ascii=False, default=str)
 
     def _build_argv(
         self,

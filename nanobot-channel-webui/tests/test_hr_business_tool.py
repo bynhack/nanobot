@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -121,3 +122,50 @@ async def test_hr_business_persists_large_results(tmp_path: Path, monkeypatch: p
     output_path = Path(result["full_output_path"])
     assert output_path.exists()
     assert "webui_plugin_chat-1" in str(output_path)
+    serialized = json.dumps(
+        {"ok": True, "data": {"records": [{"name": "张三", "bio": "x" * 6000}]}},
+        ensure_ascii=False,
+        indent=2,
+        default=str,
+    )
+    expected_hash = hashlib.md5(serialized.encode("utf-8")).hexdigest()[:12]
+    assert output_path.name == f"list-employees-{expected_hash}.json"
+
+
+@pytest.mark.asyncio
+async def test_hr_business_persisted_analyze_summary_keeps_core_metrics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = HrBusinessTool(workspace=tmp_path)
+    policy = _policy(tmp_path, "hr.employee")
+
+    def fake_run_business_command(_argv, *, context=None):
+        return {
+            "ok": True,
+            "data": {
+                "as_of": "2026-06-13",
+                "summary": {"total_employees": 30, "active_employees": 28},
+                "findings": [
+                    {
+                        "title": "资料完整性待复核",
+                        "severity": "medium",
+                        "record_ids": [str(index) for index in range(30)],
+                    }
+                ],
+                "consistency": {"passed": True},
+                "records": [{"name": f"员工{index}", "bio": "x" * 200} for index in range(30)],
+            },
+        }
+
+    monkeypatch.setattr(hr_business, "run_business_command", fake_run_business_command)
+    with bind_policy_context(policy):
+        result = json.loads(await tool.execute(action="analyze", resource="roster"))
+
+    assert result["persisted"] is True
+    summary = result["summary"]
+    assert summary["as_of"] == "2026-06-13"
+    assert summary["summary"] == {"total_employees": 30, "active_employees": 28}
+    assert summary["consistency"] == {"passed": True}
+    assert summary["findings"] == [{"title": "资料完整性待复核", "severity": "medium"}]
+    assert summary["record_count"] == 30

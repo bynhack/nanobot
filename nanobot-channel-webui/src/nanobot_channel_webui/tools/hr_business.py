@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from contextlib import contextmanager
@@ -275,7 +276,8 @@ class HrBusinessTool(Tool):
             / "hr"
         )
         directory.mkdir(parents=True, exist_ok=True)
-        path = directory / f"{command}-{abs(hash(serialized))}.json"
+        short_hash = hashlib.md5(serialized.encode("utf-8")).hexdigest()[:12]
+        path = directory / f"{command}-{short_hash}.json"
         path.write_text(serialized + "\n", encoding="utf-8")
         return {
             "ok": bool(result.get("ok")),
@@ -340,11 +342,26 @@ def _summarize_result(result: dict[str, Any]) -> dict[str, Any]:
     data = result.get("data")
     if isinstance(data, dict):
         records = data.get("records")
-        return {
+        summary = {
             "keys": sorted(str(key) for key in data.keys())[:20],
             "record_count": len(records) if isinstance(records, list) else None,
             "count": data.get("count"),
             "topic": data.get("topic"),
             "command": data.get("command"),
         }
+        for key in ("summary", "consistency", "as_of"):
+            if key in data:
+                summary[key] = data[key]
+        if "findings" in data:
+            findings = data["findings"]
+            if isinstance(findings, list):
+                summary["findings"] = [
+                    {key: value for key, value in item.items() if key != "record_ids"}
+                    if isinstance(item, dict)
+                    else item
+                    for item in findings[:10]
+                ]
+            else:
+                summary["findings"] = findings
+        return summary
     return {"type": type(data).__name__}

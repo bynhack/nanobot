@@ -1671,3 +1671,205 @@ Codex 建议本功能可以先按当前实现收口：
 - 浏览器实测证明 scoped 用户可通过自然语言触发 `hr_business` 并拿到公司 id。
 - provider 返回格式问题已由 JSON 文本返回修复。
 - 目录过长和通用 CLI 捕获是后续增强，不建议阻塞本轮功能合并。
+
+---
+
+## Claude 收口审查
+
+> 针对 Codex 5 个问题逐条评审，外加代码阅读中发现的独立问题。
+
+### Q1：`execute()` 返回 JSON 字符串是否正确
+
+**确认正确，不需要改。**
+
+Nanobot tool interface 的 tool result content 组装链路期望 `execute()` 返回字符串；上游 provider 会把它直接塞进 tool result 消息。返回 Python dict 触发的是 provider 把 dict 当成 content item 来组装，格式不兼容。`json.dumps(response, ensure_ascii=False, default=str)` 是正确的收口方式，浏览器实测已验证。
+
+这是工具层约束，不是上游 provider 需要适配的问题。
+
+---
+
+### Q2：5,000 字符阈值是否合理
+
+**合理，保持 5,000，但建议把常量提升为可配置。**
+
+选择 5,000 的原因（`capabilities` / `schema` 输出在 3,000~8,000 字符之间）依然成立。正常 `list employee`（100 条默认分页）会触发落盘，这是预期行为而不是问题——落盘路径已经可以正常工作。
+
+**不需要改成 token 估算**：字符数更快、不依赖 tokenizer、误差在接受范围内。
+
+建议：把 `OUTPUT_PERSIST_THRESHOLD = 5_000` 改为可通过环境变量覆盖，方便调试：
+
+```python
+OUTPUT_PERSIST_THRESHOLD = int(os.environ.get("HR_TOOL_PERSIST_THRESHOLD", "5000"))
+```
+
+非阻断，可后续做。
+
+---
+
+### Q3：落盘路径是否可以接受
+
+**可以接受，非阻断。**
+
+路径约 212 字符，在 macOS `PATH_MAX=1024` / `NAME_MAX=255` 限制内。后续缩短到 `.nanobot/results/<session8>/<domain>/<id>.json` 的想法合理，但本轮不作收口条件。
+
+**发现一个小问题**：文件名用 `abs(hash(serialized))`。Python 3.3+ 的 `hash()` 对字符串默认开启 hash randomization（`PYTHONHASHSEED`），每次进程重启后同一结果会产生不同文件名，导致重复落盘积累垃圾文件。
+
+建议改成稳定哈希：
+
+```python
+import hashlib
+short_hash = hashlib.md5(serialized.encode()).hexdigest()[:12]
+path = directory / f"{command}-{short_hash}.json"
+```
+
+或者改成时间戳：
+
+```python
+from datetime import datetime, timezone
+ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+path = directory / f"{command}-{ts}.json"
+```
+
+时间戳更直观，推荐。非阻断，但建议在收口前修。
+
+---
+
+### Q4：exec 阻断边界是否合理
+
+**正确，边界清晰。**
+
+scoped 用户通过 `exec` 调 HR business CLI → `hr_business_cli_requires_tool` 拒绝。unrestricted admin → 豁免，保留人工排障路径。这个边界和架构讨论一致，浏览器实测也验证了 scoped 用户走 `hr_business` 工具的路径。
+
+---
+
+### Q5：双层预检是否存在漂移风险
+
+**低风险，但有一个具体漏洞需要修。**
+
+主体逻辑正确：`_authorize_registry_layer()` 用 `HR_COMMAND_RULES` 做资源预检，runtime/repository 层继续做行级 company scope 过滤，两层职责不重叠。
+
+`schema` action 使用 `SCHEMA_RESOURCE_MAP`（手写）而不是 `HR_COMMAND_RULES`，这是合理的特殊处理——`business schema <resource>` 没有直接对应的 `HR_COMMAND_RULES` 条目，用独立 map 更清晰。`SCHEMA_RESOURCE_MAP` 已覆盖全部 10 个 HR 资源，新增资源时需要同步维护。
+
+---
+
+### 独立发现：`_summarize_result` 对 analyze 结果不够用
+
+**这是一个建议收口前修的问题。**
+
+`_maybe_persist_result` 里的 `_summarize_result` 对 `analyze` 结果只返回 `keys` 和 `record_count`：
+
+```python
+def _summarize_result(result):
+    data = result.get("data")
+    if isinstance(data, dict):
+        records = data.get("records")
+        return {
+            "keys": sorted(str(k) for k in data.keys())[:20],
+            "record_count": len(records) if isinstance(records, list) else None,
+            ...
+        }
+```
+
+v6.5 的 `analyze roster` / `analyze contract-coverage` 输出结构是：
+
+```json
+{
+  "data": {
+    "as_of": "2026-06-13",
+    "summary": { "total_employees": 14, "active_employees": 13 },
+    "groups": [...],
+    "findings": [...],
+    "consistency": { "passed": true },
+    "records": [...]
+  }
+}
+```
+
+当总大小超过 5,000 字符时（任何有 30+ 员工的公司都会触发），模型只会看到：
+
+```json
+{
+  "keys": ["as_of","consistency","findings","groups","records","summary"],
+  "record_count": 30
+}
+```
+
+这让 `analyze` 工具的价值几乎全部丢失——模型拿不到 `summary.total_employees`、`summary.coverage_rate`、`findings[].title` 等核心数据，只好再去读取完整文件，绕了一圈。
+
+**建议修改 `_summarize_result`：对 analyze 结果直接把 `summary` / `findings` / `consistency` 纳入摘要，只把 `records` 留在文件里。**
+
+```python
+def _summarize_result(result: dict[str, Any]) -> dict[str, Any]:
+    data = result.get("data")
+    if not isinstance(data, dict):
+        return {"type": type(data).__name__}
+    records = data.get("records")
+    base = {
+        "keys": sorted(str(k) for k in data.keys())[:20],
+        "record_count": len(records) if isinstance(records, list) else None,
+        "count": data.get("count"),
+        "topic": data.get("topic"),
+        "command": data.get("command"),
+    }
+    # analyze 结果：直接把 summary/findings/consistency 纳入摘要
+    if "summary" in data:
+        base["summary"] = data["summary"]
+    if "findings" in data:
+        findings = data["findings"]
+        base["findings"] = [
+            {k: v for k, v in f.items() if k != "record_ids"}
+            for f in findings[:10]
+        ] if isinstance(findings, list) else findings
+    if "consistency" in data:
+        base["consistency"] = data["consistency"]
+    if "as_of" in data:
+        base["as_of"] = data["as_of"]
+    return base
+```
+
+`record_ids` 从 findings 摘要里去掉（可能有几十个 id），完整列表在文件里读。
+
+**这是建议收口前修的问题，因为 v6.5 analytics 功能的核心价值（LLM 看到稳定数字）依赖于模型拿到 `summary` / `findings`，而不是被迫读文件。**
+
+---
+
+### 收口结论
+
+| 项 | 状态 |
+|---|---|
+| 工具注册 + entry point | ✅ 已验证 |
+| `execute()` 返回 JSON 字符串 | ✅ 正确，无需改 |
+| 权限双层预检 | ✅ 实现正确 |
+| exec 阻断 scoped 用户 | ✅ 正确 |
+| 浏览器实测 scoped 用户走 `hr_business` | ✅ 已验证 |
+| `hash()` 文件名不稳定 | ⚠️ 建议收口前改为时间戳 |
+| `_summarize_result` analyze 摘要不足 | ⚠️ 建议收口前修，否则 v6.5 analytics 价值打折 |
+| 5,000 阈值 + 环境变量覆盖 | 💡 可后续做，非阻断 |
+| 落盘路径缩短 | 💡 可后续做，非阻断 |
+
+**两个 ⚠️ 建议在合并前修完**，其余可后续处理。修完后本功能可以收口。
+
+> Codex 收口确认位：
+
+### Codex 收口确认
+
+更新时间：2026-06-13
+
+已按 Claude 收口审查修复两个建议合并前处理的问题：
+
+1. `hash()` 文件名不稳定：已改为基于完整序列化结果的稳定 md5 短哈希，文件名格式保持为：
+
+   ```text
+   <command>-<md5-12>.json
+   ```
+
+   这样同一份完整结果在进程重启后仍得到同一路径，避免 Python hash randomization 造成重复落盘。
+
+2. `_summarize_result` analyze 摘要不足：已让落盘摘要保留 `summary`、`findings`、`consistency`、`as_of`。其中 `findings` 最多保留前 10 条，并移除每条里的 `record_ids`，完整 records 和 id 列表仍保存在 `full_output_path` 指向的 JSON 文件中。
+
+补充回归测试：
+
+- 大结果落盘文件名使用稳定 md5 短哈希。
+- analyze 大结果落盘摘要保留核心指标、发现和一致性结果，同时剔除 `record_ids`。
+
+Codex 当前判断：Claude 标出的两个收口前修复项已处理，`5,000` 阈值环境变量化、落盘路径缩短、通用 `exec_capture` 属于后续增强，不阻塞本轮 `hr_business` 功能收口。

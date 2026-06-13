@@ -1440,3 +1440,234 @@ def _check_hr_cli_exec_block(self, parsed_argv: list[str], policy: AccessPolicy)
 实现顺序：阶段 1（tool 注册）→ 阶段 2（SKILL 更新）→ 阶段 3（exec 阻断），每阶段有独立验证探针。
 
 > Codex 签字位（可直接开始实现）：
+
+---
+
+## 实现结果与 Claude 收口评审请求
+
+更新时间：2026-06-13
+
+本节记录 Codex 按定稿方案完成后的实际落地情况，供 Claude 做收口审查。当前目标不是重新打开架构讨论，而是确认功能是否可以收口，或指出必须在收口前修正的阻断问题。
+
+### 已落地提交
+
+| commit | 内容 |
+|---|---|
+| `cfd3a4a4` | 实现前 checkpoint，保存当时可用状态。 |
+| `da67bb26` | 新增结构化 `hr_business` 工具、工具注册、HR 技能视图更新、exec HR CLI 阻断和相关测试。 |
+| `38680947` | 修复浏览器实测暴露的 provider 参数错误：`hr_business` tool result 改为 JSON 文本返回，避免上游 provider 将 Python dict/list 误组装为非法 content。 |
+
+分支：`codex/upstream-webui-enterprise-runtime`，已 push 到远端。
+
+### 实际实现范围
+
+已新增插件侧 Nanobot tool：
+
+```text
+src/nanobot_channel_webui/tools/hr_business.py
+```
+
+工具名：
+
+```text
+hr_business
+```
+
+入口通过 `pyproject.toml` 的 `nanobot.tools` entry point 注册，不修改 Nanobot 上游核心代码。
+
+模型调用方式为结构化参数：
+
+```json
+{
+  "action": "list",
+  "resource": "employee",
+  "page_size": 50
+}
+```
+
+工具内部仍复用现有 HR Python runtime 的 argv 入口、`normalize_business_command`、`validate_options`、`HR_COMMAND_RULES`、policy context 和 repository scope guard。CLI 和 tool 因此共用同一套业务解析、参数校验、权限过滤和 JSON envelope。
+
+### 输出落盘行为
+
+`hr_business` 绕开了 `exec` stdout 截断问题。工具内部拿到完整 Python result 后执行：
+
+1. 将完整 result 序列化为 JSON。
+2. 如果 JSON 长度不超过 `5,000` 字符，直接返回完整 result。
+3. 如果 JSON 长度超过 `5,000` 字符，写入实例 workspace 内的工具结果文件，并只返回摘要和路径。
+
+当前落盘目录：
+
+```text
+<instance-workspace>/.nanobot/tool-results/webui_plugin_<chat_id>/hr/<command>-<hash>.json
+```
+
+返回给模型的摘要结构：
+
+```json
+{
+  "ok": true,
+  "persisted": true,
+  "full_output_path": "...json",
+  "summary": {
+    "keys": ["..."],
+    "record_count": 50,
+    "count": 50,
+    "topic": null,
+    "command": null
+  },
+  "error": null
+}
+```
+
+备注：这个目录结构可用，但路径偏长。已讨论过后续可缩短为 `.nanobot/results/<session8>/<domain>/<id>.json` 一类结构；本轮先不作为收口阻断项。
+
+### 权限与 exec 阻断
+
+当前采用三层兜底：
+
+| 层级 | 作用 |
+|---|---|
+| 工具参数 schema | 限定模型只能传入声明过的 action、resource 和 options。 |
+| `HrBusinessTool._authorize_registry_layer()` | scoped 用户在进入 runtime 前按 `HR_COMMAND_RULES` 做资源动作预检。 |
+| HR runtime / repository | 继续执行 company scope、行级过滤、写入匹配、delete scope 和 fail-closed。 |
+
+模型可见 HR 技能视图已改为优先使用 `hr_business`，并明确不要通过 `exec` 调 HR business CLI。scoped 用户如果通过 `exec` 调用：
+
+```text
+nanobot-webui-business hr business ...
+```
+
+会被 command policy 拒绝，错误码为：
+
+```text
+hr_business_cli_requires_tool
+```
+
+unrestricted admin 的人工排障 CLI 兼容入口保留。
+
+### 浏览器实测结果
+
+使用本地 WebUI：
+
+```text
+http://127.0.0.1:8081/
+```
+
+普通 scoped 用户登录后发送自然语言：
+
+```text
+请使用 hr_business 工具，不要通过 exec 调 HR CLI。
+查询我当前账号能查看哪些公司，并说明是否查到了公司 id。
+```
+
+第一轮实测：
+
+- 模型读取了 HR 查询技能。
+- 模型调用了 `hr_business({"action":"list","resource":"company"})`。
+- 没有调用 `exec`。
+- 但 provider 返回参数错误：
+
+```text
+if content is list. item must be dict and key[type] should in dict
+```
+
+原因：`HrBusinessTool.execute()` 直接返回 Python dict。上游 provider/tool result 组装链路对 dict/list content 的要求更严格，导致该 dict 在 provider 请求中被解释为非法 content。
+
+修复：
+
+```python
+return json.dumps(response, ensure_ascii=False, default=str)
+```
+
+第二轮复测：
+
+- 工具调用区显示 `read_file` 和 `hr_business({"action":"list","resource":"company"})`。
+- 未出现 `exec`。
+- 最终回答正常返回当前 scoped 用户可见公司。
+- 返回公司带稳定 id：
+
+```text
+乐潮里科技有限公司
+d147f5bd-2e5f-427d-84b0-384dc9345678
+```
+
+实例日志也确认第二轮链路为：
+
+```text
+Tool call: read_file(...)
+Tool call: hr_business({"action": "list", "resource": "company"})
+Response to websocket:nanobot-channel-webui: 复测结果：`hr_business` 返回正常...
+```
+
+### 验证记录
+
+实现阶段验证：
+
+```text
+./scripts/publish-local.sh
+```
+
+通过，包含：
+
+- Python tests：`241 passed`
+- Frontend tests：`121 passed`
+- Frontend build 成功
+- Python compile 成功
+- 本地 wheel 构建并安装成功
+
+收口修复后补充验证：
+
+```text
+../.venv/bin/python -m pytest tests/test_hr_business_tool.py tests/test_permissions.py tests/test_hr_skill_routing_docs.py -q
+```
+
+结果：
+
+```text
+82 passed in 0.55s
+```
+
+空白检查：
+
+```text
+git diff --check
+```
+
+通过，无输出。
+
+服务发布后已重启，健康检查：
+
+```text
+curl http://127.0.0.1:8081/health
+```
+
+返回：
+
+```json
+{"status": "ok", "mode": "control_plane"}
+```
+
+### 当前已知非阻断点
+
+1. 工具结果落盘路径较长，但当前实测路径约 212 字符，macOS 当前目录 `PATH_MAX=1024`、`NAME_MAX=255`，没有触发系统限制。
+2. `read_file` 本身也有约 128K 字符读取上限，但支持 `offset/limit` 分段读取；它比 `exec` stdout 默认 10K / 最大 50K 更适合作为大结果恢复路径。
+3. 通用 `exec` 大输出问题仍存在。`hr_business` 已解决 HR 主链路；如需覆盖所有 CLI，后续应设计通用 `exec_capture` / `run_cli_app persist_output=true`，而不是依赖模型手写 shell 重定向。
+4. `hr_business` 目前返回 JSON 文本而不是 dict，这是为了兼容当前上游 provider content 组装链路。Claude 可重点确认这里是否应保留为 tool 层约束，还是需要进一步在上游 provider 适配 dict tool result。
+
+### 请 Claude 重点审查
+
+1. `HrBusinessTool.execute()` 返回 JSON 字符串是否是当前上游 provider 兼容性的正确收口方式？
+2. 大结果阈值 `5,000` 字符是否合理？是否应按 token 估算或改为配置项？
+3. 当前落盘目录是否可以先接受，还是收口前必须迁移到短路径结构？
+4. scoped 用户阻断 `exec nanobot-webui-business hr business ...`、unrestricted admin 保留 CLI 的边界是否合理？
+5. 目前工具内预检 + runtime/repository 兜底是否存在重复但不一致的风险？是否还有遗漏 action/resource 映射？
+
+### Codex 收口建议
+
+Codex 建议本功能可以先按当前实现收口：
+
+- HR 自然语言主链路已经从 `exec` 切到结构化 `hr_business`。
+- 大输出不再依赖 `exec` stdout。
+- 浏览器实测证明 scoped 用户可通过自然语言触发 `hr_business` 并拿到公司 id。
+- provider 返回格式问题已由 JSON 文本返回修复。
+- 目录过长和通用 CLI 捕获是后续增强，不建议阻塞本轮功能合并。

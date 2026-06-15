@@ -842,8 +842,8 @@ def test_dynamic_skill_view_exposes_split_business_resources(tmp_path: Path) -> 
     assert "Resources: hr.insurance:query,analyze scoped by `company`" in content
     assert "hr_business" in content
     assert "Always run HR business CLI" not in content
-    assert ".nanobot_channel_webui/runtime-inputs/" in content
-    assert "write_file" in content
+    assert "prefer passing the JSON plan directly as the `input` string to `hr_business`" in content
+    assert "Do not search for runtime-inputs directories" in content
     assert "Never create input plans with shell redirects" in content
 
 

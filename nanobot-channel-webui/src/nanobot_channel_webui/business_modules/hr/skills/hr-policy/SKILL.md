@@ -70,6 +70,13 @@ If a user indicates that an attachment is the source of truth for import or
 structured entry, parse it before asking for missing fields that may already be
 inside it. If the attachment is only context, treat it as reference material.
 
+用户上传附件并要求写入 HR 附件字段时，附件字段必须来自消息正文自动追加的
+`[File: source: ...]`，而不是文件展示名或模型臆造 URL。这个 source 可以是服务端本地上传文件路径，
+也可以已经是 Supabase Storage 访问链接；HR business runtime 会在写入时把服务端本地文件上传到
+Supabase Storage，再保存返回 URL。合同扫描件使用 `scan_file_url`；社医保、人事异动、奖惩签字件
+使用 `signed_upload`；用章附件使用 `attachments`。如果没有看到 `[File: source: ...]`，不要执行写入，
+应要求用户重新上传附件。
+
 ## User-Facing Style
 
 面向 HR 员工和管理者：

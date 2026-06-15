@@ -6,8 +6,8 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import quote
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -80,6 +80,44 @@ class SupabaseConnector:
     def rpc(self, function_name: str, params: dict[str, Any] | None = None) -> Any:
         return self.client.rpc(function_name, params or {})
 
+    def upload_file(
+        self,
+        *,
+        bucket: str,
+        object_path: str,
+        content: bytes,
+        content_type: str,
+    ) -> str:
+        storage = getattr(self.client, "storage", None)
+        if storage is not None:
+            bucket_client = storage.from_(bucket)
+            upload = bucket_client.upload(
+                object_path,
+                content,
+                {"content-type": content_type, "upsert": "true"},
+            )
+            error = getattr(upload, "error", None) or (upload.get("error") if isinstance(upload, dict) else None)
+            if error:
+                raise RuntimeError(f"upload to Supabase Storage failed: {error}")
+            public = bucket_client.get_public_url(object_path)
+            public_url = (
+                deep_get(public, "data.publicUrl")
+                if isinstance(public, dict)
+                else getattr(getattr(public, "data", None), "publicUrl", None)
+            )
+            return str(public_url or "").strip() or self.storage_public_url(bucket, object_path)
+        if isinstance(self.client, PostgrestClient):
+            return self.client.upload_file(
+                bucket=bucket,
+                object_path=object_path,
+                content=content,
+                content_type=content_type,
+            )
+        raise RuntimeError("Supabase client does not support Storage upload")
+
+    def storage_public_url(self, bucket: str, object_path: str) -> str:
+        return f"{self.config.url.rstrip('/')}/storage/v1/object/public/{quote(bucket)}/{quote(object_path, safe='/')}"
+
 
 def execute(builder: Any) -> tuple[list[dict[str, Any]], int | None]:
     response = builder.execute() if hasattr(builder, "execute") else builder
@@ -108,6 +146,15 @@ def execute_one(builder: Any) -> dict[str, Any] | None:
 
 def clean(value: Any) -> str:
     return str(value).strip() if value is not None else ""
+
+
+def deep_get(value: Any, path: str) -> Any:
+    current = value
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
 
 
 class PostgrestClient:
@@ -144,6 +191,28 @@ class PostgrestClient:
         if prefer:
             headers["Prefer"] = prefer
         return headers
+
+    def upload_file(
+        self,
+        *,
+        bucket: str,
+        object_path: str,
+        content: bytes,
+        content_type: str,
+    ) -> str:
+        response = httpx.post(
+            f"{self.url}/storage/v1/object/{quote(bucket)}/{quote(object_path, safe='/')}",
+            headers={
+                "apikey": self.service_key,
+                "Authorization": f"Bearer {self.service_key}",
+                "Content-Type": content_type,
+                "x-upsert": "true",
+            },
+            content=content,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return f"{self.url}/storage/v1/object/public/{quote(bucket)}/{quote(object_path, safe='/')}"
 
 
 class PostgrestQuery:

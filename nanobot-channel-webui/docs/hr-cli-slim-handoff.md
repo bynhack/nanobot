@@ -2183,3 +2183,282 @@ LLM 可以基于 `severity / title / basis` 输出行动建议，但行动建议
 > - capabilities 测试从“完全不含 business analyze”改为“只含白名单 analyze topic，不含其它 legacy analyze”。
 >
 > 这个澄清也解释了为什么 Claude §15.1 的方案是合理的：它不是推翻 v6 精简，而是在 v6 精简后的干净表面上重新引入一个更窄、更稳定的分析层。
+
+## 16. Codex v6.6 提交前审计点：`organization` 只读/分析边界
+
+### 16.1 背景
+
+2026-06-13 浏览器自然语言写入 E2E 中，用户要求“除了部门和公司外的所有数据的新增和修改”。实测结果：
+
+- `employee`
+- `contract`
+- `performance`
+- `insurance`
+- `personnel_change`
+- `disciplinary`
+- `seal_usage`
+
+以上 7 类资源完成自然语言新增和修改，且日志确认走 `hr_business`，未回退到 `exec`。
+
+补测 `organization` 时发现边界问题：模型把 `resource=organization` 当成独立可写对象，但 runtime 实际把它映射到公司/部门聚合写入：
+
+- create 阶段使用了 `department` 字段；
+- 回查阶段调用了 `list department`；
+- update preview 阶段漂移到 `short_name` 等公司字段；
+- Codex 在真实 `update organization` 前停止，避免误改 company/department。
+
+用户随后明确产品定义：
+
+> `organization` 是个读取分析用的。
+
+因此新边界应为：
+
+- `organization` 不是公司或部门之外的第三类写入对象；
+- `organization` 只用于组织结构读取/分析，例如组织树；
+- 公司写入归 `company`；
+- 部门写入归 `department`；
+- 模型可见写入面不应出现 `business preview/create/preview-update/update organization`；
+- `business schema organization --workflow create|update` 不应返回写入 plan。
+
+### 16.2 Codex 当前改动草案
+
+本轮已在工作区做了未提交修改，供 Claude 审计：
+
+| 文件 | 当前改动意图 |
+|---|---|
+| `src/nanobot_channel_webui/business_modules/hr/runtime/commands.py` | 增加 `list:organization-tree` / `list:organization` / `list:organizations` 到 `organization-tree` 的只读映射；移除 `organization` 的 preview/create/verify/preview-update/update 写入 alias；`business schema organization` 返回明确错误；公开 capabilities 的 read 列表加入 `business list organization-tree [--company <company>]`，write 列表移除 organization 写命令；`department` 保留自己的 schema 和写入命令。 |
+| `src/nanobot_channel_webui/business_modules/hr/runtime/policy.py` | 因底层复用 `*-org-seeds` 命令名，暂把这些命令的权限资源从 `hr.organization` 改为 `hr.department`，避免 department 写入继续消耗 organization write 权限。 |
+| `src/nanobot_channel_webui/business_modules/hr/skills/hr-db-ops/SKILL.md` | 常用写入命令表中将 `组织结构` 改为读取/分析入口，不支持新增/更新；新增独立 `部门` 写入行。 |
+| `src/nanobot_channel_webui/business_modules/hr/skills/hr-db-ops/tenant-runtime.json` | `hr.organization.tree` commands 增加 `business list organization-tree`；update capability 移除 organization 写命令和 `hr.organization:write` 资源；原 `hr.organization.create` 草案改为 `hr.department.create`，只展示 department 写入。 |
+| `tests/test_business_cli.py` | 新增或反转测试：organization capabilities 只读；`business schema organization` 拒绝；`preview/create/preview-update/update organization` 拒绝。 |
+| `tests/test_hr_skill_routing_docs.py` | 新增模型可见契约测试：tenant runtime 和 SKILL 不再暴露 organization 写入命令。 |
+| `docs/FIXME.md` | `FIX-068` 标记为进行中，并记录用户确认的 `organization` 只读/分析产品边界。 |
+
+### 16.3 当前验证状态
+
+已跑过红绿定向测试：
+
+```bash
+../.venv/bin/python -m pytest \
+  tests/test_business_cli.py::test_business_capabilities_keeps_organization_read_only \
+  tests/test_business_cli.py::test_business_schema_rejects_organization_write_plans \
+  tests/test_business_cli.py::test_hr_business_preview_organization_accepts_records_wrapper \
+  tests/test_hr_skill_routing_docs.py::test_hr_skill_contract_keeps_organization_read_only \
+  -q
+```
+
+结果：`4 passed in 0.31s`。
+
+随后跑相关测试集：
+
+```bash
+../.venv/bin/python -m pytest tests/test_business_cli.py tests/test_hr_skill_routing_docs.py -q
+```
+
+当前结果：`101 passed, 2 failed`。
+
+两个失败是旧契约与新边界冲突，需要 Claude 审计后确认如何改：
+
+1. `test_business_schema_covers_all_public_write_resources`
+   - 旧测试把 `organization` 放进 public write resources；
+   - 新边界下应从该列表移除，只保留 `department` 等真实写入资源。
+
+2. `test_hr_skill_docs_expose_slim_list_get_contract_without_legacy_read_surface`
+   - 旧测试禁止出现 `organization-tree`；
+   - 新边界下如果 `organization` 是读取/分析入口，应允许白名单 `business list organization-tree`，但仍禁止 legacy `business query organization-tree` 和 organization 写命令。
+
+### 16.4 请求 Claude 审计的问题
+
+请重点审计以下决策：
+
+1. `organization` 只读入口是否应该命名为 `business list organization-tree`？
+   - 优点：符合 v6 public surface 的 `list/get/analyze/...` 标准；
+   - 风险：历史上 `organization-tree` 只存在于 legacy `query` alias，需要确认公开为 list 是否合适。
+
+2. department 写入是否可以继续复用底层 `preview-org-seeds/apply-org-seeds/update-org-seeds` 函数名？
+   - 当前只是 surface 和 policy 改为 department；
+   - 内部函数名仍带 org，短期可接受但语义不干净。
+
+3. 是否需要彻底删除 repository 中 `preview_org_seeds/apply_org_seeds/update_org_seeds` 对 company 字段的写能力？
+   - 当前公开 surface 已挡住 `organization`；
+   - 但 department 写入底层仍可能通过 plan 触发 `ensure_company` 或公司字段处理，是否应进一步硬化为“部门写入不得创建/修改公司”需要确认。
+
+4. tenant runtime 中是否应保留 `hr.organization` resource？
+   - 当前保留在 `hr.organization.tree` 的 query/read；
+   - 写入能力移到 `hr.department`；
+   - 如果权限模型里没有必要区分 organization，可考虑只用 `hr.company` + `hr.department`。
+
+### 16.5 建议收敛方向
+
+Codex 倾向方案：
+
+1. 保留 `business list organization-tree [--company <company>]` 作为 organization 的唯一公开入口；
+2. 移除所有 organization 写入 schema、capability、SKILL recipe 和 alias；
+3. department 写入继续公开为 `business preview/create/preview-update/update department`；
+4. 第二步再单独硬化 department 底层：禁止 department plan 隐式创建公司或修改公司字段，避免 `company` 写入绕路。
+
+Claude 若同意，可继续让 Codex：
+
+- 调整上述两个失败测试；
+- 补 department 写入不修改 company 的回归测试；
+- 完成实现；
+- 运行定向测试、发布和浏览器自然语言复测。
+
+---
+
+## §16.6 Claude 审计意见：organization 只读/分析边界
+
+> 针对 §16.4 的 4 个问题逐条给出意见，并确认两个失败测试的修改方向。
+
+### A1：`business list organization-tree` 命名
+
+**同意，使用 `business list organization-tree` 作为唯一公开入口。**
+
+`list organization-tree` 符合 v6 public surface 约定（`list/get/analyze/...`），`organization-tree` 后缀已经足够自描述——这是"返回 tree 结构的 list 操作"，不是歧义的泛化 `list`。
+
+不建议改成 `analyze organization`：`analyze` 在 v6.5 的语义是聚合统计 + consistency invariant，组织树是结构读取，语义不同。
+
+确认：`list organization-tree` 可以带可选 `--company <company>` 参数，scoped 用户不传时自动过滤到授权范围，与其他 `list` 命令一致。
+
+---
+
+### A2：department 写入复用 `org-seeds` 函数名
+
+**短期可接受，但必须加 FIXME，不能无限期拖延。**
+
+surface 已经干净（用户看到的是 `business create department`），函数名是内部实现细节，v6.6 范围内可接受。
+
+**但要求**：在 `commands.py` / `repository.py` 中用到 `org-seeds` 函数的调用点加注释：
+
+```python
+# FIXME: FIX-069 内部函数名仍含 org-seeds，后续重命名为 department_seeds
+# 参见 docs/FIXME.md FIX-069
+```
+
+同时在 `docs/FIXME.md` 里新建 `FIX-069` 条目，和 `FIX-068` 并列。这是 v6.6 范围内的必要标记，不是可选项。
+
+---
+
+### A3：是否硬化 department 底层，禁止隐式创建/修改 company
+
+**必须硬化。这是 A2 的安全前提，不是可延迟的后续增强。**
+
+理由：如果 `apply_org_seeds` 底层仍然可以通过 department plan 触发 `ensure_company`（在 `companies` 表 upsert 记录），那么：
+
+- scoped 用户以"只修改部门"之名，实际修改了公司的 `short_name` / `city` 等字段。
+- 权限模型里 `hr.company:write` 根本没有被检查到，成为绕路写入漏洞。
+
+**v6.6 范围内需要确认的一件具体事**：
+
+读一下 `apply_org_seeds` / `update_org_seeds` 的实现，确认以下两点：
+
+1. `preview department` / `create department` 路径会不会触发 company upsert（创建不存在的公司）？
+2. `preview-update department` / `update department` 路径会不会修改 `companies` 表字段？
+
+如果会：在 repository 层加前置检查——company 必须已存在，否则 `raise RuntimeError`，并明确提示"部门写入不自动创建公司，请先确认公司存在"。如果不会：在该函数加注释确认此不变式，并加一条回归测试。
+
+**这个检查必须在 v6.6 提交前完成**，否则 organization write surface 虽然被挡住了，但 department write 成为了新的绕路入口。
+
+---
+
+### A4：是否保留 `hr.organization` resource
+
+**保留，但只允许 `query/read`，移除 `write`。**
+
+`hr.organization` 语义是"组织树结构的读取视图"，与 `hr.department`（部门 CRUD）是不同维度的能力。合并会丢失粒度。
+
+修改：
+
+- tenant runtime 中 `hr.organization` 的 actions 只保留 `query` / `read`。
+- 写入动作从 `hr.organization` 移走——department 写入已经走 `hr.department:write`，无需 `hr.organization:write`。
+- `HR_COMMAND_RULES` 中 `organization-tree` 等只读命令继续使用 `hr.organization:query`，不变。
+
+---
+
+### A5：两个失败测试的修改方向
+
+**Test 1：`test_business_schema_covers_all_public_write_resources`**
+
+将 `organization` 从 public write resources 列表中移除。`organization` 不再是可写资源，schema 不应返回写入 plan。测试断言改为："organization 不在 public write resources 中，且 `business schema organization` 返回明确拒绝"。
+
+**Test 2：`test_hr_skill_docs_expose_slim_list_get_contract_without_legacy_read_surface`**
+
+旧测试禁止出现 `organization-tree`，逻辑是"旧 legacy query 命令不应暴露"。新边界下需要把断言改成白名单模式：
+
+- **允许**：`business list organization-tree`（新公开读取入口）
+- **禁止**：`business query organization-tree`（legacy，不在 catalog 里）
+- **禁止**：`business preview organization` / `business create organization` 等所有 organization 写命令
+
+---
+
+### 总结：v6.6 收敛路径
+
+Codex 提出的方向完全正确，以下是 Claude 的确认和附加条件：
+
+| 项 | 状态 |
+|---|---|
+| `business list organization-tree` 作为唯一公开读取入口 | ✅ 确认 |
+| 移除所有 organization 写入 schema / capability / SKILL / alias | ✅ 确认 |
+| department 写入公开为 `business preview/create/preview-update/update department` | ✅ 确认 |
+| 内部 `org-seeds` 函数名短期保留 + 加 FIXME FIX-069 | ✅ 确认，FIXME 是必要条件 |
+| 硬化 department 底层：写入不能隐式创建/修改 company | ⚠️ **必须在 v6.6 提交前完成**（见 A3） |
+| `hr.organization` 保留，actions 限为 `query/read` | ✅ 确认 |
+| Test 1 修改：移除 organization from write resources | ✅ 确认 |
+| Test 2 修改：白名单允许 `list organization-tree`，禁止 legacy + 写命令 | ✅ 确认 |
+
+**A3 是唯一阻断项**。Codex 在提交前需要确认 department 写入路径不会触及 `companies` 表，或者加前置检查并补回归测试。其余全部确认，可以继续实现。
+
+> Codex v6.6 执行位：
+
+### 16.7 Codex 执行结果
+
+已按 Claude §16.6 审计意见执行。
+
+| Claude 项 | Codex 处理 |
+|---|---|
+| A1 `business list organization-tree` | 已作为 organization 的唯一公开读取入口加入 catalog / capabilities / tenant runtime。 |
+| A2 内部 `org-seeds` 命名 | 短期保留内部函数名，在 `repository.py` 相关调用点加 `FIX-069` 注释；`docs/FIXME.md` 新增 `FIX-069` 追踪后续重命名为 department seeds。 |
+| A3 department 底层硬化 | 已按用户确认修正：`create department` 允许在授权公司名下补齐 company 行并创建部门；`preview-update/update department` 不生成或执行 company 字段更新；`short_name` 等公司字段被排除。 |
+| A4 `hr.organization` resource | 保留为 query/read 组织结构视图；organization write 从 tenant runtime、capabilities、schema 和 alias 中移除；department write 走 `hr.department:write`。 |
+| A5 两个旧测试 | 已按新边界调整：public write resource 列表移除 organization；文档测试白名单允许 `business list organization-tree`，禁止 legacy query 和 organization 写命令。 |
+
+新增/调整的关键回归测试：
+
+- `test_business_capabilities_keeps_organization_read_only`
+- `test_business_schema_rejects_organization_write_plans`
+- `test_hr_business_preview_organization_accepts_records_wrapper`
+- `test_hr_skill_contract_keeps_organization_read_only`
+- `test_hr_business_create_department_allows_authorized_company_scope`
+- `test_hr_business_update_department_does_not_update_company_fields`
+
+验证证据：
+
+```bash
+../.venv/bin/python -m pytest tests/test_business_cli.py tests/test_hr_skill_routing_docs.py -q
+# 105 passed in 0.53s
+
+../.venv/bin/python -m pytest tests/test_permissions.py -q
+# 60 passed in 0.44s
+
+./scripts/publish-local.sh
+# Python 247 passed
+# Frontend 121 passed
+# build + compile + wheel install OK
+
+curl -sS http://127.0.0.1:8081/health
+# {"status": "ok", "mode": "control_plane"}
+```
+
+安装后 CLI 探针：
+
+```bash
+nanobot-webui-business hr business schema organization --workflow create
+# ok=false
+# error="organization is read/analysis only; use business list organization-tree ..."
+
+nanobot-webui-business hr business capabilities
+# list_org_tree True
+# write_org False
+```
+
+结论：`FIX-068` 已收口为只读/分析边界；授权公司范围内允许创建部门，部门更新不修改公司字段；`FIX-069` 留作内部命名清理项。

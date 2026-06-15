@@ -1033,11 +1033,11 @@ class WebUIChannel(BaseChannel):
             with open(destination, "wb") as handle:
                 while chunk := await part.read_chunk():
                     handle.write(chunk)
-
+            mime = part.headers.get("Content-Type", "") or mimetypes.guess_type(destination.name)[0] or ""
             uploaded.append({
                 "path": str(destination),
                 "name": upload_display_name(filename),
-                "mime": part.headers.get("Content-Type", "") or mimetypes.guess_type(destination.name)[0] or "",
+                "mime": mime,
                 "url": self._public_upload_media_url(destination),
             })
 

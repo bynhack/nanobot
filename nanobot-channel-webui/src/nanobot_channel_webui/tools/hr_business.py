@@ -197,7 +197,7 @@ class HrBusinessTool(Tool):
                 continue
             option_name = OPTION_NAME_ALIASES.get(key, key.replace("_", "-"))
             if option_name == "input":
-                value = str(self._resolve_input_path(str(value), chat_id))
+                value = str(self._resolve_input(str(value), chat_id))
             options[option_name] = value
         for key, value in options.items():
             argv.append(f"--{key}")
@@ -239,13 +239,37 @@ class HrBusinessTool(Tool):
         if not policy.to_tenant_policy().allows(hr_resource, hr_action):
             raise RuntimeError(f"当前账号无权执行 HR 资源动作: {hr_resource}:{hr_action}")
 
-    def _resolve_input_path(self, raw: str, chat_id: str) -> Path:
-        base = (
+    def _resolve_input(self, raw: str, chat_id: str) -> Path:
+        stripped = raw.strip()
+        if stripped.startswith(("{", "[")):
+            return self._materialize_inline_input(stripped, chat_id)
+        return self._resolve_input_path(stripped, chat_id)
+
+    def _runtime_input_base(self, chat_id: str) -> Path:
+        return (
             self._workspace
             / ".nanobot_channel_webui"
             / "runtime-inputs"
             / (chat_id or "unknown")
         ).resolve()
+
+    def _materialize_inline_input(self, raw: str, chat_id: str) -> Path:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"input JSON 格式无效: {exc.msg}") from exc
+        serialized = json.dumps(parsed, ensure_ascii=False, indent=2, sort_keys=True)
+        if len(serialized.encode("utf-8")) > MAX_RUNTIME_INPUT_BYTES:
+            raise RuntimeError("input 文件超过 256 KB 限制")
+        base = self._runtime_input_base(chat_id)
+        base.mkdir(parents=True, exist_ok=True)
+        short_hash = hashlib.md5(serialized.encode("utf-8")).hexdigest()[:12]
+        path = base / f"inline-{short_hash}.json"
+        path.write_text(serialized + "\n", encoding="utf-8")
+        return path
+
+    def _resolve_input_path(self, raw: str, chat_id: str) -> Path:
+        base = self._runtime_input_base(chat_id)
         candidate = Path(raw).resolve() if Path(raw).is_absolute() else (base / raw).resolve()
         if not candidate.is_relative_to(base):
             raise RuntimeError("input 路径越界，必须位于当前实例 runtime-inputs 目录内")

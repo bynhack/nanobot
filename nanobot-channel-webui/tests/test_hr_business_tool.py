@@ -105,6 +105,30 @@ def test_hr_business_rejects_input_outside_runtime_input_dir(tmp_path: Path) -> 
         )
 
 
+def test_hr_business_inline_json_input_is_materialized_in_current_chat_dir(tmp_path: Path) -> None:
+    tool = HrBusinessTool(workspace=tmp_path)
+
+    argv = tool._build_argv(
+        "preview",
+        "department",
+        {
+            "action": "preview",
+            "resource": "department",
+            "input": '{"company":"乐潮里科技有限公司","department":"自然语言部门"}',
+        },
+        "chat-1",
+    )
+
+    input_index = argv.index("--input") + 1
+    input_path = Path(argv[input_index])
+    assert input_path.exists()
+    assert input_path.parent == tmp_path / ".nanobot_channel_webui" / "runtime-inputs" / "chat-1"
+    assert json.loads(input_path.read_text(encoding="utf-8")) == {
+        "company": "乐潮里科技有限公司",
+        "department": "自然语言部门",
+    }
+
+
 @pytest.mark.asyncio
 async def test_hr_business_persists_large_results(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     tool = HrBusinessTool(workspace=tmp_path)

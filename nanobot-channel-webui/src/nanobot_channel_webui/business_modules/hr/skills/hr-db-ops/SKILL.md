@@ -52,6 +52,14 @@ nanobot-webui-business hr business <list|get|analyze|preview|create|preview-upda
 - 写入流程中的任何可见回复都不能说“预览”；如果需要说明正在处理，只说“我先整理拟录入信息”或“我先整理拟更新信息”。
 - 多资源写入或更新也一样适用：不要说“所有预览都通过了”，不要用英文暴露内部 preview 过程，只说“以下拟录入信息已整理完成，请确认”或“以下拟更新信息已整理完成，请确认”。
 - 员工姓名必须按用户原文完整保留；例如“新增员工张三”“新增员工：张三”“员工叫张三”中的姓名片段都不能被截断、改写或自行缩短。不确定姓名边界时，先把拟录入姓名展示给用户确认，不要执行 create/update。
+- 用户上传附件并说“附件 / 扫描件 / 签字件 / 审批件就是这个文件”时，必须使用消息正文中自动追加的
+  `[File: source: ...]` 作为附件字段值；不要凭文件名、展示名或口头描述臆造链接。
+  这个 source 可能是服务端本地上传文件路径，也可能已经是 Supabase Storage URL；HR business runtime
+  会在写入时把服务端本地文件上传到 Supabase Storage，并把返回 URL 保存到业务附件字段。
+  - 合同扫描件写入 `scan_file_url`。
+  - 社医保、人事异动、奖惩签字件写入 `signed_upload`。
+  - 用章附件写入 `attachments`。
+  - 如果用户上传了文件但消息里没有 `[File: source: ...]`，不要写入附件字段，应说明附件上传来源缺失，需要重新上传。
 - 新增记录必须走 `business preview <resource>` → 用户确认 → `business create <resource>`；不要用 `preview-update/update` 创建不存在的记录。
 - 修改已有记录必须走 `business preview-update <resource>` → 用户确认 → `business update <resource>`；`preview-update` 应匹配到唯一已有记录。
 - 除非用户明确要求回读、复查或二次查询，不要在成功 create/update/delete 后再自动运行读取命令做二次验证。
@@ -126,11 +134,11 @@ nanobot-webui-business hr business <list|get|analyze|preview|create|preview-upda
    personnel-change、disciplinary、seal-usage。
 2. 运行 `business schema <resource> --workflow create`。例如 `business schema performance --workflow create`。根据返回的 `fields`、`accepted_aliases` 和 `plan_example` 生成 JSON plan。
 3. 根据用户文本或附件生成 JSON plan；新增 plan 不写 `match_id`。从自然语言提取姓名、公司、部门、岗位等字段时，必须保持用户原文值，不要为了“像姓名”而截断长姓名或测试姓名。
-4. 运行 `business preview <resource> --input <plan.json>`。
+4. 调用 `hr_business(action="preview", resource="<resource>", input="<JSON plan string>")`。
    - 如果用户是在新增员工相关记录，例如新增合同、绩效、社医保、人事异动、奖惩或用章，即使员工主档已经存在，也仍然是该子资源的新增，必须使用 `preview/create`。
 5. 用业务语言说明 preview 实际返回的将创建、跳过、需确认和存在风险的记录；对用户只说“拟录入信息”，不要说内部 `CLI`、`preview`、`预览`、`系统预览`。
 6. 等用户明确确认。
-7. 运行 `business create <resource> --input <plan.json>`。
+7. 调用 `hr_business(action="create", resource="<resource>", input="<same JSON plan string>")`。
 
 ### 更新 / 删除（id-centric）
 
@@ -141,14 +149,14 @@ nanobot-webui-business hr business <list|get|analyze|preview|create|preview-upda
    - 未知 id → `business list <resource> --filter` 缩小范围。
    - 单条命中 → 使用该行 id；多条命中 → 展示候选让用户挑；零条命中 → 告诉用户找不到，不要降级到 create。
 4. 写 plan：`{"match_id": "<id from step 3>", ...新值字段}`。
-5. 更新运行 `business preview-update <resource> --input <plan.json>`；删除没有单独 preview 命令，必须先用 list/get 定位唯一 id，再把拟删除记录给用户确认。
+5. 更新调用 `hr_business(action="preview-update", resource="<resource>", input="<JSON plan string>")`；删除没有单独 preview 命令，必须先用 list/get 定位唯一 id，再把拟删除记录给用户确认。
 6. 用业务语言说明拟更新或拟删除信息；更新确认信息必须来自 preview-update 结果，删除确认信息必须来自 list/get 定位结果。
 7. 等用户明确确认。
-8. 运行 `business update <resource> --input <plan.json>` 或 `business delete <resource> --input <plan.json>`。
+8. 调用 `hr_business(action="update", resource="<resource>", input="<same JSON plan string>")` 或 `hr_business(action="delete", resource="<resource>", input="<same JSON plan string>")`。
 
 为什么先查再写：plan 用 `match_id` 后，CLI 按 id 精确匹配，不会再有“匹配多条 / 匹配错条”风险。
 
-通用要求：只写一次 JSON plan 文件；如果 preview 返回 plan 结构错误，再按错误信息修改同一个文件一次；不要连续尝试多种 wrapper 格式。create/update/delete 结果会包含 verification 或写入结果，不要再调用单独的 verify 命令；除非用户明确要求回读，不要再自动调用读取命令做二次验证。
+通用要求：只准备一次 JSON plan 内容，并优先作为 `hr_business.input` 字符串直接传入；不要查找 runtime-inputs 目录，也不要用 `exec` 或 shell 写 plan。如果 preview 返回 plan 结构错误，再按错误信息修改同一份 plan 一次；不要连续尝试多种 wrapper 格式。create/update/delete 结果会包含 verification 或写入结果，不要再调用单独的 verify 命令；除非用户明确要求回读，不要再自动调用读取命令做二次验证。
 
 ## Conversational Workflow Recipes
 
@@ -198,7 +206,8 @@ seal-usage。多资源联动时分别按各自节奏跑，不要试图把多个�
 
 | 类型 | 新增预览 | 新增执行 | 更新预览 | 更新执行 |
 |---|---|---|---|---|
-| 组织和部门 | `business preview organization --input plan.json` | `business create organization --input plan.json` | `business preview-update organization --input plan.json` | `business update organization --input plan.json` |
+| 组织结构 | 读取/分析：`business list organization-tree [--company 公司全称]` | 不支持新增 | 不支持更新 | 不支持更新 |
+| 部门 | `business preview department --input plan.json` | `business create department --input plan.json` | `business preview-update department --input plan.json` | `business update department --input plan.json` |
 | 员工 | `business preview employee --input plan.json` | `business create employee --input plan.json` | `business preview-update employee --input plan.json` | `business update employee --input plan.json` |
 | 合同 | `business preview contract --input plan.json` | `business create contract --input plan.json` | `business preview-update contract --input plan.json` | `business update contract --input plan.json` |
 | 绩效 | `business preview performance --input plan.json` | `business create performance --input plan.json` | `business preview-update performance --input plan.json` | `business update performance --input plan.json` |

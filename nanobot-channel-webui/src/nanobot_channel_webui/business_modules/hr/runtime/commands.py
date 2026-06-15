@@ -45,7 +45,7 @@ from .repository import (
 AUTO_SCOPED_COMPANY_COMMANDS = SCOPED_MULTI_COMPANY_COMMANDS
 
 UPDATE_CONFIRMATIONS = {
-    "update-org-seeds": "更新公司和部门",
+    "update-org-seeds": "更新部门",
     "update-employees": "更新员工主档",
     "update-contracts": "更新合同",
     "update-performance-reviews": "更新绩效",
@@ -580,6 +580,12 @@ def normalize_business_command(parsed: dict[str, Any]) -> tuple[str, dict[str, A
     if action == "schema" and resource:
         options["resource"] = resource
         return "business-plan-schema", options
+    if resource in {"organization", "organizations"} and action in {"preview", "create", "verify", "preview-update", "update", "delete"}:
+        raise RuntimeError(
+            "organization is read/analysis only; use business list organization-tree "
+            "for organization analysis and business <preview|create|preview-update|update> "
+            "department for department writes"
+        )
     aliases = business_command_aliases(options)
     key = f"{action}:{resource}"
     command = aliases.get(key)
@@ -595,6 +601,9 @@ def business_command_aliases(options: dict[str, Any] | None = None) -> dict[str,
     return {
         "list:company": "list-companies",
         "list:companies": "list-companies",
+        "list:organization-tree": "organization-tree",
+        "list:organization": "organization-tree",
+        "list:organizations": "organization-tree",
         "list:department": "list-departments",
         "list:departments": "list-departments",
         "list:employee": "list-employees",
@@ -708,19 +717,14 @@ def business_command_aliases(options: dict[str, Any] | None = None) -> dict[str,
         "verify:seal-usage": "verify-seal-usage",
         "preview-update:seal-usage": "preview-update-seal-usage",
         "update:seal-usage": "update-seal-usage",
-        "preview:organization": "preview-org-seeds",
         "preview:department": "preview-org-seeds",
         "preview:departments": "preview-org-seeds",
-        "create:organization": "apply-org-seeds",
         "create:department": "apply-org-seeds",
         "create:departments": "apply-org-seeds",
-        "verify:organization": "verify-org-seeds",
         "verify:department": "verify-org-seeds",
         "verify:departments": "verify-org-seeds",
-        "preview-update:organization": "preview-update-org-seeds",
         "preview-update:department": "preview-update-org-seeds",
         "preview-update:departments": "preview-update-org-seeds",
-        "update:organization": "update-org-seeds",
         "update:department": "update-org-seeds",
         "update:departments": "update-org-seeds",
         "delete:employee": "delete-employee-records",
@@ -744,7 +748,7 @@ def business_command_aliases(options: dict[str, Any] | None = None) -> dict[str,
 
 def business_confirmation_for(command: str) -> str | None:
     return {
-        "apply-org-seeds": "创建公司和部门",
+        "apply-org-seeds": "创建部门",
         "apply-employees": "导入员工主档",
         "apply-contracts": "导入合同",
         "apply-performance-reviews": "导入绩效",
@@ -783,12 +787,11 @@ def match_id_plan_field(resource_label: str = "目标记录") -> dict[str, Any]:
 
 
 PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
-    "organization": {
-        "table": "companies/departments",
+    "department": {
+        "table": "departments",
         "fields": [
-            match_id_plan_field("公司或部门记录"),
+            match_id_plan_field("部门记录"),
             plan_field("company", "公司全称；创建部门时用于定位所属公司。", required_for_create=True, match_key=True),
-            plan_field("short_name", "公司简称。"),
             plan_field("department", "部门名称；创建或更新部门时使用。", match_key=True),
             plan_field("new_department", "更新部门名称时的新部门名称。"),
             plan_field("notes", "备注。"),
@@ -796,9 +799,6 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
         "aliases": {"company_name": "company", "department_name": "department", "new_name": "new_department"},
         "create_example": {"company": "武汉赢城集团有限公司", "department": "行政部"},
         "update_example": {"match_id": "abc-123-uuid", "new_department": "人力行政部"},
-    },
-    "department": {
-        "alias_of": "organization",
     },
     "employee": {
         "table": "employees",
@@ -832,11 +832,12 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
             plan_field("expiry_date", "合同到期日期，格式 YYYY-MM-DD。"),
             plan_field("sign_date", "签订日期，格式 YYYY-MM-DD。"),
             plan_field("duration_years", "合同期限年数。"),
+            plan_field("scan_file_url", "合同扫描件 source；使用用户上传附件的 [File: source: ...]，可为服务端本地文件路径或 URL，写入时会保存为 Supabase Storage URL。"),
             plan_field("notes", "备注。"),
         ],
         "aliases": {"name": "employee_name", "employee": "employee_name", "contract_type": "type", "contract_start": "start_date", "contract_end": "expiry_date", "end_date": "expiry_date", "remark": "notes"},
-        "create_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "type": "固定期限劳动合同", "sequence": 1, "start_date": "2026-06-10", "expiry_date": "2029-06-09"},
-        "update_example": {"match_id": "abc-123-uuid", "expiry_date": "2029-12-31"},
+        "create_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "type": "固定期限劳动合同", "sequence": 1, "start_date": "2026-06-10", "expiry_date": "2029-06-09", "scan_file_url": "https://storage.example/hr-documents/contracts/zhangsan-contract.pdf"},
+        "update_example": {"match_id": "abc-123-uuid", "expiry_date": "2029-12-31", "scan_file_url": "https://storage.example/hr-documents/contracts/zhangsan-contract-review.pdf"},
     },
     "performance": {
         "table": "performance_reviews",
@@ -864,13 +865,13 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
             plan_field("employee_name", "员工姓名，用于匹配员工主档。", required_for_create=True, match_key=True),
             plan_field("change_date", "社医保异动日期，格式 YYYY-MM-DD。", required_for_create=True, match_key=True),
             plan_field("status", "异动状态，例如 新增、停缴。", required_for_create=True, match_key=True),
-            plan_field("signed_upload", "签字附件列表。"),
+            plan_field("signed_upload", "签字附件 source 列表；使用用户上传附件的 [File: source: ...]，可为服务端本地文件路径或 URL，写入时会保存为 Supabase Storage URL。"),
             plan_field("hr_clerk", "经办 HR。"),
             plan_field("notes", "备注。"),
         ],
         "aliases": {"name": "employee_name", "employee": "employee_name", "remark": "notes"},
-        "create_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "change_date": "2026-06-10", "status": "新增", "signed_upload": ["社保确认单.pdf"]},
-        "update_example": {"match_id": "abc-123-uuid", "signed_upload": ["社保复核单.pdf"]},
+        "create_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "change_date": "2026-06-10", "status": "新增", "signed_upload": ["https://storage.example/hr-documents/insurance/zhangsan-confirm.pdf"]},
+        "update_example": {"match_id": "abc-123-uuid", "signed_upload": ["https://storage.example/hr-documents/insurance/zhangsan-review.pdf"]},
     },
     "personnel-change": {
         "table": "personnel_changes",
@@ -886,11 +887,12 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
             plan_field("change_reason", "异动原因；更新时表示要写入的新原因。", required_for_create=True),
             plan_field("match_change_reason", "旧异动原因，仅用于更新时匹配。", match_key=True, writable=False),
             plan_field("change_type", "自然语言旧异动原因别名，更新时会归一化为 match_change_reason。", match_key=True, writable=False),
+            plan_field("signed_upload", "审批签字件 source 列表；使用用户上传附件的 [File: source: ...]，可为服务端本地文件路径或 URL，写入时会保存为 Supabase Storage URL。"),
             plan_field("notes", "备注。"),
         ],
         "aliases": {"name": "employee_name", "employee": "employee_name", "change_date": "effective_date", "change_type": "match_change_reason", "old_reason": "match_change_reason", "current_reason": "match_change_reason", "remark": "notes"},
-        "create_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "change_date": "2026-06-11", "current_position": "人事助理", "new_position": "人事专员", "change_reason": "转正"},
-        "update_example": {"match_id": "abc-123-uuid", "new_position": "高级人事专员", "change_reason": "转正后定岗"},
+        "create_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "change_date": "2026-06-11", "current_position": "人事助理", "new_position": "人事专员", "change_reason": "转正", "signed_upload": ["https://storage.example/hr-documents/personnel-change/zhangsan-approval.pdf"]},
+        "update_example": {"match_id": "abc-123-uuid", "new_position": "高级人事专员", "change_reason": "转正后定岗", "signed_upload": ["https://storage.example/hr-documents/personnel-change/zhangsan-review.pdf"]},
     },
     "disciplinary": {
         "table": "disciplinary_records",
@@ -902,12 +904,12 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
             plan_field("match_incident_date", "旧发生日期，仅用于更新时匹配。", match_key=True, writable=False),
             plan_field("penalty_type", "奖惩类型。", required_for_create=True, match_key=True),
             plan_field("penalty_reason", "奖惩原因。", required_for_create=True, match_key=True),
-            plan_field("signed_upload", "签字附件列表。"),
+            plan_field("signed_upload", "签字附件 source 列表；使用用户上传附件的 [File: source: ...]，可为服务端本地文件路径或 URL，写入时会保存为 Supabase Storage URL。"),
             plan_field("hr_clerk", "经办 HR。"),
         ],
         "aliases": {"name": "employee_name", "employee": "employee_name", "incident_dates": "incident_date"},
-        "create_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "incident_date": "2026-06-10", "penalty_type": "警告", "penalty_reason": "迟到"},
-        "update_example": {"match_id": "abc-123-uuid", "incident_date": "2026-06-11", "penalty_type": "通报", "penalty_reason": "实测更新"},
+        "create_example": {"company": "武汉赢城集团有限公司", "employee_name": "张三", "incident_date": "2026-06-10", "penalty_type": "警告", "penalty_reason": "迟到", "signed_upload": ["https://storage.example/hr-documents/disciplinary/zhangsan-warning.pdf"]},
+        "update_example": {"match_id": "abc-123-uuid", "incident_date": "2026-06-11", "penalty_type": "通报", "penalty_reason": "实测更新", "signed_upload": ["https://storage.example/hr-documents/disciplinary/zhangsan-review.pdf"]},
     },
     "seal-usage": {
         "table": "seal_usage",
@@ -923,12 +925,12 @@ PLAN_SCHEMA_CONTRACTS: dict[str, dict[str, Any]] = {
             plan_field("seal_applicant", "用章人姓名。", match_key=True),
             plan_field("seal_applicant_name", "用章人姓名别名，会归一化为 seal_applicant。", match_key=True, writable=False),
             plan_field("applicant", "申请人姓名。", match_key=True),
-            plan_field("attachments", "附件列表。"),
+            plan_field("attachments", "附件 source 列表；使用用户上传附件的 [File: source: ...]，可为服务端本地文件路径或 URL，写入时会保存为 Supabase Storage URL。"),
             plan_field("notes", "备注。"),
         ],
         "aliases": {"current_reason": "match_reason", "old_reason": "match_reason", "new_reason": "reason", "seal_applicant_name": "seal_applicant", "applicant_name": "applicant", "remark": "notes"},
-        "create_example": {"company": "武汉赢城集团有限公司", "usage_date": "2026-06-13", "seal_applicant_name": "张三", "reason": "合同盖章", "attachments": ["用章申请.pdf"]},
-        "update_example": {"match_id": "abc-123-uuid", "new_reason": "普通账号更新流程验收", "attachments": ["验收复核申请.pdf"]},
+        "create_example": {"company": "武汉赢城集团有限公司", "usage_date": "2026-06-13", "seal_applicant_name": "张三", "reason": "合同盖章", "attachments": ["https://storage.example/hr-documents/seal-usage/zhangsan-apply.pdf"]},
+        "update_example": {"match_id": "abc-123-uuid", "new_reason": "普通账号更新流程验收", "attachments": ["https://storage.example/hr-documents/seal-usage/zhangsan-review.pdf"]},
     },
 }
 
@@ -947,7 +949,6 @@ def resolve_plan_schema_resource(resource: str | None) -> str:
         "disciplinary-records": "disciplinary",
         "seal_usage": "seal-usage",
         "departments": "department",
-        "organization-tree": "organization",
     }
     normalized = aliases.get(normalized, normalized)
     definition = PLAN_SCHEMA_CONTRACTS.get(normalized)
@@ -958,6 +959,8 @@ def resolve_plan_schema_resource(resource: str | None) -> str:
 
 def business_plan_schema(*, resource: str | None, workflow: Any = None) -> dict[str, Any]:
     resolved = resolve_plan_schema_resource(resource)
+    if resolved in {"organization", "organization-tree"}:
+        raise RuntimeError("organization is read/analysis only; use business list organization-tree for organization analysis and business schema department for department writes")
     definition = PLAN_SCHEMA_CONTRACTS.get(resolved)
     if not definition:
         supported = sorted(name for name, item in PLAN_SCHEMA_CONTRACTS.items() if not item.get("alias_of"))
@@ -1007,6 +1010,7 @@ def business_command_catalog() -> dict[str, list[str]]:
         "read": [
             "business list company [--page <n>] [--page-size <n>]",
             "business get company --id <id>",
+            "business list organization-tree [--company <company>]",
             "business list department [--company <company>] [--name <name>]",
             "business get department --id <id>",
             "business list employee [--company <company>] [--department <department>] [--status <status>] [--name <name>] [--id-card <id-card>] [--phone <phone>]",
@@ -1062,10 +1066,6 @@ def business_command_catalog() -> dict[str, list[str]]:
             "business create seal-usage --input <plan.json>",
             "business preview-update seal-usage --input <plan.json>",
             "business update seal-usage --input <plan.json>",
-            "business preview organization --input <plan.json>",
-            "business create organization --input <plan.json>",
-            "business preview-update organization --input <plan.json>",
-            "business update organization --input <plan.json>",
         ],
         "delete": [
             "business delete employee --input <plan.json>",

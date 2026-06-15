@@ -87,6 +87,19 @@ def test_hr_skill_docs_route_to_standard_business_cli_only() -> None:
     assert "analyze-headcount" not in combined
 
 
+def test_hr_write_docs_require_uploaded_attachment_source_urls() -> None:
+    db_ops = (HR_SKILLS / "hr-db-ops" / "SKILL.md").read_text(encoding="utf-8")
+    policy = (HR_SKILLS / "hr-policy" / "SKILL.md").read_text(encoding="utf-8")
+    combined = "\n".join([db_ops, policy])
+
+    assert "用户上传附件" in combined
+    assert "[File: source:" in combined
+    assert "Supabase Storage" in combined
+    assert "scan_file_url" in combined
+    assert "signed_upload" in combined
+    assert "attachments" in combined
+
+
 def test_hr_skill_docs_expose_slim_list_get_contract_without_legacy_read_surface() -> None:
     router = (HR_SKILLS / "hr-query-analysis-router" / "SKILL.md").read_text(encoding="utf-8")
     routing_map = (
@@ -115,7 +128,12 @@ def test_hr_skill_docs_expose_slim_list_get_contract_without_legacy_read_surface
     assert "business analyze seal-usage" in combined
     assert "business analyze employee-profile" in combined
     assert "employee-timeline" not in combined
-    assert "organization-tree" not in combined
+    assert "business list organization-tree" in combined
+    assert "business query organization-tree" not in combined
+    assert "business preview organization" not in combined
+    assert "business create organization" not in combined
+    assert "business preview-update organization" not in combined
+    assert "business update organization" not in combined
 
 
 def test_hr_tenant_runtime_metadata_exposes_only_public_read_commands() -> None:
@@ -303,11 +321,13 @@ def test_hr_write_contract_provides_single_plan_file_examples() -> None:
     )
     serialized = json.dumps(tenant_runtime, ensure_ascii=False)
 
-    assert "只写一次 JSON plan 文件" in db_ops
+    assert "只准备一次 JSON plan 内容" in db_ops
+    assert "不要查找 runtime-inputs 目录" in db_ops
     assert '"name": "张三"' in db_ops
     assert '"employee_name": "张三"' in db_ops
-    assert "如果 preview 返回 plan 结构错误，再按错误信息修改同一个文件一次" in db_ops
+    assert "如果 preview 返回 plan 结构错误，再按错误信息修改同一份 plan 一次" in db_ops
     assert "Use one flat JSON plan object or a records array; do not try multiple wrapper formats" in serialized
+    assert "Pass the same JSON plan directly as the hr_business input string" in serialized
 
 
 def test_hr_write_contract_prefers_business_schema_fast_path() -> None:
@@ -326,6 +346,24 @@ def test_hr_write_contract_prefers_business_schema_fast_path() -> None:
     assert "business schema <resource> --workflow create|update" in serialized
     assert "Prefer business schema over reading long hr-schema docs when drafting normal write plans" in serialized
     assert "兜底" in schema
+
+
+def test_hr_skill_contract_keeps_organization_read_only() -> None:
+    db_ops = (HR_SKILLS / "hr-db-ops" / "SKILL.md").read_text(encoding="utf-8")
+    tenant_runtime = json.loads(
+        (HR_SKILLS / "hr-db-ops" / "tenant-runtime.json").read_text(encoding="utf-8")
+    )
+    serialized = json.dumps(tenant_runtime, ensure_ascii=False)
+
+    assert "business list organization-tree" in serialized
+    assert "business preview organization" not in serialized
+    assert "business create organization" not in serialized
+    assert "business preview-update organization" not in serialized
+    assert "business update organization" not in serialized
+    assert "| 组织结构 |" in db_ops
+    assert "读取/分析" in db_ops
+    assert "`business create organization" not in db_ops
+    assert "`business update organization" not in db_ops
 
 
 def test_hr_db_ops_documents_conversational_workflow_recipes() -> None:

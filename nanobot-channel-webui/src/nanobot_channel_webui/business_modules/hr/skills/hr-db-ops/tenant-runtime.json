@@ -147,6 +147,7 @@
       "kind": "query",
       "commands": [
         "list-departments",
+        "business list organization-tree",
         "business list department"
       ],
       "resources": [
@@ -521,10 +522,10 @@
         "Use this recipe for conversational employee onboarding. Do not discover alternative schemas or trial-run writes.",
         "Before drafting normal create/update JSON plans, run business schema <resource> --workflow create|update for the resource-specific plan contract. Prefer business schema over reading long hr-schema docs when drafting normal write plans.",
         "This is a create workflow: run business preview employee before confirmation, then business create employee after confirmation. Do not use preview-update/update for a new employee.",
-        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Write exactly one JSON plan under .nanobot_channel_webui/runtime-inputs/<chat_id>/ from the user natural-language request.",
+        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Pass the same JSON plan directly as the hr_business input string; do not search for runtime-inputs directories.",
         "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
         "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
-        "After confirmation, run business create employee --input <same-plan.json>.",
+        "After confirmation, call hr_business action create employee with the same JSON plan string.",
         "The create command performs the database write and internal verification against the same JSON plan; use the create result as the troubleshooting evidence if verification fails.",
         "A successful create result must include verification.ok true.",
         "A successful create/update/delete result is sufficient; do not run extra readback unless the user explicitly asks for it."
@@ -597,8 +598,6 @@
       "title": "HR 业务数据更新",
       "kind": "update",
       "commands": [
-        "business preview-update organization",
-        "business update organization",
         "business preview-update employee",
         "business update employee",
         "business preview-update contract",
@@ -617,13 +616,6 @@
       "resources": [
         {
           "resource": "hr.employee",
-          "actions": [
-            "write"
-          ],
-          "scope_key": "company"
-        },
-        {
-          "resource": "hr.organization",
           "actions": [
             "write"
           ],
@@ -878,18 +870,16 @@
       ]
     },
     {
-      "id": "hr.organization.create",
-      "title": "组织和部门导入",
+      "id": "hr.department.create",
+      "title": "部门导入",
       "kind": "create",
       "commands": [
-        "business preview organization",
         "business preview departments",
-        "business create organization",
         "business create departments"
       ],
       "resources": [
         {
-          "resource": "hr.organization",
+          "resource": "hr.department",
           "actions": [
             "write"
           ],
@@ -902,24 +892,21 @@
         "添加部门",
         "创建部门",
         "录入部门",
-        "新增组织",
-        "组织导入",
-        "create department",
-        "create organization"
+        "create department"
       ],
       "related_capabilities": [
         "hr.company.list",
         "hr.department.query"
       ],
       "recipe": [
-        "Use this recipe for conversational organization or department creation. Do not discover hidden schemas or trial-run confirmed writes.",
-        "This is a create workflow: run business preview organization before confirmation, then business create organization after confirmation. Do not use preview-update/update for a new organization or department.",
-        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Write exactly one JSON plan under .nanobot_channel_webui/runtime-inputs/<chat_id>/ before calling any command.",
+        "Use this recipe for conversational department creation. Do not discover hidden schemas or trial-run confirmed writes.",
+        "This is a create workflow: run business preview department before confirmation, then business create department after confirmation. Do not use preview-update/update for a new department.",
+        "Use one flat JSON plan object or a records array; do not try multiple wrapper formats. Pass the same JSON plan directly as the hr_business input string before and after confirmation; do not search for runtime-inputs directories.",
         "For adding a department to an existing company, use {\"company\":\"公司全称\",\"departments\":[{\"name\":\"部门名称\"}]}. Put unsupported business notes in summary/source; the department table stores company and name.",
-        "Run business preview organization --input <plan.json> to validate what would be created or already exists.",
+        "Call hr_business action preview department with the JSON plan string to validate what would be created or already exists.",
         "User confirmation must be requested only after the JSON plan has been written and the preview or preview-update command has succeeded. Do not ask for confirmation from the raw user request alone.",
         "Show a business confirmation summary derived from the internal preview result, including records, matched items, skipped items, field diffs, and risks when present. Do not expose CLI, preview, 预览, or 系统预览 in visible replies, including multi-resource workflows.",
-        "After confirmation, run business create organization --input <same-plan.json>.",
+        "After confirmation, call hr_business action create department with the same JSON plan string.",
         "The create command performs internal verification against the same JSON plan and must return verification.ok true; use the create result as the troubleshooting evidence if verification fails.",
         "A successful create/update/delete result is sufficient; do not run extra readback unless the user explicitly asks for it."
       ],
@@ -928,10 +915,7 @@
         "添加部门",
         "创建部门",
         "录入部门",
-        "新增组织",
-        "组织导入",
-        "department create",
-        "organization create"
+        "department create"
       ]
     },
     {

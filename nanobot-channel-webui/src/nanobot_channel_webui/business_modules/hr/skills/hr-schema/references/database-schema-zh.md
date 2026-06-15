@@ -203,7 +203,7 @@ companies（公司）
 | `start_date` | date | 合同开始日期 | |
 | `expiry_date` | date | 合同到期日期 | |
 | `is_permanent` | boolean | 无固定期限 | 默认 false |
-| `scan_file_url` | text | 纸质合同扫描件 | Supabase Storage bucket: `contracts` |
+| `scan_file_url` | text | 纸质合同扫描件 | Supabase Storage bucket: `hr-documents`，目录前缀 `contracts/` |
 | `notes` | text | 备注 | |
 
 ---

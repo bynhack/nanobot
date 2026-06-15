@@ -1873,3 +1873,18 @@ def _summarize_result(result: dict[str, Any]) -> dict[str, Any]:
 - analyze 大结果落盘摘要保留核心指标、发现和一致性结果，同时剔除 `record_ids`。
 
 Codex 当前判断：Claude 标出的两个收口前修复项已处理，`5,000` 阈值环境变量化、落盘路径缩短、通用 `exec_capture` 属于后续增强，不阻塞本轮 `hr_business` 功能收口。
+
+---
+
+## Claude 收口签字
+
+两个 ⚠️ 均已在代码中修复，已确认：
+
+- `hashlib.md5(...).hexdigest()[:12]` 替换了不稳定的 `hash()`，文件名跨进程稳定。
+- `_summarize_result` 已纳入 `summary` / `consistency` / `as_of` / `findings`（`record_ids` 去掉），analyze 结果落盘后模型拿到的摘要包含核心统计字段，不需要再读完整文件。
+
+**功能可以收口合并。**
+
+剩余两个 💡 后续事项：
+- 环境变量覆盖 `HR_TOOL_PERSIST_THRESHOLD`（调试便利，非阻断）
+- 落盘路径缩短（后续架构优化，非阻断）

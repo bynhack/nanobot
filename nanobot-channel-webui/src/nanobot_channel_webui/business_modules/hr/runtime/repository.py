@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -163,6 +164,24 @@ HR_RESOURCE_TO_READ_RESOURCE = {
     "hr.seal_usage": "seal-usage",
 }
 
+ATTACHMENT_FIELD_SPECS = {
+    "hr.contract": {
+        "scan_file_url": {"bucket": "hr-documents", "prefix": "contracts", "array": False},
+    },
+    "hr.insurance": {
+        "signed_upload": {"bucket": "hr-documents", "prefix": "insurance", "array": True},
+    },
+    "hr.personnel_change": {
+        "signed_upload": {"bucket": "hr-documents", "prefix": "personnel-change", "array": True},
+    },
+    "hr.disciplinary": {
+        "signed_upload": {"bucket": "hr-documents", "prefix": "disciplinary", "array": True},
+    },
+    "hr.seal_usage": {
+        "attachments": {"bucket": "hr-documents", "prefix": "seal-usage", "array": True},
+    },
+}
+
 
 class ActiveRecordTable:
     def __init__(self, table: Any, *, filter_active: bool) -> None:
@@ -221,6 +240,69 @@ class HrRepository:
 
     def table_including_deleted(self, name: str) -> Any:
         return self.db.table(name)
+
+    def resolve_attachment_fields(
+        self,
+        record: dict[str, Any],
+        *,
+        resource: str,
+        owner_id: str | None,
+    ) -> dict[str, Any]:
+        specs = ATTACHMENT_FIELD_SPECS.get(resource)
+        if not specs:
+            return record
+        resolved = dict(record)
+        for field, spec in specs.items():
+            if field not in resolved:
+                continue
+            if spec["array"]:
+                values = clean_text_array(resolved.get(field))
+                resolved[field] = [
+                    self.resolve_attachment_value(
+                        value,
+                        bucket=str(spec["bucket"]),
+                        prefix=str(spec["prefix"]),
+                        owner_id=owner_id,
+                    )
+                    for value in values
+                ]
+            else:
+                value = clean_optional(resolved.get(field))
+                resolved[field] = (
+                    self.resolve_attachment_value(
+                        value,
+                        bucket=str(spec["bucket"]),
+                        prefix=str(spec["prefix"]),
+                        owner_id=owner_id,
+                    )
+                    if value
+                    else value
+                )
+        return resolved
+
+    def resolve_attachment_value(
+        self,
+        value: str,
+        *,
+        bucket: str,
+        prefix: str,
+        owner_id: str | None,
+    ) -> str:
+        normalized = normalize_required(value, "attachment")
+        if normalized.startswith(("http://", "https://")):
+            return normalized
+        path = Path(normalized).expanduser()
+        if not path.is_file():
+            raise RuntimeError("附件字段必须是可访问 URL 或服务端已上传文件路径")
+        owner = (owner_id or "unmatched").strip() or "unmatched"
+        object_path = f"{prefix.strip('/')}/{owner}/{path.name}"
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return self.db.upload_file(
+            bucket=bucket,
+            object_path=object_path,
+            content=path.read_bytes(),
+            content_type=content_type,
+        )
 
     def count_table(self, table: str) -> int:
         _data, count = execute(self.table(table).select("*", count="exact", head=True))
@@ -360,6 +442,50 @@ class HrRepository:
         department = normalize_required(department_name, "department name")
         company_result = self.ensure_company(name=company_name)
         company = company_result["record"]
+        existing, _count = execute(
+            self.table("departments")
+            .select("id,name,company_id")
+            .eq("company_id", company["id"])
+            .eq("name", department)
+            .limit(2)
+        )
+        if len(existing) > 1:
+            raise RuntimeError(f"multiple departments matched: {company['name']} / {department}")
+        if len(existing) == 1:
+            return {"action": "existing", "record": existing[0], "company": company}
+        row = execute_one(
+            self.table("departments")
+            .insert(self.audit_insert({"company_id": company["id"], "name": department}))
+            .select("id,name,company_id")
+            .single()
+        )
+        return {"action": "created", "record": row, "company": company}
+
+    def existing_company_for_department_write(self, company_name: str | None) -> dict[str, Any]:
+        company = normalize_required(company_name, "company name")
+        matches = self.find_company_by_name(company)
+        if len(matches) != 1:
+            raise RuntimeError(f"部门写入不自动创建公司，请先确认公司存在: {company}")
+        return matches[0]
+
+    def ensure_company_for_department_create(self, company_name: str | None) -> dict[str, Any]:
+        company = normalize_required(company_name, "company name")
+        self.assert_plan_company_scope(
+            plan={"company": company},
+            company_name=company,
+            resource="hr.department",
+            action="write",
+        )
+        return self.ensure_company(name=company)["record"]
+
+    def ensure_department_for_existing_company(
+        self,
+        *,
+        company_name: str | None,
+        department_name: str | None,
+    ) -> dict[str, Any]:
+        department = normalize_required(department_name, "department name")
+        company = self.existing_company_for_department_write(company_name)
         existing, _count = execute(
             self.table("departments")
             .select("id,name,company_id")
@@ -1844,15 +1970,14 @@ class HrRepository:
         }
 
     def preview_org_seeds(self, *, plan: Any, company_name: str | None = None) -> dict[str, Any]:
+        # FIXME: FIX-069 internal org-seeds naming now represents department writes.
         plan = normalize_org_plan(plan, company_name)
         assert_non_empty_org_plan(plan)
-        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.organization", action="write")
-        companies = []
+        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.department", action="write")
         departments = []
         for company in plan.get("companies", []):
             name = normalize_required(company.get("name"), "company name")
-            matches = self.find_company_by_name(name)
-            companies.append({"name": name, "action": "would_create" if not matches else "existing" if len(matches) == 1 else "ambiguous"})
+            self.ensure_company_for_department_create(name)
             for department in company.get("departments", []):
                 department_name = department if isinstance(department, str) else department.get("name")
                 if not clean_optional(department_name):
@@ -1865,23 +1990,26 @@ class HrRepository:
                         "action": "would_create" if not lookup["departmentMatches"] else "existing",
                     }
                 )
-        return {"companies": companies, "departments": departments}
+        return {"companies": [], "departments": departments}
 
     def apply_org_seeds(self, *, plan: Any, confirm: str | None, company_name: str | None = None) -> dict[str, Any]:
-        if confirm != "创建公司和部门":
-            raise RuntimeError("applyOrgSeeds requires confirm: 创建公司和部门")
+        # FIXME: FIX-069 internal org-seeds naming now represents department writes.
+        if confirm != "创建部门":
+            raise RuntimeError("applyOrgSeeds requires confirm: 创建部门")
         plan = normalize_org_plan(plan, company_name)
-        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.organization", action="write")
+        assert_non_empty_org_plan(plan)
+        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.department", action="write")
         results = {"companies": [], "departments": []}
         for company in plan.get("companies", []):
-            company_result = self.ensure_company(name=company.get("name"), short_name=company.get("short_name"))
-            record = company_result["record"]
-            results["companies"].append({"name": record["name"], "action": company_result["action"]})
+            record = self.ensure_company_for_department_create(company.get("name"))
             for department in company.get("departments", []):
                 department_name = department if isinstance(department, str) else department.get("name")
                 if not clean_optional(department_name):
                     continue
-                department_result = self.ensure_department(company_name=record["name"], department_name=department_name)
+                department_result = self.ensure_department_for_existing_company(
+                    company_name=record["name"],
+                    department_name=department_name,
+                )
                 results["departments"].append(
                     {
                         "company": record["name"],
@@ -1892,13 +2020,13 @@ class HrRepository:
         return {"write": results, "verification": self.verify_org_seeds(plan=plan)}
 
     def verify_org_seeds(self, *, plan: Any, company_name: str | None = None) -> dict[str, Any]:
+        # FIXME: FIX-069 internal org-seeds naming now represents department writes.
         plan = normalize_org_plan(plan, company_name)
-        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.organization", action="read")
+        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.department", action="read")
         results = []
         for company in plan.get("companies", []):
             company_name_value = normalize_required(company.get("name"), "company name")
-            company_matches = self.find_company_by_name(company_name_value)
-            results.append({"type": "company", "name": company_name_value, "ok": len(company_matches) == 1, "match_count": len(company_matches)})
+            self.existing_company_for_department_write(company_name_value)
             for department in company.get("departments", []):
                 department_name = department if isinstance(department, str) else department.get("name")
                 if not clean_optional(department_name):
@@ -1916,16 +2044,17 @@ class HrRepository:
         return {"ok": all(item["ok"] for item in results), "results": results}
 
     def preview_org_updates(self, *, plan: Any, company_name: str | None = None) -> dict[str, Any]:
+        # FIXME: FIX-069 internal org-seeds naming now represents department writes.
         plan = normalize_org_plan(plan, company_name)
         assert_non_empty_org_plan(plan)
-        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.organization", action="write")
-        companies = []
+        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.department", action="write")
         departments = []
         for company in plan.get("companies", []):
-            match_name = organization_match_name(company) if not company.get("_match_id") else company.get("_match_id")
-            matches = self.find_organization_company_matches(company, action="write")
-            payload = organization_company_update_payload(company)
-            companies.append(update_preview_item(name=match_name, matches=matches, payload=payload))
+            company_identifier = clean_optional(
+                company.get("name") or company.get("match_name") or company.get("match_company")
+            )
+            if company_identifier:
+                self.existing_company_for_department_write(company_identifier)
             for department in company.get("departments", []):
                 if not isinstance(department, dict):
                     department_name = clean_optional(department)
@@ -1938,17 +2067,22 @@ class HrRepository:
                 matches = self.find_organization_department_matches(company, department, action="write")
                 payload = self.organization_department_update_payload(department)
                 departments.append(update_preview_item(name=department_name or department.get("_match_id"), matches=matches, payload=payload, extra={"company": clean_optional(department.get("match_company") or company.get("name"))}))
-        return {"companies": companies, "departments": departments}
+        return {"companies": [], "departments": departments}
 
     def apply_org_updates(self, *, plan: Any, confirm: str | None, company_name: str | None = None) -> dict[str, Any]:
-        if confirm != "更新公司和部门":
-            raise RuntimeError("applyOrgUpdates requires confirm: 更新公司和部门")
+        # FIXME: FIX-069 internal org-seeds naming now represents department writes.
+        if confirm != "更新部门":
+            raise RuntimeError("applyOrgUpdates requires confirm: 更新部门")
         plan = normalize_org_plan(plan, company_name)
-        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.organization", action="write")
+        assert_non_empty_org_plan(plan)
+        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.department", action="write")
         results = {"companies": [], "departments": []}
         for company in plan.get("companies", []):
-            match_name = organization_match_name(company) if not company.get("_match_id") else company.get("_match_id")
-            company_matches = self.find_organization_company_matches(company, action="write")
+            company_identifier = clean_optional(
+                company.get("name") or company.get("match_name") or company.get("match_company")
+            )
+            if company_identifier:
+                self.existing_company_for_department_write(company_identifier)
             department_updates = []
             for department in company.get("departments", []):
                 if not isinstance(department, dict):
@@ -1968,21 +2102,22 @@ class HrRepository:
                         "payload": self.organization_department_update_payload(department),
                     }
                 )
-            results["companies"].append(apply_update_to_matches(repo=self, table="companies", matches=company_matches, payload=organization_company_update_payload(company), label=match_name))
             for item in department_updates:
                 result = apply_update_to_matches(repo=self, table="departments", matches=item["matches"], payload=item["payload"], label=item["department_name"])
                 results["departments"].append({**result, "company": item["match_company"]})
         return {"write": results, "verification": self.verify_org_updates(plan=plan, company_name=company_name)}
 
     def verify_org_updates(self, *, plan: Any, company_name: str | None = None) -> dict[str, Any]:
+        # FIXME: FIX-069 internal org-seeds naming now represents department writes.
         plan = normalize_org_plan(plan, company_name)
-        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.organization", action="read")
-        companies = []
+        self.assert_plan_company_scope(plan=plan, company_name=company_name, resource="hr.department", action="read")
         departments = []
         for company in plan.get("companies", []):
-            expected_name = clean_optional(company.get("name")) or clean_optional(company.get("_match_id")) or organization_match_name(company)
-            company_matches = self.find_organization_company_matches(company, action="read") if company.get("_match_id") else self.find_company_by_name(expected_name)
-            companies.append(verify_update_matches(name=expected_name, matches=company_matches, payload=organization_company_update_payload(company), label="company"))
+            company_identifier = clean_optional(
+                company.get("name") or company.get("match_name") or company.get("match_company")
+            )
+            if company_identifier:
+                self.existing_company_for_department_write(company_identifier)
             for department in company.get("departments", []):
                 if not isinstance(department, dict):
                     department_name = clean_optional(department)
@@ -1993,13 +2128,13 @@ class HrRepository:
                 expected_name = clean_optional(department.get("new_name") or department.get("name")) or organization_department_match_name(department) or department.get("_match_id")
                 matches = self.find_organization_department_matches(company, department, action="read") if department.get("_match_id") else self.find_department(company_name=expected_company, department_name=expected_name)["departmentMatches"]
                 departments.append(verify_update_matches(name=expected_name, matches=matches, payload=self.organization_department_update_payload(department), label="department") | {"company": expected_company})
-        items = companies + departments
+        items = departments
         return {"ok": all(item["ok"] for item in items), "results": items}
 
     def organization_department_update_payload(self, department: dict[str, Any]) -> dict[str, Any]:
         payload: dict[str, Any] = {}
-        if "new_name" in department:
-            payload["name"] = clean_optional(department.get("new_name"))
+        if "new_name" in department or "new_department" in department:
+            payload["name"] = clean_optional(department.get("new_name") or department.get("new_department"))
         elif "name" in department and (
             "match_name" in department
             or "match_department" in department
@@ -2377,6 +2512,11 @@ class HrRepository:
                         }
                     )
                     continue
+                record = self.resolve_attachment_fields(
+                    record,
+                    resource=resource,
+                    owner_id=employee["id"],
+                )
                 data = execute_one(
                     self.table(table)
                     .insert(self.audit_insert(payload_builder(record, employee["id"])))
@@ -2459,14 +2599,22 @@ class HrRepository:
             raise RuntimeError(f"generic update requires confirm: {expected_confirm}")
         plan = self.prepare_generic_employee_plan(plan, normalizer)
         results = []
+        resolved_records = []
         for record in plan["records"]:
             employee = deep_get(record, "match.employee")
+            record = self.resolve_attachment_fields(
+                record,
+                resource=resource,
+                owner_id=employee.get("id") if employee else None,
+            )
+            resolved_records.append(record)
             payload = generic_update_payload(record, employee, payload_builder, update_fields)
             matches = record_finder(record)
             results.append(apply_update_to_matches(repo=self, table=table, matches=matches, payload=payload, label=record.get("employee_name")))
+        resolved_plan = {**plan, "records": resolved_records}
         return {
             "write": results,
-            "verification": self.verify_generic_updates(plan=plan, resource=resource, normalizer=normalizer, payload_builder=payload_builder, record_finder=record_finder, update_fields=update_fields, key_fields=key_fields),
+            "verification": self.verify_generic_updates(plan=resolved_plan, resource=resource, normalizer=normalizer, payload_builder=payload_builder, record_finder=record_finder, update_fields=update_fields, key_fields=key_fields),
         }
 
     def delete_generic_employee_records(
@@ -2737,6 +2885,11 @@ class HrRepository:
             if existing:
                 results.append({"reason": record.get("reason"), "action": "existing", "usage_date": record.get("usage_date")})
                 continue
+            record = self.resolve_attachment_fields(
+                record,
+                resource="hr.seal_usage",
+                owner_id=company["id"],
+            )
             data = execute_one(
                 self.table("seal_usage")
                 .insert(self.audit_insert(seal_usage_payload(record, company["id"])))
@@ -2788,6 +2941,12 @@ class HrRepository:
         plan = self.prepare_seal_usage_plan(plan)
         results = []
         for record in plan["records"]:
+            company = deep_get(record, "match.target_company.company") or deep_get(record, "match.company.company")
+            record = self.resolve_attachment_fields(
+                record,
+                resource="hr.seal_usage",
+                owner_id=company.get("id") if company else None,
+            )
             payload = seal_usage_update_payload(record)
             results.append(apply_update_to_matches(repo=self, table="seal_usage", matches=self.find_update_seal_usage(record, action="write"), payload=payload, label=record.get("reason")))
         return {"write": results, "verification": self.verify_seal_usage_updates(plan=plan)}
@@ -3454,9 +3613,30 @@ def normalize_org_plan(plan: Any, fallback_company_name: str | None = None) -> d
     company_name = clean_optional(plan.get("company") or plan.get("companyName") or plan.get("company_name") or fallback_company_name)
     if not company_name:
         if clean_optional(plan.get("match_id") or plan.get("id")):
-            return {**plan, "companies": [{**normalize_match_id(plan), "departments": []}]}
+            return {**plan, "companies": [{"departments": [normalize_match_id(plan)]}]}
         return {"companies": []}
-    departments = plan.get("departments") if isinstance(plan.get("departments"), list) else ([plan.get("department")] if isinstance(plan.get("department"), dict) else ([{"name": plan.get("name"), "remark": plan.get("remark"), "notes": plan.get("notes")}] if clean_optional(plan.get("name")) else []))
+    if isinstance(plan.get("departments"), list):
+        departments = plan.get("departments")
+    elif isinstance(plan.get("department"), dict):
+        departments = [plan.get("department")]
+    elif clean_optional(plan.get("department")):
+        departments = [
+            {
+                "name": plan.get("department"),
+                "match_name": plan.get("match_name") or plan.get("match_department"),
+                "match_department": plan.get("match_department"),
+                "new_name": plan.get("new_name") or plan.get("new_department"),
+                "new_department": plan.get("new_department"),
+                "target_company": plan.get("target_company") or plan.get("new_company"),
+                "new_company": plan.get("new_company"),
+                "remark": plan.get("remark"),
+                "notes": plan.get("notes"),
+            }
+        ]
+    elif clean_optional(plan.get("name")):
+        departments = [{"name": plan.get("name"), "remark": plan.get("remark"), "notes": plan.get("notes")}]
+    else:
+        departments = []
     return {
         **plan,
         "companies": [

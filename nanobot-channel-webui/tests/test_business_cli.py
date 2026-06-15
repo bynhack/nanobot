@@ -337,41 +337,10 @@ def test_hr_business_update_organization_supports_all_company_and_department_fie
     monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
     repo = HrRepository(FakeSupabaseConnector())
 
-    preview = commands.run(["business", "preview-update", "organization", "--input", str(plan)], repo=repo)
-    result = commands.run(["business", "update", "organization", "--input", str(plan)], repo=repo)
-
-    assert preview["companies"][0]["action"] == "would_update"
-    assert preview["companies"][0]["diffs"] == [
-        {"field": "short_name", "before": None, "after": "乐潮科技"}
-    ]
-    assert preview["departments"][0]["action"] == "would_update"
-    assert preview["departments"][0]["diffs"] == [
-        {"field": "name", "before": "元宇宙", "after": "创新业务部"},
-        {"field": "company_id", "before": "c1", "after": "c2"},
-    ]
-    assert result["write"]["companies"] == [
-        {
-            "name": "乐潮里科技有限公司",
-            "action": "updated",
-            "fields": ["short_name"],
-            "match_count": 1,
-            "matched_ids": ["c1"],
-        }
-    ]
-    assert result["write"]["departments"] == [
-        {
-            "name": "元宇宙",
-            "action": "updated",
-            "fields": ["name", "company_id"],
-            "company": "乐潮里科技有限公司",
-            "match_count": 1,
-            "matched_ids": ["d1"],
-        }
-    ]
-    assert result["verification"]["ok"] is True
-    assert repo.db.rows["companies"][0]["short_name"] == "乐潮科技"
-    assert repo.db.rows["departments"][0]["name"] == "创新业务部"
-    assert repo.db.rows["departments"][0]["company_id"] == "c2"
+    with pytest.raises(RuntimeError, match="organization is read/analysis only"):
+        commands.run(["business", "preview-update", "organization", "--input", str(plan)], repo=repo)
+    with pytest.raises(RuntimeError, match="organization is read/analysis only"):
+        commands.run(["business", "update", "organization", "--input", str(plan)], repo=repo)
 
 
 def test_hr_business_preview_organization_accepts_records_wrapper(
@@ -409,12 +378,199 @@ def test_hr_business_preview_organization_accepts_records_wrapper(
     monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
     repo = HrRepository(FakeSupabaseConnector())
 
-    preview = commands.run(["business", "preview", "organization", "--input", str(plan)], repo=repo)
+    with pytest.raises(RuntimeError, match="organization is read/analysis only"):
+        commands.run(["business", "preview", "organization", "--input", str(plan)], repo=repo)
+    with pytest.raises(RuntimeError, match="organization is read/analysis only"):
+        commands.run(["business", "create", "organization", "--input", str(plan)], repo=repo)
 
-    assert preview["companies"] == [{"name": "测试组织公司", "action": "would_create"}]
-    assert preview["departments"] == [
-        {"company": "测试组织公司", "name": "测试部门", "action": "would_create"}
+
+def test_hr_business_create_department_allows_authorized_company_scope(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.department"],
+        actions=["read", "write"],
+        companies=["授权新公司"],
+    )
+    plan = tmp_path / "department-create.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "company": "授权新公司",
+                "departments": [{"name": "新部门"}],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    repo = HrRepository(connector)
+
+    result = commands.run(["business", "create", "department", "--input", str(plan)], repo=repo)
+
+    assert result["write"]["companies"] == []
+    assert result["write"]["departments"] == [
+        {"company": "授权新公司", "name": "新部门", "action": "created"}
     ]
+    assert any(row["name"] == "授权新公司" for row in connector.rows["companies"])
+
+
+def test_hr_business_create_department_accepts_flat_natural_language_plan(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.department"],
+        actions=["read", "write"],
+        companies=["乐潮里科技有限公司"],
+    )
+    plan = tmp_path / "department-create-flat.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "company": "乐潮里科技有限公司",
+                "department": "自然语言部门创建验收",
+                "notes": "部门自然语言创建验收",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    repo = HrRepository(connector)
+
+    result = commands.run(["business", "create", "department", "--input", str(plan)], repo=repo)
+
+    assert result["write"]["departments"] == [
+        {
+            "company": "乐潮里科技有限公司",
+            "name": "自然语言部门创建验收",
+            "action": "created",
+        }
+    ]
+    assert result["verification"]["ok"] is True
+    assert any(row["name"] == "自然语言部门创建验收" for row in connector.rows["departments"])
+
+
+def test_hr_business_update_department_accepts_flat_natural_language_plan(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.department"],
+        actions=["read", "write"],
+        companies=["乐潮里科技有限公司"],
+    )
+    plan = tmp_path / "department-update-flat.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "company": "乐潮里科技有限公司",
+                "department": "元宇宙",
+                "new_department": "自然语言部门更新验收",
+                "notes": "部门自然语言更新验收",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    repo = HrRepository(connector)
+
+    preview = commands.run(["business", "preview-update", "department", "--input", str(plan)], repo=repo)
+    result = commands.run(["business", "update", "department", "--input", str(plan)], repo=repo)
+
+    assert preview["departments"][0]["action"] == "would_update"
+    assert result["write"]["departments"][0]["action"] == "updated"
+    assert result["verification"]["ok"] is True
+    assert connector.rows["departments"][0]["name"] == "自然语言部门更新验收"
+
+
+def test_hr_business_update_department_accepts_match_id_only_plan(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=["hr.department"],
+        actions=["read", "write"],
+        companies=["乐潮里科技有限公司"],
+    )
+    plan = tmp_path / "department-update-match-id.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "match_id": "d1",
+                "new_department": "自然语言部门按编号更新验收",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    repo = HrRepository(connector)
+
+    preview = commands.run(["business", "preview-update", "department", "--input", str(plan)], repo=repo)
+    result = commands.run(["business", "update", "department", "--input", str(plan)], repo=repo)
+
+    assert preview["departments"][0]["action"] == "would_update"
+    assert result["write"]["departments"][0]["action"] == "updated"
+    assert result["verification"]["ok"] is True
+    assert connector.rows["departments"][0]["name"] == "自然语言部门按编号更新验收"
+
+
+def test_hr_business_update_department_does_not_update_company_fields(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = tmp_path / "policy.json"
+    policy_file.write_text(
+        json.dumps(
+            {
+                "role": "admin",
+                "user_id": "11111111-1111-1111-1111-111111111111",
+                "email": "admin@example.com",
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    plan = tmp_path / "department-update.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "company": "乐潮里科技有限公司",
+                "short_name": "不应写入公司",
+                "departments": [
+                    {
+                        "match_department": "元宇宙",
+                        "new_department": "创新业务部",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+    connector = FakeSupabaseConnector()
+    repo = HrRepository(connector)
+
+    preview = commands.run(["business", "preview-update", "department", "--input", str(plan)], repo=repo)
+    result = commands.run(["business", "update", "department", "--input", str(plan)], repo=repo)
+
+    assert preview["companies"] == []
+    assert result["write"]["companies"] == []
+    assert connector.rows["companies"][0]["short_name"] is None
+    assert connector.rows["departments"][0]["name"] == "创新业务部"
 
 
 def test_hr_business_runtime_is_not_stored_under_skill_package() -> None:
@@ -485,6 +641,45 @@ def test_business_capabilities_reports_available_commands_and_logical_delete(
     assert result["option_contract"]["value_options"]["days"]["value_type"] == "integer"
     assert result["option_contract"]["value_options"]["threshold"]["minimum"] == 0
     assert result["option_contract"]["boolean_options"] == ["help"]
+
+
+def test_business_capabilities_keeps_organization_read_only(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    policy_file = write_hr_policy(
+        tmp_path,
+        resources=[
+            "hr.organization",
+            "hr.company",
+            "hr.department",
+            "hr.employee",
+        ],
+        actions=["query", "read", "analyze", "write"],
+    )
+    monkeypatch.setenv("NANOBOT_WEBUI_POLICY_FILE", str(policy_file))
+
+    result = commands.run(["business", "capabilities"], repo=HrRepository(FakeSupabaseConnector()))
+    serialized = json.dumps(result, ensure_ascii=False)
+
+    assert "business list organization-tree" in serialized
+    assert "business preview organization" not in serialized
+    assert "business create organization" not in serialized
+    assert "business preview-update organization" not in serialized
+    assert "business update organization" not in serialized
+
+
+def test_business_schema_rejects_organization_write_plans() -> None:
+    with pytest.raises(RuntimeError, match="organization is read/analysis only"):
+        commands.run(
+            ["business", "schema", "organization", "--workflow", "create"],
+            repo=HrRepository(FakeSupabaseConnector()),
+        )
+    with pytest.raises(RuntimeError, match="organization is read/analysis only"):
+        commands.run(
+            ["business", "schema", "organization", "--workflow", "update"],
+            repo=HrRepository(FakeSupabaseConnector()),
+        )
 
 
 def test_business_capabilities_exposes_slim_public_contract_without_legacy_commands(
@@ -1351,7 +1546,7 @@ def test_business_schema_returns_old_new_value_contract_for_seal_usage_update() 
     assert result["plan_example"] == {
         "match_id": "abc-123-uuid",
         "new_reason": "普通账号更新流程验收",
-        "attachments": ["验收复核申请.pdf"],
+        "attachments": ["https://storage.example/hr-documents/seal-usage/zhangsan-review.pdf"],
     }
     assert "Old values identify the existing row; new values are written." in result["workflow_rules"]
 
@@ -1368,12 +1563,12 @@ def test_business_schema_returns_personnel_change_update_aliases() -> None:
         "match_id": "abc-123-uuid",
         "new_position": "高级人事专员",
         "change_reason": "转正后定岗",
+        "signed_upload": ["https://storage.example/hr-documents/personnel-change/zhangsan-review.pdf"],
     }
 
 
 def test_business_schema_covers_all_public_write_resources() -> None:
     resources = [
-        "organization",
         "department",
         "employee",
         "contract",
@@ -1396,6 +1591,12 @@ def test_business_schema_covers_all_public_write_resources() -> None:
             assert result["command_sequence"][1].startswith(
                 "business preview" if workflow == "create" else "business preview-update"
             )
+
+    with pytest.raises(RuntimeError, match="organization is read/analysis only"):
+        commands.run(
+            ["business", "schema", "organization", "--workflow", "create"],
+            repo=HrRepository(FakeSupabaseConnector()),
+        )
 
 
 def test_business_schema_update_exposes_match_id() -> None:
@@ -2078,6 +2279,144 @@ def test_hr_business_update_insurance_handles_signed_upload_array_diff(
     ]
 
 
+def test_hr_business_create_contract_uploads_local_scan_file_path(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv(
+        "NANOBOT_WEBUI_POLICY_FILE",
+        str(write_hr_policy(tmp_path, resources=["hr.contract", "hr.employee"])),
+    )
+    local_file = tmp_path / ".nanobot_webui_uploads" / "user-1" / "chat-1" / "contract-scan.png"
+    local_file.parent.mkdir(parents=True)
+    local_file.write_bytes(b"contract image")
+    plan = tmp_path / "contract-create-attachment.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "company": "武汉未来天空音乐文化产业有限公司",
+                "employee_name": "刘松",
+                "type": "固定期限劳动合同",
+                "start_date": "2027-01-01",
+                "expiry_date": "2027-12-31",
+                "scan_file_url": str(local_file),
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    connector = FakeSupabaseConnector()
+
+    created = commands.run(["business", "create", "contract", "--input", str(plan)], repo=HrRepository(connector))
+
+    assert created["verification"]["ok"] is True
+    assert connector.uploads == [
+        {
+            "bucket": "hr-documents",
+            "path": "contracts/e1/contract-scan.png",
+            "content": b"contract image",
+            "content_type": "image/png",
+        }
+    ]
+    assert connector.rows["contracts"][-1]["scan_file_url"] == (
+        "https://storage.example/hr-documents/contracts/e1/contract-scan.png"
+    )
+
+
+def test_hr_business_update_insurance_uploads_local_signed_upload_path(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv(
+        "NANOBOT_WEBUI_POLICY_FILE",
+        str(write_hr_policy(tmp_path, resources=["hr.insurance", "hr.employee"])),
+    )
+    local_file = tmp_path / ".nanobot_webui_uploads" / "user-1" / "chat-1" / "insurance-signed.png"
+    local_file.parent.mkdir(parents=True)
+    local_file.write_bytes(b"insurance image")
+    plan = tmp_path / "insurance-update-attachment.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "company": "武汉未来天空音乐文化产业有限公司",
+                "employee_name": "刘松",
+                "change_date": "2026-06-01",
+                "status": "新增",
+                "signed_upload": [str(local_file), "https://example.invalid/already.pdf"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    connector = FakeSupabaseConnector()
+    connector.rows["insurance_changes"] = [
+        {
+            "id": "ic1",
+            "employee_id": "e1",
+            "change_date": "2026-06-01",
+            "status": "新增",
+            "signed_upload": [],
+        }
+    ]
+
+    updated = commands.run(["business", "update", "insurance", "--input", str(plan)], repo=HrRepository(connector))
+
+    assert updated["verification"]["ok"] is True
+    assert connector.uploads == [
+        {
+            "bucket": "hr-documents",
+            "path": "insurance/e1/insurance-signed.png",
+            "content": b"insurance image",
+            "content_type": "image/png",
+        }
+    ]
+    assert connector.rows["insurance_changes"][0]["signed_upload"] == [
+        "https://storage.example/hr-documents/insurance/e1/insurance-signed.png",
+        "https://example.invalid/already.pdf",
+    ]
+
+
+def test_hr_business_update_insurance_accepts_signed_upload_urls(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv(
+        "NANOBOT_WEBUI_POLICY_FILE",
+        str(write_hr_policy(tmp_path, resources=["hr.insurance", "hr.employee"])),
+    )
+    plan = tmp_path / "insurance-update-url-attachment.json"
+    plan.write_text(
+        json.dumps(
+            {
+                "company": "武汉未来天空音乐文化产业有限公司",
+                "employee_name": "刘松",
+                "change_date": "2026-06-01",
+                "status": "新增",
+                "signed_upload": ["https://storage.example/hr-documents/insurance/e1/insurance-signed.png"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    connector = FakeSupabaseConnector()
+    connector.rows["insurance_changes"] = [
+        {
+            "id": "ic1",
+            "employee_id": "e1",
+            "change_date": "2026-06-01",
+            "status": "新增",
+            "signed_upload": [],
+        }
+    ]
+
+    updated = commands.run(["business", "update", "insurance", "--input", str(plan)], repo=HrRepository(connector))
+
+    assert updated["verification"]["ok"] is True
+    assert connector.rows["insurance_changes"][0]["signed_upload"] == [
+        "https://storage.example/hr-documents/insurance/e1/insurance-signed.png"
+    ]
+
+
 def test_performance_create_normalizes_natural_language_month_plan(
     monkeypatch,
     tmp_path: Path,
@@ -2198,7 +2537,7 @@ def test_seal_usage_update_supports_new_reason_alias(
                 "usage_date": "2026-06-13",
                 "current_reason": "普通账号流程验收",
                 "new_reason": "普通账号更新流程验收",
-                "attachments": ["验收复核申请.pdf"],
+                "attachments": ["https://storage.example/hr-documents/seal-usage/su1/review.pdf"],
             },
             ensure_ascii=False,
         ),
@@ -2213,7 +2552,7 @@ def test_seal_usage_update_supports_new_reason_alias(
             "seal_applicant_id": "e1",
             "usage_date": "2026-06-13",
             "reason": "普通账号流程验收",
-            "attachments": ["验收申请.pdf"],
+            "attachments": ["https://storage.example/hr-documents/seal-usage/su1/original.pdf"],
             "notes": None,
         }
     ]
@@ -2230,15 +2569,17 @@ def test_seal_usage_update_supports_new_reason_alias(
     } in preview["records"][0]["diffs"]
     assert {
         "field": "attachments",
-        "before": ["验收申请.pdf"],
-        "after": ["验收复核申请.pdf"],
+        "before": ["https://storage.example/hr-documents/seal-usage/su1/original.pdf"],
+        "after": ["https://storage.example/hr-documents/seal-usage/su1/review.pdf"],
     } in preview["records"][0]["diffs"]
     assert updated["verification"]["ok"] is True
     assert normalize_seal_usage_seed_record({"seal_applicant_name": "刘松"}) == {
         "seal_applicant": "刘松"
     }
     assert connector.rows["seal_usage"][0]["reason"] == "普通账号更新流程验收"
-    assert connector.rows["seal_usage"][0]["attachments"] == ["验收复核申请.pdf"]
+    assert connector.rows["seal_usage"][0]["attachments"] == [
+        "https://storage.example/hr-documents/seal-usage/su1/review.pdf"
+    ]
     assert connector.rows["seal_usage"][0]["seal_applicant_id"] == "e1"
 
 
@@ -3226,6 +3567,7 @@ def test_hr_repository_write_requires_policy_actor_user_id(
 
 class FakeSupabaseConnector:
     def __init__(self) -> None:
+        self.uploads: list[dict[str, object]] = []
         self.rows = {
             "companies": [
                 {"id": "c1", "name": "乐潮里科技有限公司", "short_name": None},
@@ -3279,6 +3621,24 @@ class FakeSupabaseConnector:
 
     def table(self, table: str):
         return FakeQuery(self.rows, table)
+
+    def upload_file(
+        self,
+        *,
+        bucket: str,
+        object_path: str,
+        content: bytes,
+        content_type: str,
+    ) -> str:
+        self.uploads.append(
+            {
+                "bucket": bucket,
+                "path": object_path,
+                "content": content,
+                "content_type": content_type,
+            }
+        )
+        return f"https://storage.example/{bucket}/{object_path}"
 
 
 class FailingContractInsertConnector(FakeSupabaseConnector):

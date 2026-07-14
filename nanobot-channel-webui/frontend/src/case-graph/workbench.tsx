@@ -68,6 +68,12 @@ import {
   type NodeDetailAnalysisRelation,
 } from './node-detail-analysis-drawer';
 import { ManualClueDrawer } from './manual-clue-drawer';
+import { OperationEvidenceFields } from './operation-evidence-fields';
+import {
+  emptyOperationEvidence,
+  validateOperationEvidence,
+  type CaseGraphEvidenceOperation,
+} from './operation-evidence';
 import { SummaryAnalysisDrawer, type SummaryAnalysisItem, type SummaryAnalysisItemAction } from './summary-analysis-drawer';
 import type {
   CaseGraphCaseOption,
@@ -95,6 +101,7 @@ import type {
   CaseGraphManualPartyPayload,
   AddCaseGraphRealityRelationPayload,
   ApplyCaseGraphInvestigationGroupPayload,
+  CaseGraphOperationEvidence,
 } from './types';
 import type { SkillCandidate } from '../skill-quick-select';
 import { runConfigWithSelectedSkill, selectedSkillNameFromRunConfig } from '../skill-quick-select';
@@ -137,6 +144,14 @@ interface GraphTabState {
   chatId: string;
   loaded: boolean;
   layout: CaseGraphLayoutState;
+  pendingDrillEvidence?: CaseGraphOperationEvidence;
+}
+
+interface OperationEvidencePromptState {
+  operation: CaseGraphEvidenceOperation;
+  title: string;
+  description: string;
+  resolve: (evidence: CaseGraphOperationEvidence | null) => void;
 }
 
 type CaseGraphChatPrompt = {
@@ -244,6 +259,7 @@ export function CaseGraphWorkbench({
   const [summaryAnalysisSelectedNodeIds, setSummaryAnalysisSelectedNodeIds] = useState<string[]>([]);
   const [summaryAnalysisLoading, setSummaryAnalysisLoading] = useState(false);
   const [summaryAnalysisApplying, setSummaryAnalysisApplying] = useState(false);
+  const [summaryOperationEvidence, setSummaryOperationEvidence] = useState<CaseGraphOperationEvidence>(() => emptyOperationEvidence('candidate_subject_changes'));
   const [manualClueOpen, setManualClueOpen] = useState(false);
   const [manualClueMode, setManualClueMode] = useState<'node' | 'trade' | 'relation'>('trade');
   const [manualClueFocusNode, setManualClueFocusNode] = useState<CaseGraphNode | null>(null);
@@ -252,6 +268,7 @@ export function CaseGraphWorkbench({
   const [groupDraftOpen, setGroupDraftOpen] = useState(false);
   const [groupDraftNodes, setGroupDraftNodes] = useState<CaseGraphNode[]>([]);
   const [groupDraftForm, setGroupDraftForm] = useState({ name: '', groupType: '团伙成员', note: '' });
+  const [groupOperationEvidence, setGroupOperationEvidence] = useState<CaseGraphOperationEvidence>(() => emptyOperationEvidence('group_change'));
   const [groupOperationApplying, setGroupOperationApplying] = useState(false);
   const [requests, setRequests] = useState({
     creating: false,
@@ -267,6 +284,7 @@ export function CaseGraphWorkbench({
   const [excludedDialogOpen, setExcludedDialogOpen] = useState(false);
   const [excludedDialogTab, setExcludedDialogTab] = useState<'nodes' | 'trades'>('nodes');
   const [excludedTradeSelection, setExcludedTradeSelection] = useState<string[]>([]);
+  const [excludedRestoreEvidence, setExcludedRestoreEvidence] = useState<CaseGraphOperationEvidence>(() => emptyOperationEvidence('restore_nodes'));
   const [originPanelOpen, setOriginPanelOpen] = useState(false);
   const [deleteGraphTarget, setDeleteGraphTarget] = useState<GraphTabState | null>(null);
   const [newGraphForm, setNewGraphForm] = useState({
@@ -278,6 +296,38 @@ export function CaseGraphWorkbench({
     minAmount: '',
     maxAmount: '',
   });
+  const [graphConfigEvidence, setGraphConfigEvidence] = useState<CaseGraphOperationEvidence>(() =>
+    emptyOperationEvidence('drill_with_changed_settings'),
+  );
+  const [operationEvidencePrompt, setOperationEvidencePrompt] = useState<OperationEvidencePromptState | null>(null);
+  const [operationEvidence, setOperationEvidence] = useState<CaseGraphOperationEvidence>(() => emptyOperationEvidence('exclude_nodes'));
+
+  const requestOperationEvidence = useCallback((
+    operation: CaseGraphEvidenceOperation,
+    title: string,
+    description: string,
+  ): Promise<CaseGraphOperationEvidence | null> => new Promise((resolve) => {
+    setOperationEvidence(emptyOperationEvidence(operation));
+    setOperationEvidencePrompt({ operation, title, description, resolve });
+  }), []);
+
+  const closeOperationEvidencePrompt = useCallback(() => {
+    setOperationEvidencePrompt((current) => {
+      current?.resolve(null);
+      return null;
+    });
+  }, []);
+
+  const confirmOperationEvidence = useCallback((
+    operation: CaseGraphEvidenceOperation,
+    title: string,
+    description: string,
+    action: (evidence: CaseGraphOperationEvidence) => void,
+  ) => {
+    void requestOperationEvidence(operation, title, description).then((evidence) => {
+      if (evidence) action(evidence);
+    });
+  }, [requestOperationEvidence]);
 
   const activeTab = useMemo(
     () => graphTabs.find((tab) => tab.graphId === activeTabId) ?? null,
@@ -1241,6 +1291,8 @@ export function CaseGraphWorkbench({
         ...buildRelationDrillConfig(activeTab),
         filters,
         options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+        evidence: activeTab.pendingDrillEvidence,
+        ...(activeTab.pendingDrillEvidence ? { evidenceContext: 'drill_with_changed_settings' as const } : {}),
       },
       token,
     )
@@ -1271,6 +1323,7 @@ export function CaseGraphWorkbench({
           excludedAccountId: tab.excludedAccountId,
           excludedNodes: nextFromState?.excludedNodes ?? originData?.excludedNodes ?? [],
           appliedFilters: currentFilterState(tab),
+          pendingDrillEvidence: undefined,
         }));
         persistBusinessLayoutPlan(activeTab, layoutPatch.plan);
         setOriginPanelOpen(false);
@@ -1304,6 +1357,8 @@ export function CaseGraphWorkbench({
         ...buildRelationDrillConfig(activeTab),
         filters: buildRelationFilterPayload(currentFilterState(activeTab)),
         options: buildRelationOptions(positionedCurrent, graphNodePositionsRef.current),
+        evidence: activeTab.pendingDrillEvidence,
+        ...(activeTab.pendingDrillEvidence ? { evidenceContext: 'drill_with_changed_settings' as const } : {}),
       },
       token,
     )
@@ -1337,6 +1392,7 @@ export function CaseGraphWorkbench({
           tradeFacts: nextFromState?.tradeFacts ?? tab.tradeFacts,
           groupMap: nextFromState?.groupMap ?? {},
           excludedNodes: nextFromState?.excludedNodes ?? originData?.excludedNodes ?? tab.excludedNodes,
+          pendingDrillEvidence: undefined,
         }));
         persistBusinessLayoutPlan(activeTab, layoutPatch.plan);
         setError(null);
@@ -1350,11 +1406,20 @@ export function CaseGraphWorkbench({
       });
   }, [activeTab, token, updateActiveTab, requestGraphStepInsight, persistBusinessLayoutPlan]);
 
-  const handleCompleteGraphRelations = useCallback(() => {
+  const handleCompleteGraphRelations = useCallback((evidence?: CaseGraphOperationEvidence) => {
     if (!activeTab) return;
     const accounts = resolveGraphAccounts(activeTab);
     if (accounts.length < 2) {
       setError('当前图上至少需要两个账号节点才能分析节点关系');
+      return;
+    }
+    if (!evidence) {
+      confirmOperationEvidence(
+        'complete_relation',
+        '补全图上关系',
+        `将基于当前图上的 ${accounts.length} 个账号核查并补充资金关系，请记录本次操作依据。`,
+        (nextEvidence) => handleCompleteGraphRelations(nextEvidence),
+      );
       return;
     }
     setReplaySelection(null);
@@ -1367,6 +1432,7 @@ export function CaseGraphWorkbench({
         accounts,
         filters: buildRelationFilterPayload(currentFilterState(activeTab)),
         options: buildRelationOptions(positionedCurrent, graphNodePositionsRef.current),
+        evidence,
       },
       token,
     )
@@ -1403,7 +1469,7 @@ export function CaseGraphWorkbench({
       .finally(() => {
         setRequests((current) => ({ ...current, drilling: false }));
       });
-  }, [activeTab, token, updateActiveTab, requestGraphStepInsight, persistBusinessLayoutPlan]);
+  }, [activeTab, confirmOperationEvidence, token, updateActiveTab, requestGraphStepInsight, persistBusinessLayoutPlan]);
 
   const handleFilterFieldChange = useCallback((field: keyof CaseGraphFilterState, value: string) => {
     if (!activeTabId) return;
@@ -1530,8 +1596,17 @@ export function CaseGraphWorkbench({
     persistBusinessLayoutPlan(activeTab, layoutPatch.plan);
   }, [activeTab, persistBusinessLayoutPlan, updateActiveTab]);
 
-  const handleExcludeNode = useCallback((node: CaseGraphExcludedNode) => {
+  const handleExcludeNode = useCallback((node: CaseGraphExcludedNode, evidence?: CaseGraphOperationEvidence) => {
     if (!activeTab) return;
+    if (!evidence) {
+      confirmOperationEvidence(
+        'exclude_nodes',
+        '取消主体上图',
+        `将取消“${node.label || '当前主体'}”上图并隐藏相关资金线，后续可以恢复。`,
+        (nextEvidence) => handleExcludeNode(node, nextEvidence),
+      );
+      return;
+    }
     setReplaySelection(null);
     setRequests((current) => ({ ...current, excluding: true }));
     excludeCaseGraphNode(
@@ -1539,6 +1614,7 @@ export function CaseGraphWorkbench({
         caseId: activeTab.caseId,
         graphId: activeTab.graphId,
         node,
+        evidence,
       },
       token,
     )
@@ -1554,10 +1630,19 @@ export function CaseGraphWorkbench({
       .finally(() => {
         setRequests((current) => ({ ...current, excluding: false }));
       });
-  }, [activeTab, applyRelationResultToActiveTab, refreshGraphSteps, requestGraphStepInsight, token]);
+  }, [activeTab, applyRelationResultToActiveTab, confirmOperationEvidence, refreshGraphSteps, requestGraphStepInsight, token]);
 
-  const handleExcludeNodes = useCallback((nodes: CaseGraphExcludedNode[]) => {
+  const handleExcludeNodes = useCallback((nodes: CaseGraphExcludedNode[], evidence?: CaseGraphOperationEvidence) => {
     if (!activeTab || !nodes.length) return;
+    if (!evidence) {
+      confirmOperationEvidence(
+        'exclude_nodes',
+        '批量取消主体上图',
+        `将取消 ${nodes.length} 个主体上图并隐藏相关资金线，后续可以恢复。`,
+        (nextEvidence) => handleExcludeNodes(nodes, nextEvidence),
+      );
+      return;
+    }
     setReplaySelection(null);
     setRequests((current) => ({ ...current, excluding: true }));
     excludeCaseGraphNode(
@@ -1565,6 +1650,7 @@ export function CaseGraphWorkbench({
         caseId: activeTab.caseId,
         graphId: activeTab.graphId,
         nodes,
+        evidence,
       },
       token,
     )
@@ -1580,7 +1666,7 @@ export function CaseGraphWorkbench({
       .finally(() => {
         setRequests((current) => ({ ...current, excluding: false }));
       });
-  }, [activeTab, applyRelationResultToActiveTab, refreshGraphSteps, requestGraphStepInsight, token]);
+  }, [activeTab, applyRelationResultToActiveTab, confirmOperationEvidence, refreshGraphSteps, requestGraphStepInsight, token]);
 
   const handleRestoreNode = useCallback((nodeId: string) => {
     if (!activeTab) return;
@@ -1592,6 +1678,7 @@ export function CaseGraphWorkbench({
         graphId: activeTab.graphId,
         nodeId,
         options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+        evidence: excludedRestoreEvidence,
       },
       token,
     )
@@ -1607,7 +1694,7 @@ export function CaseGraphWorkbench({
       .finally(() => {
         setRequests((current) => ({ ...current, excluding: false }));
       });
-  }, [activeTab, applyRelationResultToActiveTab, refreshGraphSteps, requestGraphStepInsight, token]);
+  }, [activeTab, applyRelationResultToActiveTab, excludedRestoreEvidence, refreshGraphSteps, requestGraphStepInsight, token]);
 
   const handleRestoreAllExcludedNodes = useCallback(() => {
     if (!activeTab || !activeTab.excludedNodes.length) return;
@@ -1620,6 +1707,7 @@ export function CaseGraphWorkbench({
         graphId: activeTab.graphId,
         nodeIds: restoredNodeIds,
         options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+        evidence: excludedRestoreEvidence,
       },
       token,
     )
@@ -1635,7 +1723,7 @@ export function CaseGraphWorkbench({
       .finally(() => {
         setRequests((current) => ({ ...current, excluding: false }));
       });
-  }, [activeTab, applyRelationResultToActiveTab, refreshGraphSteps, requestGraphStepInsight, token]);
+  }, [activeTab, applyRelationResultToActiveTab, excludedRestoreEvidence, refreshGraphSteps, requestGraphStepInsight, token]);
 
   const handleToggleExcludedTradeSelection = useCallback((tradeId: string) => {
     setExcludedTradeSelection((current) => setTradeSelection(current, [tradeId], !current.includes(tradeId)));
@@ -1659,6 +1747,7 @@ export function CaseGraphWorkbench({
         tradeFacts: activeTab.tradeFacts ?? activeTab.graphData?.tradeFacts ?? {},
         edgeTradeIds: buildEdgeTradeIdsFromGraph(activeTab.graphData),
         options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+        evidence: excludedRestoreEvidence,
       },
       token,
     )
@@ -1675,7 +1764,7 @@ export function CaseGraphWorkbench({
       .finally(() => {
         setRequests((current) => ({ ...current, excluding: false }));
       });
-  }, [activeTab, applyRelationResultToActiveTab, refreshGraphSteps, requestGraphStepInsight, token]);
+  }, [activeTab, applyRelationResultToActiveTab, excludedRestoreEvidence, refreshGraphSteps, requestGraphStepInsight, token]);
 
   const handleRestoreSelectedExcludedTrades = useCallback(() => {
     handleRestoreExcludedTrades(excludedTradeSelection);
@@ -1862,9 +1951,18 @@ export function CaseGraphWorkbench({
     setEdgeDetailSelectedTradeIds((current) => setTradeSelection(current, tradeIds, selected));
   }, []);
 
-  const applyEdgeDetailExclusion = useCallback((tradeIds: string[]) => {
+  const applyEdgeDetailExclusion = useCallback((tradeIds: string[], evidence?: CaseGraphOperationEvidence) => {
     const selectedTradeIds = [...new Set(tradeIds.map((tradeId) => tradeId.trim()).filter(Boolean))];
     if (!activeTab || !edgeDetailContext || !selectedTradeIds.length) return;
+    if (!evidence) {
+      confirmOperationEvidence(
+        'exclude_trades',
+        '排除交易流水',
+        `将从当前图中排除 ${selectedTradeIds.length} 笔交易流水，并重新计算受影响的资金线。`,
+        (nextEvidence) => applyEdgeDetailExclusion(selectedTradeIds, nextEvidence),
+      );
+      return;
+    }
     const currentDetail = edgeDetail ?? [];
     const detailByEdgeId = { [edgeDetailContext.edgeId]: currentDetail };
     const edgeTradeIds = buildEdgeTradeIdsFromDetails(detailByEdgeId);
@@ -1882,6 +1980,7 @@ export function CaseGraphWorkbench({
         tradeFacts: buildTradeFactsFromDetails(detailByEdgeId),
         edgeTradeIds,
         options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+        evidence,
       },
       token,
     )
@@ -1901,6 +2000,7 @@ export function CaseGraphWorkbench({
   }, [
     activeTab,
     applyRelationResultToActiveTab,
+    confirmOperationEvidence,
     edgeDetail,
     edgeDetailContext,
     handleCloseEdgeDetail,
@@ -1992,12 +2092,21 @@ export function CaseGraphWorkbench({
     setDetailAnalysisApplying(false);
   }, []);
 
-  const handleApplyDetailAnalysis = useCallback(() => {
+  const handleApplyDetailAnalysis = useCallback((evidence?: CaseGraphOperationEvidence) => {
     if (!activeTab || !detailAnalysisSelectedTradeIds.length) return;
     const tradeFacts = buildTradeFactsFromDetails(detailAnalysisByEdgeId);
     const edgeTradeIds = buildEdgeTradeIdsFromDetails(detailAnalysisByEdgeId);
     if (!Object.keys(edgeTradeIds).length) {
       setError('请先加载至少一条交易线的明细');
+      return;
+    }
+    if (!evidence) {
+      confirmOperationEvidence(
+        'exclude_trades',
+        '排除交易流水',
+        `将从当前图中排除 ${detailAnalysisSelectedTradeIds.length} 笔交易流水，并重新计算相关资金线。`,
+        (nextEvidence) => handleApplyDetailAnalysis(nextEvidence),
+      );
       return;
     }
     setReplaySelection(null);
@@ -2010,6 +2119,7 @@ export function CaseGraphWorkbench({
         tradeFacts,
         edgeTradeIds,
         options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+        evidence,
       },
       token,
     )
@@ -2029,6 +2139,7 @@ export function CaseGraphWorkbench({
   }, [
     activeTab,
     applyRelationResultToActiveTab,
+    confirmOperationEvidence,
     detailAnalysisByEdgeId,
     detailAnalysisSelectedTradeIds,
     handleCloseDetailAnalysis,
@@ -2046,6 +2157,7 @@ export function CaseGraphWorkbench({
     setSummaryAnalysisItems([]);
     setSummaryAnalysisSelectedNodeIds([]);
     setSummaryAnalysisLoading(true);
+    setSummaryOperationEvidence(emptyOperationEvidence('candidate_subject_changes'));
     syncGraphContext({
       type: 'node',
       graphId: activeTab.graphId,
@@ -2096,6 +2208,7 @@ export function CaseGraphWorkbench({
     setSummaryAnalysisItems([]);
     setSummaryAnalysisSelectedNodeIds([]);
     setSummaryAnalysisLoading(true);
+    setSummaryOperationEvidence(emptyOperationEvidence('candidate_subject_changes'));
     syncGraphContext(null);
     loadCaseGraphSummaryCandidates(
       {
@@ -2137,6 +2250,7 @@ export function CaseGraphWorkbench({
     setSummaryAnalysisSelectedNodeIds([]);
     setSummaryAnalysisLoading(false);
     setSummaryAnalysisApplying(false);
+    setSummaryOperationEvidence(emptyOperationEvidence('candidate_subject_changes'));
   }, []);
 
   const handleToggleSummaryAnalysisNode = useCallback((nodeId: string) => {
@@ -2180,6 +2294,8 @@ export function CaseGraphWorkbench({
           caseId: activeTab.caseId,
           graphId: activeTab.graphId,
           nodes: excludedNodePayloads,
+          evidence: summaryOperationEvidence,
+          evidenceContext: 'candidate_subject_changes',
         },
         token,
       ).then((result) => {
@@ -2203,6 +2319,7 @@ export function CaseGraphWorkbench({
             selectedNodeIds: selectedIncludeNodeIds,
             selectedCandidates,
             options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+            evidence: summaryOperationEvidence,
           },
           token,
         ).then((result) => {
@@ -2244,6 +2361,7 @@ export function CaseGraphWorkbench({
     requestGraphStepInsight,
     summaryAnalysisNode,
     summaryAnalysisScope,
+    summaryOperationEvidence,
     summaryAnalysisItems,
     summaryAnalysisSelectedNodeIds,
     token,
@@ -2266,6 +2384,8 @@ export function CaseGraphWorkbench({
           caseId: activeTab.caseId,
           graphId: activeTab.graphId,
           node: payload,
+          evidence: summaryOperationEvidence,
+          evidenceContext: 'candidate_subject_changes',
         }, token);
       }
       return applyCaseGraphSummarySelection(
@@ -2278,6 +2398,7 @@ export function CaseGraphWorkbench({
           selectedNodeIds: [nodeId],
           selectedCandidates: [{ nodeId: item.nodeId, label: item.label, accounts: item.accounts ?? [] }],
           options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+          evidence: summaryOperationEvidence,
         },
         token,
       );
@@ -2307,6 +2428,7 @@ export function CaseGraphWorkbench({
     summaryAnalysisItems,
     summaryAnalysisNode,
     summaryAnalysisScope,
+    summaryOperationEvidence,
     token,
   ]);
 
@@ -2466,6 +2588,7 @@ export function CaseGraphWorkbench({
       groupType: '团伙成员',
       note: '',
     });
+    setGroupOperationEvidence(emptyOperationEvidence('group_change'));
     setGroupDraftOpen(true);
   }, [activeTab]);
 
@@ -2473,6 +2596,7 @@ export function CaseGraphWorkbench({
     setGroupDraftOpen(false);
     setGroupDraftNodes([]);
     setGroupDraftForm({ name: '', groupType: '团伙成员', note: '' });
+    setGroupOperationEvidence(emptyOperationEvidence('group_change'));
   }, []);
 
   const applyInvestigationGroupOperation = useCallback((operationPayload: Omit<ApplyCaseGraphInvestigationGroupPayload, 'caseId' | 'graphId' | 'options'>) => {
@@ -2549,8 +2673,9 @@ export function CaseGraphWorkbench({
       groupType: groupDraftForm.groupType,
       note: groupDraftForm.note,
       collapsed: true,
+      evidence: groupOperationEvidence,
     });
-  }, [activeTab, applyInvestigationGroupOperation, groupDraftForm.groupType, groupDraftForm.name, groupDraftForm.note, groupDraftNodes]);
+  }, [activeTab, applyInvestigationGroupOperation, groupDraftForm.groupType, groupDraftForm.name, groupDraftForm.note, groupDraftNodes, groupOperationEvidence]);
 
   const removeTabLocally = useCallback((graphId: string) => {
     setGraphTabs((current) => current.filter((item) => item.graphId !== graphId));
@@ -2603,6 +2728,7 @@ export function CaseGraphWorkbench({
       minAmount: activeTab.minAmount == null || activeTab.minAmount === '' ? '' : String(activeTab.minAmount),
       maxAmount: activeTab.maxAmount == null || activeTab.maxAmount === '' ? '' : String(activeTab.maxAmount),
     });
+    setGraphConfigEvidence(emptyOperationEvidence('drill_with_changed_settings'));
     setGraphConfigDialogOpen(true);
   }, [activeTab]);
 
@@ -2650,6 +2776,7 @@ export function CaseGraphWorkbench({
                   drillType: graph.drillType ?? drillType,
                   minAmount: graph.minAmount ?? minAmount,
                   maxAmount: graph.maxAmount ?? maxAmount,
+                  pendingDrillEvidence: graphConfigEvidence,
                 }
               : tab,
           ),
@@ -2667,7 +2794,7 @@ export function CaseGraphWorkbench({
       .finally(() => {
         setRequests((current) => ({ ...current, querying: false }));
       });
-  }, [activeTab, graphConfigForm, token]);
+  }, [activeTab, graphConfigEvidence, graphConfigForm, token]);
 
   const graphActionBusy = requests.querying || requests.drilling || requests.filtering || requests.excluding || requests.creating || requests.deleting || summaryAnalysisApplying || manualClueApplying || groupOperationApplying;
 
@@ -2722,6 +2849,9 @@ export function CaseGraphWorkbench({
       if (!action.subjectName?.trim()) {
         return { title, summary, disabledReason: '请说明要创建的交易主体名称' };
       }
+      if (!(action.discoveryReason?.trim() || action.sourceNote?.trim() || action.note?.trim() || action.reason?.trim())) {
+        return { title, summary, disabledReason: '请说明主体的发现原因、来源材料或情况说明' };
+      }
       return { title, summary: `${summary}；确认后会在当前图上创建这个交易主体` };
     }
     if (action.type === 'add_manual_trade') {
@@ -2729,12 +2859,18 @@ export function CaseGraphWorkbench({
       if (form.error) {
         return { title, summary, disabledReason: form.error };
       }
+      if (!(form.payload?.sourceNote?.trim() || form.payload?.summary?.trim())) {
+        return { title, summary, disabledReason: '请说明这笔资金往来的线索来源或情况说明' };
+      }
       return { title, summary: `${summary}；确认后会把这笔资金往来补充到当前图` };
     }
     if (action.type === 'add_reality_relation') {
       const form = buildRealityRelationFormForAction(action, activeTab);
       if (form.error) {
         return { title, summary, disabledReason: form.error };
+      }
+      if (!form.payload?.note?.trim()) {
+        return { title, summary, disabledReason: '请说明现实关系的事实来源' };
       }
       return { title, summary: `${summary}；确认后会在当前图上标注这条现实关系` };
     }
@@ -2771,6 +2907,17 @@ export function CaseGraphWorkbench({
     if (!activeTab) {
       return;
     }
+    const requiredEvidenceOperation = requiredEvidenceOperationForChatAction(action);
+    const actionEvidence = requiredEvidenceOperation
+      ? await requestOperationEvidence(
+          requiredEvidenceOperation,
+          preview.title,
+          `${preview.summary}。请记录本次操作依据。`,
+        )
+      : undefined;
+    if (requiredEvidenceOperation && !actionEvidence) {
+      return;
+    }
     if (action.type === 'filter') {
       await applyCaseGraphFilterState(mergeActionFilters(currentFilterState(activeTab), action.filters ?? {}));
       return;
@@ -2788,7 +2935,7 @@ export function CaseGraphWorkbench({
       return;
     }
     if (action.type === 'complete_relation') {
-      handleCompleteGraphRelations();
+      handleCompleteGraphRelations(actionEvidence ?? undefined);
       return;
     }
     if (action.type === 'create_subject') {
@@ -2968,6 +3115,9 @@ export function CaseGraphWorkbench({
           tradeFacts: activeTab.tradeFacts ?? activeTab.graphData?.tradeFacts ?? {},
           edgeTradeIds: buildEdgeTradeIdsFromGraph(activeTab.graphData),
           options: buildRelationOptions(activeTab.graphData, graphNodePositionsRef.current),
+          evidence: action.type === 'exclude_trades'
+            ? actionEvidence!
+            : emptyOperationEvidence('restore_trades'),
         },
         token,
       )
@@ -2999,7 +3149,7 @@ export function CaseGraphWorkbench({
       return;
     }
     if (action.type === 'exclude_node') {
-      handleExcludeNode(buildExcludedNodePayloadFromGraphNode(resolved.node));
+      handleExcludeNode(buildExcludedNodePayloadFromGraphNode(resolved.node), actionEvidence ?? undefined);
     }
   }, [
     activeTab,
@@ -3014,6 +3164,7 @@ export function CaseGraphWorkbench({
     applyRelationResultToActiveTab,
     refreshGraphSteps,
     requestGraphStepInsight,
+    requestOperationEvidence,
     setSummaryAnalysisApplying,
     token,
     previewCaseGraphAction,
@@ -3603,6 +3754,8 @@ export function CaseGraphWorkbench({
         onToggleNodes={handleSetSummaryAnalysisNodes}
         onApply={handleApplySummaryAnalysis}
         onApplyItemAction={handleApplySummaryAnalysisItemAction}
+        evidence={summaryOperationEvidence}
+        onEvidenceChange={setSummaryOperationEvidence}
         onClose={handleCloseSummaryAnalysis}
       />
 
@@ -3684,6 +3837,11 @@ export function CaseGraphWorkbench({
                   ))}
                 </div>
               </div>
+              <OperationEvidenceFields
+                operation="group_change"
+                value={groupOperationEvidence}
+                onChange={setGroupOperationEvidence}
+              />
             </div>
       </Modal>
 
@@ -3900,7 +4058,51 @@ export function CaseGraphWorkbench({
                 </div>
               </>
             )}
+            <OperationEvidenceFields
+              operation={excludedDialogTab === 'nodes' ? 'restore_nodes' : 'restore_trades'}
+              value={excludedRestoreEvidence}
+              onChange={setExcludedRestoreEvidence}
+            />
         </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(operationEvidencePrompt)}
+        title={operationEvidencePrompt?.title ?? '记录操作依据'}
+        description={operationEvidencePrompt?.description}
+        onClose={closeOperationEvidencePrompt}
+        size="md"
+        bodyClassName="case-graph-form-modal-body"
+        footer={(
+          <>
+            <button className="case-graph-secondary-button" type="button" onClick={closeOperationEvidencePrompt}>取消</button>
+            <button
+              className="case-graph-primary-button"
+              type="button"
+              disabled={!operationEvidencePrompt || Boolean(validateOperationEvidence(operationEvidencePrompt.operation, operationEvidence))}
+              onClick={() => {
+                if (!operationEvidencePrompt) return;
+                const validationError = validateOperationEvidence(operationEvidencePrompt.operation, operationEvidence);
+                if (validationError) {
+                  setError(validationError);
+                  return;
+                }
+                operationEvidencePrompt.resolve(operationEvidence);
+                setOperationEvidencePrompt(null);
+              }}
+            >
+              确认执行
+            </button>
+          </>
+        )}
+      >
+        {operationEvidencePrompt ? (
+          <OperationEvidenceFields
+            operation={operationEvidencePrompt.operation}
+            value={operationEvidence}
+            onChange={setOperationEvidence}
+          />
+        ) : null}
       </Modal>
 
       <Modal
@@ -3992,6 +4194,11 @@ export function CaseGraphWorkbench({
                 />
               </label>
             </div>
+            <OperationEvidenceFields
+              operation="drill_with_changed_settings"
+              value={graphConfigEvidence}
+              onChange={setGraphConfigEvidence}
+            />
       </Modal>
     </section>
   );
@@ -4017,8 +4224,20 @@ function buildReplayTimelineSteps(steps: CaseGraphStepSnapshot[]): CaseGraphRepl
       edgeCount: activeCounts.edgeCount,
       addedNodeCount,
       addedEdgeCount,
+      evidenceLevel: step.operation.evidence?.level,
+      evidenceLabel: step.operation.evidence?.reasonLabel,
+      evidenceNote: step.operation.evidence?.note,
     };
   });
+}
+
+function requiredEvidenceOperationForChatAction(
+  action: CaseGraphChatAction,
+): CaseGraphEvidenceOperation | null {
+  if (action.type === 'exclude_node') return 'exclude_nodes';
+  if (action.type === 'exclude_trades') return 'exclude_trades';
+  if (action.type === 'complete_relation') return 'complete_relation';
+  return null;
 }
 
 function countActiveGraphElements(graph: CaseGraphStateBody): { nodeCount: number; edgeCount: number } {

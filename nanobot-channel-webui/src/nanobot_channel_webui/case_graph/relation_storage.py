@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from .relation_types import SCHEMA_VERSION
 from .graph_repository import GraphRepository
+from .operation_evidence import OperationEvidenceLevel, normalize_operation_evidence
+from .relation_types import SCHEMA_VERSION
 
 
 class RelationGraphStorage:
@@ -26,7 +27,16 @@ class RelationGraphStorage:
         graph: dict[str, Any],
         delta: dict[str, Any],
         summary: dict[str, Any],
+        evidence_level: OperationEvidenceLevel | None = None,
     ) -> dict[str, Any]:
+        group_operation = str(request.get("operation") or "").strip() or None
+        evidence = normalize_operation_evidence(
+            step_type,
+            request.get("evidence") if isinstance(request.get("evidence"), dict) else None,
+            group_operation=group_operation,
+            level_override=evidence_level,
+        )
+        operation_params = {key: value for key, value in request.items() if key != "evidence"}
         state_result = self._repository.append_step(
             case_id=case_id,
             graph_id=graph_id,
@@ -34,7 +44,8 @@ class RelationGraphStorage:
             operation={
                 "type": step_type,
                 "label": str(summary.get("label") or step_type),
-                "params": dict(request),
+                "params": operation_params,
+                "evidence": evidence,
             },
             graph=graph,
             delta=delta,
@@ -51,6 +62,7 @@ class RelationGraphStorage:
                 "type": step_type,
                 "createdAt": step["createdAt"],
                 "request": request,
+                "evidence": evidence,
                 "summary": summary,
                 "file": step["file"],
             },

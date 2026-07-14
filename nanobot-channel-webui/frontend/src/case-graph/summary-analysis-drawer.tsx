@@ -1,4 +1,4 @@
-import { Check, FileSearch } from 'lucide-react';
+import { Check, FileSearch, FileText } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Modal } from '../components/ui/modal';
@@ -11,7 +11,8 @@ import {
   type SortState,
 } from './sortable-table';
 import { CaseGraphDateInput } from './date-input';
-import type { CaseGraphData, CaseGraphNode, CaseGraphTradeFact } from './types';
+import { OperationEvidenceFields } from './operation-evidence-fields';
+import type { CaseGraphData, CaseGraphNode, CaseGraphOperationEvidence, CaseGraphTradeFact } from './types';
 
 export interface SummaryAnalysisItem {
   nodeId: string;
@@ -48,6 +49,8 @@ interface SummaryAnalysisDrawerProps {
   onToggleNodes: (nodeIds: string[], selected: boolean) => void;
   onApply: () => void;
   onApplyItemAction: (nodeId: string, action: SummaryAnalysisItemAction) => void;
+  evidence: CaseGraphOperationEvidence;
+  onEvidenceChange: (evidence: CaseGraphOperationEvidence) => void;
   onClose: () => void;
 }
 
@@ -77,19 +80,44 @@ export function SummaryAnalysisDrawer({
   onToggleNodes,
   onApply,
   onApplyItemAction,
+  evidence,
+  onEvidenceChange,
   onClose,
 }: SummaryAnalysisDrawerProps) {
   const [filters, setFilters] = useState<SummaryAnalysisFilters>(emptySummaryFilters);
   const [sortState, setSortState] = useState<SortState<SummarySortKey> | null>(null);
   const [statusFilter, setStatusFilter] = useState<SummaryStatusFilter>('all');
+  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const evidencePopoverRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!open) {
       setFilters(emptySummaryFilters());
       setSortState(null);
       setStatusFilter('all');
+      setEvidenceOpen(false);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!evidenceOpen) return undefined;
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (evidencePopoverRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest('.app-select-menu')) return;
+      setEvidenceOpen(false);
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setEvidenceOpen(false);
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [evidenceOpen]);
 
   const statusCounts = useMemo(() => countSummaryStatuses(items), [items]);
   const selectedSet = useMemo(() => new Set(selectedNodeIds), [selectedNodeIds]);
@@ -128,21 +156,51 @@ export function SummaryAnalysisDrawer({
       size="full"
       className="case-graph-summary-analysis-modal"
       bodyClassName="case-graph-detail-modal-body"
+      footerClassName="case-graph-summary-analysis-footer"
       footer={(
         <>
           <span>{buildSummaryFooterText(selectedTotalCount, selectedActionCounts)}</span>
-          <button type="button" className="case-graph-secondary-button" onClick={onClose}>
-            取消
-          </button>
-          <button
-            type="button"
-            className="case-graph-primary-button"
-            disabled={loading || applying || !items.length || !selectedTotalCount}
-            onClick={onApply}
-          >
-            <Check size={14} />
-            <span>{applying ? '处理中' : '应用到图'}</span>
-          </button>
+          <div className="case-graph-summary-analysis-footer-actions">
+            <div className="case-graph-summary-evidence-anchor" ref={evidencePopoverRef}>
+              <button
+                type="button"
+                className={`case-graph-summary-evidence-trigger${evidence.reasonLabel ? ' is-complete' : ''}`}
+                aria-expanded={evidenceOpen}
+                onClick={() => setEvidenceOpen((current) => !current)}
+              >
+                <FileText size={14} />
+                <span>{evidence.reasonLabel ? `依据：${evidence.reasonLabel}` : '操作依据（选填）'}</span>
+              </button>
+              {evidenceOpen ? (
+                <div className="case-graph-summary-evidence-popover">
+                  <OperationEvidenceFields
+                    operation="candidate_subject_changes"
+                    value={evidence}
+                    onChange={onEvidenceChange}
+                    alwaysExpanded
+                  />
+                  <div className="case-graph-summary-evidence-popover-actions">
+                    {evidence.reasonCode || evidence.note ? (
+                      <button type="button" onClick={() => onEvidenceChange({ level: 'optional' })}>清空</button>
+                    ) : <span />}
+                    <button type="button" className="is-primary" onClick={() => setEvidenceOpen(false)}>完成</button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+            <button type="button" className="case-graph-secondary-button" onClick={onClose}>
+              取消
+            </button>
+            <button
+              type="button"
+              className="case-graph-primary-button"
+              disabled={loading || applying || !items.length || !selectedTotalCount}
+              onClick={onApply}
+            >
+              <Check size={14} />
+              <span>{applying ? '处理中' : '应用到图'}</span>
+            </button>
+          </div>
         </>
       )}
     >

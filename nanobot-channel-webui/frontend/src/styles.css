@@ -2656,6 +2656,96 @@
     padding: 18px 20px 0;
     overflow: hidden;
   }
+  .case-graph-summary-analysis-footer {
+    padding: 14px 20px;
+  }
+  .case-graph-summary-analysis-footer > span:first-child {
+    margin-right: auto;
+    color: var(--color-text-secondary);
+    font-size: 13px;
+  }
+  .case-graph-summary-analysis-footer-actions {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+  .case-graph-summary-evidence-anchor {
+    position: relative;
+  }
+  .case-graph-summary-evidence-trigger {
+    max-width: 280px;
+    height: 38px;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 12px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 8px;
+    background: var(--color-bg-raised);
+    color: var(--color-text-secondary);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .case-graph-summary-evidence-trigger span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .case-graph-summary-evidence-trigger:hover,
+  .case-graph-summary-evidence-trigger[aria-expanded='true'] {
+    border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border-subtle));
+    background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-raised));
+    color: var(--color-text-primary);
+  }
+  .case-graph-summary-evidence-trigger.is-complete {
+    border-color: color-mix(in srgb, var(--color-accent) 30%, var(--color-border-subtle));
+    color: var(--color-accent);
+  }
+  .case-graph-summary-evidence-popover {
+    position: absolute;
+    z-index: 90;
+    right: 0;
+    bottom: calc(100% + 10px);
+    width: min(420px, calc(100vw - 48px));
+    padding: 14px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--r-md);
+    background: var(--color-bg-elevated);
+    box-shadow: var(--shadow-3);
+  }
+  .case-graph-summary-evidence-popover .case-graph-operation-evidence {
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+  .case-graph-summary-evidence-popover-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--color-border-subtle);
+  }
+  .case-graph-summary-evidence-popover-actions button {
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 7px;
+    background: var(--color-bg-raised);
+    color: var(--color-text-secondary);
+    font-size: 13px;
+    font-weight: 700;
+  }
+  .case-graph-summary-evidence-popover-actions button.is-primary {
+    margin-left: auto;
+    border-color: var(--color-accent);
+    background: var(--color-accent);
+    color: var(--color-accent-on);
+  }
   .case-graph-summary-status-tabs {
     display: flex;
     flex-wrap: wrap;
@@ -3379,6 +3469,513 @@
   .case-graph-canvas-overlay-tools .case-graph-mini-button--icon {
     width: 26px;
     padding: 0;
+  }
+  .case-graph-fund-flow-modal .app-modal-header {
+    padding: 16px 20px;
+  }
+  .case-graph-fund-flow-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .case-graph-fund-flow-title > svg {
+    color: var(--color-accent);
+  }
+  .case-graph-fund-flow-modal-body {
+    overflow: hidden;
+    padding: 0;
+  }
+  .case-graph-fund-flow-layout {
+    min-width: 0;
+    min-height: 0;
+    height: 100%;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 370px;
+    background: var(--color-bg-page);
+  }
+  .case-graph-fund-flow-workspace {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+  }
+  .case-graph-fund-flow-controls {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: minmax(170px, 1fr) 132px 142px 132px 128px auto;
+    align-items: end;
+    gap: 10px;
+    padding: 14px 16px 12px;
+    border-bottom: 1px solid var(--color-border-subtle);
+    background: var(--color-bg-elevated);
+  }
+  .case-graph-fund-flow-control-copy {
+    min-width: 0;
+    display: grid;
+    align-self: center;
+    gap: 3px;
+  }
+  .case-graph-fund-flow-control-copy strong {
+    color: var(--color-text-primary);
+    font-size: 13px;
+    font-weight: 800;
+  }
+  .case-graph-fund-flow-control-copy span {
+    color: var(--color-text-muted);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  .case-graph-fund-flow-field {
+    min-width: 0;
+    display: grid;
+    gap: 5px;
+    color: var(--color-text-secondary);
+    font-size: 11px;
+    font-weight: 700;
+  }
+  .case-graph-fund-flow-field .app-select-trigger,
+  .case-graph-fund-flow-field input {
+    height: 34px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 8px;
+    background: var(--color-bg-raised);
+    color: var(--color-text-primary);
+    font-size: 12px;
+  }
+  .case-graph-fund-flow-field input {
+    width: 100%;
+    min-width: 0;
+    padding: 0 10px;
+    outline: none;
+  }
+  .case-graph-fund-flow-field input:focus {
+    border-color: color-mix(in srgb, var(--color-accent) 70%, var(--color-border-subtle));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-accent) 12%, transparent);
+  }
+  .case-graph-fund-flow-reset {
+    height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 0 10px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 8px;
+    background: var(--color-bg-raised);
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .case-graph-fund-flow-reset:hover {
+    border-color: color-mix(in srgb, var(--color-accent) 35%, var(--color-border-subtle));
+    color: var(--color-accent);
+  }
+  .case-graph-fund-flow-summary {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--color-border-subtle);
+    background: color-mix(in srgb, var(--color-bg-elevated) 84%, var(--color-accent) 2%);
+    color: var(--color-text-secondary);
+    font-size: 11px;
+  }
+  .case-graph-fund-flow-summary > span:not(.case-graph-fund-flow-formula) {
+    padding: 4px 8px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 999px;
+    background: var(--color-bg-raised);
+  }
+  .case-graph-fund-flow-summary strong {
+    color: var(--color-text-primary);
+    font-weight: 800;
+  }
+  .case-graph-fund-flow-formula {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+  }
+  .case-graph-fund-flow-canvas-shell,
+  .case-graph-fund-flow-canvas-wrap,
+  .case-graph-fund-flow-canvas {
+    min-width: 0;
+    min-height: 0;
+    width: 100%;
+    height: 100%;
+  }
+  .case-graph-fund-flow-canvas-shell {
+    position: relative;
+    overflow: hidden;
+    background:
+      linear-gradient(color-mix(in srgb, var(--color-border-subtle) 40%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in srgb, var(--color-border-subtle) 40%, transparent) 1px, transparent 1px),
+      radial-gradient(circle at 42% 25%, color-mix(in srgb, var(--color-accent) 7%, transparent), transparent 48%),
+      var(--color-bg-page);
+    background-size: 24px 24px, 24px 24px, auto, auto;
+  }
+  .case-graph-fund-flow-canvas-wrap {
+    position: relative;
+  }
+  .case-graph-fund-flow-node {
+    width: 204px;
+    height: 92px;
+    display: grid;
+    grid-template-rows: auto auto 1fr;
+    gap: 5px;
+    padding: 11px 12px 9px;
+    overflow: hidden;
+    border: 1px solid #cbd5e1;
+    border-left: 4px solid #64748b;
+    border-radius: 10px;
+    background: #ffffff;
+    color: #172033;
+    box-shadow: 0 8px 22px rgba(15, 23, 42, 0.13), 0 1px 2px rgba(15, 23, 42, 0.08);
+    font-family: var(--font-sans);
+  }
+  .case-graph-fund-flow-node.is-net-in {
+    border-left-color: #2563eb;
+  }
+  .case-graph-fund-flow-node.is-net-out {
+    border-left-color: #0f766e;
+  }
+  .case-graph-fund-flow-node.is-balanced {
+    border-left-color: #d97706;
+  }
+  .case-graph-fund-flow-node header {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 7px;
+  }
+  .case-graph-fund-flow-node header strong {
+    min-width: 0;
+    overflow: hidden;
+    color: #0f172a;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .case-graph-fund-flow-node header span {
+    flex: 0 0 auto;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: #eff6ff;
+    color: #1d4ed8;
+    font-size: 9px;
+    font-weight: 800;
+    line-height: 1.4;
+  }
+  .case-graph-fund-flow-node.is-net-out header span {
+    background: #ecfdf5;
+    color: #0f766e;
+  }
+  .case-graph-fund-flow-node.is-balanced header span {
+    background: #fffbeb;
+    color: #92400e;
+  }
+  .case-graph-fund-flow-node p {
+    margin: 0;
+    overflow: hidden;
+    color: #64748b;
+    font-size: 10px;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .case-graph-fund-flow-node footer {
+    display: flex;
+    align-items: end;
+    gap: 8px;
+    padding-top: 6px;
+    border-top: 1px solid #eef2f7;
+    color: #64748b;
+    font-size: 9px;
+  }
+  .case-graph-fund-flow-node footer span {
+    min-width: 0;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3px;
+  }
+  .case-graph-fund-flow-node footer b {
+    color: #334155;
+    font-size: 11px;
+    font-weight: 800;
+  }
+  .case-graph-fund-flow-node footer i {
+    width: 1px;
+    height: 15px;
+    background: #e2e8f0;
+  }
+  .case-graph-fund-flow-loading {
+    position: absolute;
+    z-index: 3;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: color-mix(in srgb, var(--color-bg-page) 82%, transparent);
+    color: var(--color-text-muted);
+    font-size: 12px;
+  }
+  .case-graph-fund-flow-legend {
+    position: absolute;
+    z-index: 2;
+    left: 14px;
+    bottom: 14px;
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    padding: 7px 10px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--color-bg-elevated) 92%, transparent);
+    color: var(--color-text-muted);
+    box-shadow: var(--shadow-1);
+    backdrop-filter: blur(8px);
+    font-size: 10px;
+  }
+  .case-graph-fund-flow-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .case-graph-fund-flow-legend i {
+    width: 18px;
+    height: 0;
+    border-top: 2px solid #4f7df3;
+  }
+  .case-graph-fund-flow-legend i.is-neutral {
+    border-top-color: #d97706;
+    border-top-style: dashed;
+  }
+  .case-graph-fund-flow-view-actions {
+    position: absolute;
+    z-index: 3;
+    top: 12px;
+    left: 12px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 9px;
+    background: color-mix(in srgb, var(--color-bg-elevated) 94%, transparent);
+    box-shadow: var(--shadow-1);
+    backdrop-filter: blur(8px);
+  }
+  .case-graph-fund-flow-view-actions button {
+    height: 27px;
+    padding: 0 9px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-text-secondary);
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .case-graph-fund-flow-view-actions button:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-accent) 9%, var(--color-bg-raised));
+    color: var(--color-accent);
+  }
+  .case-graph-fund-flow-view-actions button:disabled {
+    opacity: 0.45;
+  }
+  .case-graph-fund-flow-empty {
+    height: 100%;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 8px;
+    padding: 32px;
+    color: var(--color-text-muted);
+    text-align: center;
+  }
+  .case-graph-fund-flow-empty svg {
+    color: color-mix(in srgb, var(--color-accent) 68%, var(--color-text-muted));
+  }
+  .case-graph-fund-flow-empty strong {
+    color: var(--color-text-primary);
+    font-size: 14px;
+  }
+  .case-graph-fund-flow-empty span {
+    max-width: 460px;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .case-graph-fund-flow-detail {
+    min-width: 0;
+    min-height: 0;
+    display: grid;
+    grid-template-rows: auto auto auto minmax(0, 1fr);
+    overflow: hidden;
+    border-left: 1px solid var(--color-border-subtle);
+    background: var(--color-bg-elevated);
+  }
+  .case-graph-fund-flow-detail.is-empty {
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    gap: 8px;
+    padding: 32px;
+    color: var(--color-text-muted);
+    text-align: center;
+  }
+  .case-graph-fund-flow-detail.is-empty strong {
+    color: var(--color-text-primary);
+    font-size: 14px;
+  }
+  .case-graph-fund-flow-detail.is-empty span {
+    max-width: 260px;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .case-graph-fund-flow-detail-head {
+    display: grid;
+    gap: 7px;
+    padding: 16px;
+    border-bottom: 1px solid var(--color-border-subtle);
+  }
+  .case-graph-fund-flow-detail-head > span {
+    width: max-content;
+    padding: 3px 7px;
+    border-radius: 999px;
+    font-size: 10px;
+    font-weight: 800;
+  }
+  .case-graph-fund-flow-detail-head > span.is-clear {
+    background: color-mix(in srgb, #4f7df3 12%, var(--color-bg-raised));
+    color: #315fcf;
+  }
+  .case-graph-fund-flow-detail-head > span.is-neutral {
+    background: color-mix(in srgb, #94a3b8 14%, var(--color-bg-raised));
+    color: var(--color-text-secondary);
+  }
+  .case-graph-fund-flow-detail-head strong {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--color-text-primary);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+  .case-graph-fund-flow-detail-head small {
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+  .case-graph-fund-flow-detail-metrics {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--color-border-subtle);
+  }
+  .case-graph-fund-flow-detail-metrics > div {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+    padding: 10px;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: 9px;
+    background: var(--color-bg-raised);
+  }
+  .case-graph-fund-flow-detail-metrics > div.is-net {
+    grid-column: 1 / -1;
+    background: color-mix(in srgb, var(--color-accent) 7%, var(--color-bg-raised));
+  }
+  .case-graph-fund-flow-detail-metrics span,
+  .case-graph-fund-flow-detail-metrics small {
+    overflow: hidden;
+    color: var(--color-text-muted);
+    font-size: 10px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .case-graph-fund-flow-detail-metrics strong {
+    color: var(--color-text-primary);
+    font-size: 14px;
+  }
+  .case-graph-fund-flow-trades-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 11px 16px;
+    color: var(--color-text-primary);
+    font-size: 12px;
+  }
+  .case-graph-fund-flow-trades-head span {
+    color: var(--color-text-muted);
+    font-size: 11px;
+  }
+  .case-graph-fund-flow-trades {
+    min-height: 0;
+    overflow: auto;
+    padding: 0 16px 16px;
+  }
+  .case-graph-fund-flow-trades table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 10px;
+  }
+  .case-graph-fund-flow-trades th {
+    position: sticky;
+    z-index: 1;
+    top: 0;
+    padding: 8px 6px;
+    border-bottom: 1px solid var(--color-border-subtle);
+    background: var(--color-bg-sunken);
+    color: var(--color-text-muted);
+    text-align: left;
+    white-space: nowrap;
+  }
+  .case-graph-fund-flow-trades td {
+    max-width: 96px;
+    padding: 8px 6px;
+    overflow: hidden;
+    border-bottom: 1px solid color-mix(in srgb, var(--color-border-subtle) 74%, transparent);
+    color: var(--color-text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .case-graph-fund-flow-trades td:last-child {
+    color: var(--color-text-primary);
+    font-weight: 700;
+  }
+  @media (max-width: 1240px) {
+    .case-graph-fund-flow-layout {
+      grid-template-columns: minmax(0, 1fr) 330px;
+    }
+    .case-graph-fund-flow-controls {
+      grid-template-columns: minmax(160px, 1fr) 122px 130px 122px 116px;
+    }
+    .case-graph-fund-flow-reset {
+      grid-column: 5;
+    }
+  }
+  @media (max-width: 980px) {
+    .case-graph-fund-flow-layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .case-graph-fund-flow-detail {
+      display: none;
+    }
+    .case-graph-fund-flow-controls {
+      grid-template-columns: minmax(150px, 1fr) repeat(2, minmax(112px, 132px));
+    }
+    .case-graph-fund-flow-control-copy {
+      grid-row: span 2;
+    }
+    .case-graph-fund-flow-reset {
+      grid-column: 3;
+    }
   }
   .case-graph-mini-button {
     height: 30px;
@@ -8655,4 +9252,114 @@
   }
 
   .skill-doc { font-size: 14px; line-height: 1.7; }
+}
+.case-graph-operation-evidence {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--color-bg-sunken) 72%, var(--color-bg-raised));
+}
+
+.case-graph-operation-evidence-heading {
+  display: grid;
+  gap: 2px;
+}
+
+.case-graph-operation-evidence-heading strong {
+  color: var(--color-text-primary);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.case-graph-operation-evidence-heading span,
+.case-graph-operation-evidence label span {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.case-graph-operation-evidence label {
+  display: grid;
+  gap: 6px;
+}
+
+.case-graph-operation-evidence .app-select-trigger {
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--r-sm);
+  background: var(--color-bg-raised);
+  color: var(--color-text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.case-graph-operation-evidence .app-select.is-open .app-select-trigger,
+.case-graph-operation-evidence .app-select-trigger:focus-visible {
+  border-color: color-mix(in srgb, var(--color-accent) 52%, var(--color-border-strong));
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+
+.case-graph-operation-evidence textarea {
+  width: 100%;
+  min-height: 96px;
+  padding: 11px 13px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--r-sm);
+  background: var(--color-bg-raised);
+  color: var(--color-text-primary);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  outline: none;
+  resize: vertical;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+
+.case-graph-operation-evidence textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+.case-graph-operation-evidence textarea:hover {
+  border-color: var(--color-border-strong);
+}
+
+.case-graph-operation-evidence textarea:focus {
+  border-color: color-mix(in srgb, var(--color-accent) 52%, var(--color-border-strong));
+  box-shadow: 0 0 0 3px var(--color-accent-soft);
+}
+
+.case-graph-evidence-expand,
+.case-graph-evidence-note-toggle {
+  width: fit-content;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--color-accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.case-graph-evidence-expand:hover,
+.case-graph-evidence-note-toggle:hover {
+  border-color: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  background: var(--color-accent-soft);
+}
+
+@media (max-width: 900px) {
+  .case-graph-summary-analysis-footer-actions {
+    flex-wrap: wrap;
+  }
+
+  .case-graph-summary-analysis-footer > span:first-child {
+    width: 100%;
+  }
 }

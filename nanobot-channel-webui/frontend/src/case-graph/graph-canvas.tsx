@@ -5,6 +5,7 @@ import type { Graph as G6Graph } from '@antv/g6';
 
 import { Modal } from '../components/ui/modal';
 import { Select } from '../components/ui/select';
+import { FundFlowModal } from './fund-flow-modal';
 import { buildCaseGraphViewModel, formatCompactAmount } from './graph-analysis';
 import { computeCaseGraphLayout } from './graph-layout';
 import { detectCaseGraphCluePatterns, type CaseGraphCluePatternMatch } from './clue-patterns';
@@ -332,6 +333,7 @@ export function GraphCanvas({
   const [selectedCluePatternId, setSelectedCluePatternId] = useState<string | null>(null);
   const [exportingPng, setExportingPng] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [fundFlowOpen, setFundFlowOpen] = useState(false);
   const [graphReadyNonce, setGraphReadyNonce] = useState(0);
   const [graphViewport, setGraphViewport] = useState({ width: GRAPH_WIDTH, height: GRAPH_HEIGHT });
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -2124,6 +2126,22 @@ export function GraphCanvas({
             <button
               className="case-graph-mini-button"
               type="button"
+              disabled={!nodes.length || loading}
+              title="查看当前有效图谱的资金流向"
+              onClick={() => {
+                clearFocusState();
+                closeCluePatternPanel();
+                setCanvasContextMenu(null);
+                void clearInteractionState();
+                setFundFlowOpen(true);
+              }}
+            >
+              <Route size={14} />
+              <span>资金流向</span>
+            </button>
+            <button
+              className="case-graph-mini-button"
+              type="button"
               disabled={!nodes.length}
               title="重置视图"
               onClick={() => {
@@ -2257,6 +2275,18 @@ export function GraphCanvas({
               {replayTimelineView.activeStep.addedNodeCount || replayTimelineView.activeStep.addedEdgeCount ? (
                 <i>+{replayTimelineView.activeStep.addedNodeCount} 点 / +{replayTimelineView.activeStep.addedEdgeCount} 线</i>
               ) : null}
+              {replayTimelineView.activeStep.evidenceLabel ? (
+                <small title={replayTimelineView.activeStep.evidenceNote || replayTimelineView.activeStep.evidenceLabel}>
+                  操作依据：{replayTimelineView.activeStep.evidenceLabel}
+                  {replayTimelineView.activeStep.evidenceNote ? ` · ${replayTimelineView.activeStep.evidenceNote}` : ''}
+                </small>
+              ) : replayTimelineView.activeStep.evidenceLevel === 'automatic' ? (
+                <small>操作依据：系统自动留痕</small>
+              ) : replayTimelineView.activeStep.evidenceLevel === 'optional' ? (
+                <small>操作依据：未补充</small>
+              ) : (
+                <small>操作依据：未记录</small>
+              )}
             </div>
             <div className="case-graph-replay-actions">
               <button
@@ -2316,6 +2346,11 @@ export function GraphCanvas({
               '先点击新增，创建图形页签。'
             )}
           </div>
+        ) : null}
+
+        {fundFlowOpen && typeof document !== 'undefined' ? createPortal(
+          <FundFlowModal open graphData={graphData} onClose={() => setFundFlowOpen(false)} />,
+          document.body,
         ) : null}
 
         {activeGroup && typeof document !== 'undefined' ? createPortal(

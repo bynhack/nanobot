@@ -26,6 +26,13 @@ from nanobot_channel_webui.case_graph.mysql_client import CaseGraphMySQLConfig, 
 from nanobot_channel_webui.case_graph.relation_service import RelationGraphService
 
 
+REQUIRED_OPERATION_EVIDENCE = {
+    "reasonCode": "documentary_evidence",
+    "reasonLabel": "书证材料",
+    "note": "测试操作依据",
+}
+
+
 class DummyRelationQueryClient:
     def query_relation_one_hop(self, **_: object) -> dict[str, object]:
         raise AssertionError("query_relation_one_hop should not be called")
@@ -1018,8 +1025,9 @@ def test_relation_service_complete_persists_internal_relation_step(tmp_path: Pat
             "accounts": [
                 {"accountId": "1", "tradeCard": "W-1", "accountName": "伍华中"},
                 {"accountId": "35", "tradeCard": "P-35", "accountName": "冯燕青"},
-            ],
-            "filters": {},
+                ],
+                "filters": {},
+                "evidence": REQUIRED_OPERATION_EVIDENCE,
         }
     )
 
@@ -1089,6 +1097,7 @@ def test_relation_service_complete_reuses_subject_node_for_seed_accounts(tmp_pat
                 {"accountId": "1", "tradeCard": "W-1", "accountName": "伍华中"},
                 {"accountId": "35", "tradeCard": "P-35", "accountName": "冯燕青"},
             ],
+            "evidence": REQUIRED_OPERATION_EVIDENCE,
         }
     )
 
@@ -1615,6 +1624,7 @@ def test_relation_service_complete_preserves_manual_exclusions(tmp_path: Path) -
             "caseId": "37",
             "graphId": "graph-1",
             "node": {"nodeId": "account:35", "label": "冯燕青", "type": "account", "accountIds": ["35"]},
+            "evidence": REQUIRED_OPERATION_EVIDENCE,
         }
     )
 
@@ -1626,6 +1636,7 @@ def test_relation_service_complete_preserves_manual_exclusions(tmp_path: Path) -
                 {"accountId": "1", "tradeCard": "W-1", "accountName": "伍华中"},
                 {"accountId": "35", "tradeCard": "P-35", "accountName": "冯燕青"},
             ],
+            "evidence": REQUIRED_OPERATION_EVIDENCE,
         }
     )
 
@@ -2015,6 +2026,7 @@ def test_relation_service_filter_preserves_manual_exclusions(tmp_path: Path) -> 
             "caseId": "37",
             "graphId": "graph-1",
             "node": {"nodeId": "account:35", "label": "冯燕青", "type": "account", "accountIds": ["35"]},
+            "evidence": REQUIRED_OPERATION_EVIDENCE,
         }
     )
 
@@ -2082,6 +2094,7 @@ def test_relation_service_excludes_and_restores_manual_node(tmp_path: Path) -> N
             "caseId": "37",
             "graphId": "graph-1",
             "node": {"nodeId": "account:35", "label": "冯燕青", "type": "account", "accountIds": ["35"]},
+            "evidence": REQUIRED_OPERATION_EVIDENCE,
         }
     )
 
@@ -2127,6 +2140,7 @@ def test_relation_service_restores_multiple_nodes_in_one_step_without_moving_lay
                 {"id": "account:59", "accountId": "59", "label": "待恢复B", "x": 300, "y": 220, "isExcluded": True},
                 {"id": "account:90", "accountId": "90", "label": "保留节点", "x": 500, "y": 220},
             ],
+            "evidence": REQUIRED_OPERATION_EVIDENCE,
             "edges": [
                 {"id": "money:35->55", "from": "account:35", "to": "account:55", "isExcluded": True},
                 {"id": "money:35->59", "from": "account:35", "to": "account:59", "isExcluded": True},
@@ -2220,6 +2234,7 @@ def test_relation_service_excludes_multiple_nodes_in_one_step(tmp_path: Path) ->
                 {"nodeId": "account:35", "label": "冯燕青", "type": "account", "accountIds": ["35"]},
                 {"nodeId": "account:39", "label": "蔡金海", "type": "account", "accountIds": ["39"]},
             ],
+            "evidence": REQUIRED_OPERATION_EVIDENCE,
         }
     )
 
@@ -2279,6 +2294,8 @@ def test_relation_service_adds_manual_trade_without_moving_existing_nodes(tmp_pa
     )
 
     assert result["queryMode"] == "manual_trade_add"
+    assert result["step"]["evidence"]["reasonLabel"] == "人工补充资金往来依据"
+    assert result["step"]["evidence"]["note"] == "情况说明：办案人员补充现金往来"
     assert result["step"]["summary"]["label"] == "补充资金往来"
     assert result["graph"]["nodes"][0]["x"] == 120.0
     assert result["graph"]["nodes"][1]["x"] == 520.0
@@ -2334,6 +2351,7 @@ def test_relation_service_adds_manual_node_without_moving_existing_nodes(tmp_pat
     )
 
     assert result["queryMode"] == "manual_node_add"
+    assert result["step"]["evidence"]["reasonLabel"] == "人工补充主体依据"
     assert result["step"]["summary"]["label"] == "创建交易主体"
     assert result["graph"]["layout"]["nodePositions"]["a"] == {"x": 120.0, "y": 240.0}
     assert result["graph"]["layout"]["nodePositions"]["b"] == {"x": 520.0, "y": 240.0}
@@ -2406,6 +2424,7 @@ def test_relation_service_adds_manual_trade_with_new_graph_only_node(tmp_path: P
             "payee": {"label": "现金交付人", "createNew": True},
             "amount": 1200,
             "method": "现金",
+            "sourceNote": "询问笔录",
         }
     )
 
@@ -2492,6 +2511,7 @@ def test_relation_service_adds_reality_relation_without_money_edge(tmp_path: Pat
     )
 
     assert result["queryMode"] == "reality_relation_add"
+    assert result["step"]["evidence"]["note"] == "关系说明：户籍信息确认"
     assert result["step"]["summary"]["label"] == "标注现实关系"
     assert result["graph"]["edges"] == []
     assert result["graph"]["realityRelations"][0]["relationType"] == "母女"
@@ -3039,6 +3059,7 @@ def test_relation_service_filters_detail_trades_from_persisted_facts(tmp_path: P
                     "payeeAccountId": "1",
                 },
             ],
+            "evidence": REQUIRED_OPERATION_EVIDENCE,
             "options": {"nodePositions": {"account:1": {"x": 111, "y": 222}}},
         }
     )
@@ -3162,6 +3183,7 @@ def test_relation_service_restores_fully_removed_trade_edge_from_facts(tmp_path:
             "excludedTrades": ["45", "220"],
             "edgeTradeIds": {"money:account:35->subject:suspect:1": ["45", "220"]},
             "tradeFacts": {},
+            "evidence": REQUIRED_OPERATION_EVIDENCE,
         }
     )
     assert [edge["id"] for edge in excluded["graph"]["edges"]] == ["money:subject:suspect:1->account:9"]

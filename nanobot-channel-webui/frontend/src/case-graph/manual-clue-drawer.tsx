@@ -114,9 +114,14 @@ export function ManualClueDrawer({
 
   const payer = buildPartyPayload(payerNodeId, nodeOptions);
   const payee = buildPartyPayload(payeeNodeId, nodeOptions);
-  const canApplyNode = Boolean(nodeLabel.trim());
-  const canApplyTrade = Boolean(payer && payee && payer.nodeId !== payee.nodeId && Number(amount) > 0 && amount.trim());
-  const canApplyRelation = Boolean(sourceNodeId && targetNodeId && sourceNodeId !== targetNodeId && relationType.trim());
+  const canApplyNode = Boolean(nodeLabel.trim() && (nodeDiscoveryReason.trim() || nodeSourceNote.trim() || nodeNote.trim()));
+  const canApplyTrade = Boolean(
+    payer && payee && payer.nodeId !== payee.nodeId && Number(amount) > 0 && amount.trim()
+    && (sourceNote.trim() || summary.trim()),
+  );
+  const canApplyRelation = Boolean(
+    sourceNodeId && targetNodeId && sourceNodeId !== targetNodeId && relationType.trim() && relationNote.trim(),
+  );
   const canApply = activeMode === 'node' ? canApplyNode : activeMode === 'trade' ? canApplyTrade : canApplyRelation;
 
   return (
@@ -209,6 +214,7 @@ export function ManualClueDrawer({
               <span>情况说明</span>
               <textarea value={nodeNote} placeholder="说明这个交易主体为什么需要补充到当前图谱" onChange={(event) => setNodeNote(event.target.value)} />
             </label>
+            <p className="case-graph-manual-clue-hint">发现原因、来源材料或情况说明至少填写一项，作为本次补充主体的办案依据。</p>
           </div>
         ) : activeMode === 'trade' ? (
           <div className="case-graph-manual-clue-body">
@@ -253,6 +259,7 @@ export function ManualClueDrawer({
               <textarea value={summary} placeholder="说明这笔补充资金往来的依据和办案判断" onChange={(event) => setSummary(event.target.value)} />
             </label>
             <p className="case-graph-manual-clue-hint">如果交易对手不在图上，请先在画布空白处创建交易主体，再建立资金往来。</p>
+            <p className="case-graph-manual-clue-hint">线索来源或情况说明至少填写一项，作为本次补充资金往来的办案依据。</p>
           </div>
         ) : (
           <div className="case-graph-manual-clue-body">
@@ -270,7 +277,7 @@ export function ManualClueDrawer({
               </label>
             </div>
             <label className="case-graph-manual-clue-full">
-              <span>关系说明</span>
+              <span>关系说明 *</span>
               <textarea value={relationNote} placeholder="说明关系来源，例如户籍信息、询问笔录、聊天记录等" onChange={(event) => setRelationNote(event.target.value)} />
             </label>
           </div>

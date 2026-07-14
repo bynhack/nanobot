@@ -85,4 +85,6 @@ def normalize_relation_query_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "drillType": _drill_type(payload.get("drillType")),
         "filters": filters,
         "options": options,
+        "evidence": dict(payload.get("evidence") or {}) if isinstance(payload.get("evidence"), dict) else None,
+        "evidenceContext": _text(payload.get("evidenceContext")) or None,
     }

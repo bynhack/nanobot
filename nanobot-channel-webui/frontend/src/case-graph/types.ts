@@ -293,6 +293,7 @@ export interface CaseGraphRelationResponse {
     request?: Record<string, unknown>;
     summary?: Record<string, unknown>;
     file?: string;
+    evidence?: CaseGraphOperationEvidence;
   };
 }
 
@@ -364,7 +365,17 @@ export interface CaseGraphStepOperation {
   type: string;
   label?: string;
   params?: Record<string, unknown>;
+  evidence?: CaseGraphOperationEvidence;
   [key: string]: unknown;
+}
+
+export type CaseGraphOperationEvidenceLevel = 'required' | 'optional' | 'automatic';
+
+export interface CaseGraphOperationEvidence {
+  level: CaseGraphOperationEvidenceLevel;
+  reasonCode?: string;
+  reasonLabel?: string;
+  note?: string;
 }
 
 export interface CaseGraphStepDelta {
@@ -405,6 +416,9 @@ export interface CaseGraphReplayTimelineStep {
   edgeCount: number;
   addedNodeCount: number;
   addedEdgeCount: number;
+  evidenceLevel?: CaseGraphOperationEvidenceLevel;
+  evidenceLabel?: string;
+  evidenceNote?: string;
 }
 
 export interface CaseGraphReplayTimeline {
@@ -423,6 +437,8 @@ export interface QueryCaseGraphRelationPayload {
   drillType?: string | number | null;
   filters?: Record<string, unknown>;
   options?: Record<string, unknown>;
+  evidence?: CaseGraphOperationEvidence;
+  evidenceContext?: 'drill_with_changed_settings';
 }
 
 export interface ApplyCaseGraphInvestigationGroupPayload {
@@ -439,6 +455,7 @@ export interface ApplyCaseGraphInvestigationGroupPayload {
   collapsed?: boolean;
   groupPosition?: { x: number; y: number } | null;
   options?: Record<string, unknown>;
+  evidence?: CaseGraphOperationEvidence;
 }
 
 export interface CompleteCaseGraphRelationPayload {
@@ -447,6 +464,7 @@ export interface CompleteCaseGraphRelationPayload {
   accounts: CaseGraphTradeCard[];
   filters?: Record<string, unknown>;
   options?: Record<string, unknown>;
+  evidence?: CaseGraphOperationEvidence;
 }
 
 export interface FilterCaseGraphRelationPayload {
@@ -463,6 +481,7 @@ export interface ExcludeCaseGraphTradesPayload {
   tradeFacts: Record<string, CaseGraphTradeFact> | CaseGraphTradeFact[];
   edgeTradeIds: Record<string, string[]>;
   options?: Record<string, unknown>;
+  evidence?: CaseGraphOperationEvidence;
 }
 
 export interface ApplyCaseGraphSummarySelectionPayload {
@@ -482,6 +501,7 @@ export interface ApplyCaseGraphSummarySelectionPayload {
   drillType?: string | number | null;
   filters?: Record<string, unknown>;
   options?: Record<string, unknown>;
+  evidence?: CaseGraphOperationEvidence;
 }
 
 export interface QueryCaseGraphSummaryCandidatesPayload {
@@ -500,6 +520,8 @@ export interface ExcludeCaseGraphNodePayload {
   caseId: string;
   node?: CaseGraphExcludedNode;
   nodes?: CaseGraphExcludedNode[];
+  evidence?: CaseGraphOperationEvidence;
+  evidenceContext?: 'candidate_subject_changes';
 }
 
 export interface RestoreCaseGraphNodePayload {
@@ -507,6 +529,7 @@ export interface RestoreCaseGraphNodePayload {
   caseId: string;
   nodeId: string;
   options?: Record<string, unknown>;
+  evidence?: CaseGraphOperationEvidence;
 }
 
 export interface RestoreCaseGraphNodesPayload {
@@ -514,6 +537,7 @@ export interface RestoreCaseGraphNodesPayload {
   caseId: string;
   nodeIds: string[];
   options?: Record<string, unknown>;
+  evidence?: CaseGraphOperationEvidence;
 }
 
 export interface CaseGraphManualPartyPayload {
@@ -538,6 +562,7 @@ export interface AddCaseGraphManualTradePayload {
   summary?: string;
   sourceNote?: string;
   options?: Record<string, unknown>;
+  evidence?: CaseGraphOperationEvidence;
 }
 
 export interface AddCaseGraphManualNodePayload {
@@ -550,6 +575,7 @@ export interface AddCaseGraphManualNodePayload {
   note?: string;
   position?: { x: number; y: number };
   options?: Record<string, unknown>;
+  evidence?: CaseGraphOperationEvidence;
 }
 
 export interface AddCaseGraphRealityRelationPayload {
@@ -561,6 +587,7 @@ export interface AddCaseGraphRealityRelationPayload {
   label?: string;
   note?: string;
   options?: Record<string, unknown>;
+  evidence?: CaseGraphOperationEvidence;
 }
 
 export interface UpdateCaseGraphNodeNotePayload {

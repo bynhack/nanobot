@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import uuid4
 
+from .operation_evidence import evidence_from_business_fields
 from .relation_storage import RelationGraphStorage
 from .relation_types import normalize_relation_query_payload
 
@@ -112,6 +113,11 @@ class RelationGraphService:
                 "addedNodeCount": len(delta["addedNodes"]),
                 "addedEdgeCount": len(delta["addedEdges"]),
             },
+            evidence_level=(
+                "optional"
+                if str(request.get("evidenceContext") or "").strip() == "drill_with_changed_settings"
+                else None
+            ),
         )
 
     def complete_current_graph(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -146,6 +152,7 @@ class RelationGraphService:
             "accounts": accounts,
             "filters": filters,
             "options": options,
+            "evidence": payload.get("evidence"),
         }
         return self._storage.save_step(
             case_id=case_id,
@@ -210,6 +217,8 @@ class RelationGraphService:
         options = dict(payload.get("options") or {}) if isinstance(payload.get("options"), dict) else {}
         current_graph = self._apply_node_positions(current_graph, options)
         excluded_trade_ids = self._text_list(payload.get("excludedTrades"))
+        previous_excluded_trade_ids = set(self._text_list(current_graph.get("excludedTrades")))
+        adds_exclusions = bool(set(excluded_trade_ids) - previous_excluded_trade_ids)
         incoming_facts = self._normalize_trade_facts(payload.get("tradeFacts"))
         edge_trade_ids = self._normalize_edge_trade_ids(payload.get("edgeTradeIds"))
         graph = self._apply_trade_exclusions(
@@ -230,6 +239,7 @@ class RelationGraphService:
             "excludedTrades": excluded_trade_ids,
             "edgeTradeIds": edge_trade_ids,
             "options": options,
+            "evidence": payload.get("evidence"),
         }
         return self._storage.save_step(
             case_id=case_id,
@@ -244,6 +254,7 @@ class RelationGraphService:
                 "tradeFactCount": len(graph.get("tradeFacts") or {}),
                 "edgeCount": len(graph.get("edges") or []),
             },
+            evidence_level="required" if adds_exclusions else "optional",
         )
 
     def exclude_node(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -278,7 +289,12 @@ class RelationGraphService:
         merged_nodes = self._merge_excluded_nodes(graph, excluded_nodes)
         graph = self._apply_excluded_nodes(graph, merged_nodes)
         self._sync_snapshot_graph(graph_id, graph, trade_cards=self._accounts_from_graph(graph))
-        request: dict[str, Any] = {"caseId": case_id, "graphId": graph_id}
+        request: dict[str, Any] = {
+            "caseId": case_id,
+            "graphId": graph_id,
+            "evidence": payload.get("evidence"),
+            "evidenceContext": str(payload.get("evidenceContext") or "").strip() or None,
+        }
         if len(excluded_nodes) == 1:
             request["node"] = excluded_nodes[0]
         else:
@@ -294,6 +310,11 @@ class RelationGraphService:
                 "excludedNodeCount": len(graph.get("excludedNodes") or []),
                 "updatedNodeCount": len(excluded_nodes),
             },
+            evidence_level=(
+                "optional"
+                if str(payload.get("evidenceContext") or "").strip() == "candidate_subject_changes"
+                else None
+            ),
         )
 
     def restore_node(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -534,6 +555,7 @@ class RelationGraphService:
             "collapsed": payload.get("collapsed") if "collapsed" in payload else None,
             "groupPosition": group_position,
             "options": options,
+            "evidence": payload.get("evidence"),
         }
         return self._storage.save_step(
             case_id=case_id,
@@ -647,6 +669,10 @@ class RelationGraphService:
             "note": note,
             "position": {"x": x, "y": y} if x is not None and y is not None else None,
             "options": options,
+            "evidence": payload.get("evidence") or evidence_from_business_fields(
+                "人工补充主体依据",
+                [("发现原因", discovery_reason), ("来源材料", source_note), ("情况说明", note)],
+            ),
         }
         return self._storage.save_step(
             case_id=case_id,
@@ -857,6 +883,10 @@ class RelationGraphService:
             "summary": summary,
             "sourceNote": source_note,
             "options": options,
+            "evidence": payload.get("evidence") or evidence_from_business_fields(
+                "人工补充资金往来依据",
+                [("线索来源", source_note), ("情况说明", summary)],
+            ),
         }
         return self._storage.save_step(
             case_id=case_id,
@@ -961,6 +991,10 @@ class RelationGraphService:
                 "relationType": relation_type,
                 "note": relation["note"],
                 "options": options,
+                "evidence": payload.get("evidence") or evidence_from_business_fields(
+                    "现实关系说明",
+                    [("关系说明", relation["note"])],
+                ),
             },
             graph=next_graph,
             delta=delta,
@@ -1102,6 +1136,7 @@ class RelationGraphService:
             "drillNums": payload.get("drillNums") or payload.get("limit"),
             "drillType": payload.get("drillType"),
             "options": options,
+            "evidence": payload.get("evidence"),
         }
         delta["updatedNodes"] = updated_nodes
         return self._storage.save_step(

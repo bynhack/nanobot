@@ -1,0 +1,12 @@
+{
+  "name": "@casework/case-graph",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "mysql2": "3.22.6"
+  }
+}

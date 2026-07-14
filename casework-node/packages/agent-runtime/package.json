@@ -1,0 +1,17 @@
+{
+  "name": "@casework/agent-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@casework/case-graph": "*",
+    "@casework/contracts": "*",
+    "@casework/persistence": "*",
+    "@earendil-works/pi-agent-core": "0.80.6",
+    "@earendil-works/pi-ai": "0.80.6",
+    "typebox": "1.3.6"
+  }
+}

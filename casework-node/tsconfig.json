@@ -9,11 +9,16 @@
     "esModuleInterop": true,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
-    "rootDir": "src",
-    "outDir": "dist/server",
-    "sourceMap": true,
-    "declaration": true,
-    "resolveJsonModule": true
+    "noEmit": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@casework/agent-runtime": ["packages/agent-runtime/src/index.ts"],
+      "@casework/case-audit": ["packages/case-audit/src/index.ts"],
+      "@casework/case-graph": ["packages/case-graph/src/index.ts"],
+      "@casework/contracts": ["packages/contracts/src/index.ts"],
+      "@casework/persistence": ["packages/persistence/src/index.ts"]
+    }
   },
-  "include": ["src/**/*.ts"]
+  "include": ["apps/api/src/**/*.ts", "packages/**/*.ts", "tests/**/*.ts"]
 }

@@ -6,33 +6,33 @@
   "engines": {
     "node": ">=22"
   },
+  "workspaces": [
+    "apps/api",
+    "apps/web",
+    "packages/agent-runtime",
+    "packages/case-audit",
+    "packages/case-graph",
+    "packages/contracts",
+    "packages/persistence"
+  ],
   "scripts": {
-    "postinstall": "npm --prefix frontend install --legacy-peer-deps",
-    "build": "npm run build:server && npm run build:frontend",
-    "build:server": "tsc -p tsconfig.json",
-    "build:frontend": "npm --prefix frontend run build",
-    "dev": "tsx watch src/main.ts",
-    "start": "node dist/server/main.js",
+    "api": "tsx apps/api/src/index.ts",
+    "web": "npm run dev -w nanobot-webui",
+    "build": "npm run build:web",
+    "build:web": "npm run build -w nanobot-webui",
+    "dev": "tsx apps/api/src/index.ts",
+    "start": "tsx apps/api/src/index.ts",
     "test": "node --import tsx --test tests/**/*.test.ts",
     "test:contract": "node scripts/compare-live-apis.mjs",
     "test:api": "node scripts/smoke-all-apis.mjs",
-    "test:frontend": "npm --prefix frontend test",
-    "verify": "npm test && npm run build"
-  },
-  "dependencies": {
-    "@earendil-works/pi-agent-core": "0.80.6",
-    "@earendil-works/pi-ai": "0.80.6",
-    "@fastify/multipart": "10.1.0",
-    "@fastify/static": "10.1.0",
-    "@fastify/websocket": "11.3.0",
-    "decimal.js": "10.6.0",
-    "fastify": "5.10.0",
-    "mysql2": "3.22.6",
-    "typebox": "1.3.6"
+    "test:web": "npm run test -w nanobot-webui",
+    "typecheck": "tsc --noEmit --pretty false",
+    "verify": "npm test && npm run test:web && npm run typecheck && npm run build:web"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/ws": "^8.18.1",
+    "prettier": "^3.6.2",
     "tsx": "^4.20.0",
     "typescript": "^5.8.3"
   }

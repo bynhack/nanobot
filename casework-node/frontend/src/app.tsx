@@ -1,0 +1,509 @@
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Check, ChevronDown, Network, Scale } from 'lucide-react';
+
+import { AuthTokenModal } from './auth-token-modal';
+import { readAppearanceMode, readUiTheme } from './app-helpers';
+import { bootstrap, DETAIL_PANEL_WIDTH_KEY, appStore, useAppSelector } from './app-state';
+import { loadSessionWorkspace } from './api';
+import { ConversationContentPane } from './components/chat/conversation-content-pane';
+import { DetailPreviewContext, type ToolDetailPayload } from './components/chat/detail-preview-context';
+import { DEFAULT_UI_THEME } from './components/settings/types';
+import { CaseAuditPage } from './case-audit/page';
+import { CaseGraphWorkbench } from './case-graph/workbench';
+import type { DetailView } from './detail-preview-pane';
+import { LoginPage } from './login-page';
+import { SettingsScreen, type AppearanceMode, type UiTheme } from './settings-page';
+import { STORAGE_KEYS } from './store';
+import './styles.css';
+import type { MediaItem, SessionWorkspaceFile } from './types';
+import { useAuthSession } from './use-auth-session';
+import {
+  DETAIL_PANEL_MAX_WIDTH,
+  DETAIL_PANEL_MIN_WIDTH,
+  IMMERSIVE_DETAIL_PANEL_MIN_WIDTH,
+  IMMERSIVE_CHAT_CONTENT_MAX,
+  IMMERSIVE_CHAT_CONTENT_MIN,
+  MOBILE_SIDEBAR_BREAKPOINT,
+  SIDEBAR_EXPANDED_WIDTH,
+  getPreferredDetailPanelWidth,
+  shouldUseImmersivePreview,
+} from './preview-layout';
+
+type AppView = 'chat' | 'settings' | 'case_graph' | 'case_audit';
+type FeatureView = Extract<AppView, 'case_graph' | 'case_audit'>;
+
+const FEATURE_NAV_ITEMS: Array<{
+  view: FeatureView;
+  label: string;
+  description: string;
+  Icon: typeof Network;
+}> = [
+  {
+    view: 'case_graph',
+    label: '案件资金上图',
+    description: '围绕案件主体、账号和交易关系开展图谱研判。',
+    Icon: Network,
+  },
+  {
+    view: 'case_audit',
+    label: '涉诈资金审计',
+    description: '以被害人入账为起点，发现候选嫌疑人并认定金额。',
+    Icon: Scale,
+  },
+];
+
+function FeatureNavigationMenu({
+  activeView,
+  title,
+  onSelect,
+}: {
+  activeView: FeatureView;
+  title: string;
+  onSelect: (view: FeatureView) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const activeItem = FEATURE_NAV_ITEMS.find((item) => item.view === activeView) ?? FEATURE_NAV_ITEMS[0];
+  const ActiveIcon = activeItem.Icon;
+
+  useEffect(() => {
+    if (!open) {
+      return undefined;
+    }
+
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && menuRef.current && !menuRef.current.contains(target)) {
+        setOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+      }
+    };
+
+    window.addEventListener('pointerdown', closeOnOutsidePointer);
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      window.removeEventListener('pointerdown', closeOnOutsidePointer);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div className="feature-nav" ref={menuRef}>
+      <button
+        className={`feature-nav-trigger${open ? ' is-open' : ''}`}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="feature-nav-mark" aria-hidden="true">
+          <ActiveIcon size={21} />
+        </span>
+        <span className="feature-nav-current">
+          <span>{title}</span>
+          <strong>{activeItem.label}</strong>
+        </span>
+        <ChevronDown size={15} aria-hidden="true" />
+      </button>
+
+      {open ? (
+        <div className="feature-nav-menu" role="menu" aria-label="功能导航">
+          {FEATURE_NAV_ITEMS.map((item) => {
+            const ItemIcon = item.Icon;
+            const active = item.view === activeView;
+            return (
+              <button
+                key={item.view}
+                className={`feature-nav-menu-item${active ? ' is-active' : ''}`}
+                type="button"
+                role="menuitem"
+                aria-current={active ? 'page' : undefined}
+                onClick={() => {
+                  onSelect(item.view);
+                  setOpen(false);
+                }}
+              >
+                <span className="feature-nav-menu-icon" aria-hidden="true">
+                  <ItemIcon size={18} />
+                </span>
+                <span className="feature-nav-menu-copy">
+                  <strong>{item.label}</strong>
+                  <small>{item.description}</small>
+                </span>
+                {active ? <Check size={16} aria-hidden="true" /> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function clampDetailWidth(width: number, viewportWidth: number, immersive: boolean, sidebarOpen: boolean): number {
+  if (!immersive) {
+    return Math.min(DETAIL_PANEL_MAX_WIDTH, Math.max(DETAIL_PANEL_MIN_WIDTH, width));
+  }
+
+  const sidebarWidth = sidebarOpen ? SIDEBAR_EXPANDED_WIDTH : 0;
+  const minWidth = Math.max(IMMERSIVE_DETAIL_PANEL_MIN_WIDTH, viewportWidth - sidebarWidth - IMMERSIVE_CHAT_CONTENT_MAX);
+  const maxWidth = Math.min(DETAIL_PANEL_MAX_WIDTH, viewportWidth - sidebarWidth - IMMERSIVE_CHAT_CONTENT_MIN);
+  return Math.min(maxWidth, Math.max(minWidth, width));
+}
+
+export function App() {
+  const authToken = useAppSelector((state) => state.authToken);
+  const connectionState = useAppSelector((state) => state.connectionState);
+  const currentChatId = useAppSelector((state) => state.currentChatId);
+  const workspacePanel = useAppSelector((state) => state.workspacePanel);
+  const workspaceByChat = useAppSelector((state) => state.workspaceByChat);
+  const [flashMessage, setFlashMessage] = useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [previewSidebarOpen, setPreviewSidebarOpen] = useState(false);
+  const [appView, setAppView] = useState<AppView>('case_graph');
+  const [detailView, setDetailView] = useState<DetailView | null>(null);
+  const [contentPanelPinnedOpen, setContentPanelPinnedOpen] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
+  const [detailPanelWidth, setDetailPanelWidth] = useState(() => {
+    const raw = window.localStorage.getItem(DETAIL_PANEL_WIDTH_KEY);
+    const width = raw ? Number(raw) : 440;
+    return Number.isFinite(width)
+      ? Math.min(DETAIL_PANEL_MAX_WIDTH, Math.max(DETAIL_PANEL_MIN_WIDTH, width))
+      : 440;
+  });
+  const [resizingDetailPanel, setResizingDetailPanel] = useState(false);
+  const [appearanceMode, setAppearanceMode] = useState<AppearanceMode>(() => readAppearanceMode());
+  const [uiTheme, setUiTheme] = useState<UiTheme>(() => readUiTheme(DEFAULT_UI_THEME));
+
+  const flashTimerRef = useRef<number | null>(null);
+  const workspaceRequestCounterRef = useRef(0);
+
+  const showFlash = useCallback((message: string) => {
+    setFlashMessage(message);
+    if (flashTimerRef.current !== null) {
+      window.clearTimeout(flashTimerRef.current);
+    }
+    flashTimerRef.current = window.setTimeout(() => {
+      setFlashMessage(null);
+    }, 3500);
+  }, []);
+
+  const {
+    authModalOpen,
+    setAuthModalOpen,
+    draftToken,
+    setDraftToken,
+    currentUser,
+    authBusy,
+    authError,
+    authResolved,
+    handlePocketBaseLogin,
+    handleLogout,
+  } = useAuthSession(authToken);
+
+  const currentWorkspace = currentChatId ? workspaceByChat[currentChatId] ?? null : null;
+  const panelWorkspace = workspacePanel.chatId ? workspaceByChat[workspacePanel.chatId] ?? null : null;
+  const workspacePanelOpen = appView === 'chat' && workspacePanel.open;
+  const workspaceLoading = Boolean(
+    currentChatId && workspacePanel.loading && workspacePanel.chatId === currentChatId,
+  );
+  const workspaceFileCount = currentWorkspace?.files.length ?? 0;
+  const contentPanelOpen = appView === 'chat' && (contentPanelPinnedOpen || Boolean(detailView) || workspacePanelOpen);
+  const previewOpen = contentPanelOpen;
+  const immersivePreview = previewOpen && shouldUseImmersivePreview(viewportWidth);
+  const effectiveSidebarCollapsed = immersivePreview ? !previewSidebarOpen : sidebarCollapsed;
+  const immersiveSidebarWidth = immersivePreview && previewSidebarOpen ? SIDEBAR_EXPANDED_WIDTH : 0;
+  const immersiveChatContentWidth = immersivePreview
+    ? Math.min(
+        IMMERSIVE_CHAT_CONTENT_MAX,
+        Math.max(IMMERSIVE_CHAT_CONTENT_MIN, viewportWidth - detailPanelWidth - immersiveSidebarWidth),
+      )
+    : null;
+  const immersiveChatWorkspaceWidth =
+    immersiveChatContentWidth === null ? null : immersiveChatContentWidth + immersiveSidebarWidth;
+
+  const ensurePreferredDetailWidth = useCallback(() => {
+    const preferredWidth = getPreferredDetailPanelWidth(window.innerWidth);
+    setDetailPanelWidth(() =>
+      clampDetailWidth(
+        preferredWidth,
+        window.innerWidth,
+        shouldUseImmersivePreview(window.innerWidth),
+        false,
+      ),
+    );
+  }, []);
+
+  const openMedia = useCallback((item: MediaItem) => {
+    setAppView('case_graph');
+    ensurePreferredDetailWidth();
+    setContentPanelPinnedOpen(true);
+    setDetailView({ type: 'media', item });
+  }, [ensurePreferredDetailWidth]);
+
+  const openTool = useCallback((title: string, payload: ToolDetailPayload) => {
+    setAppView('case_graph');
+    ensurePreferredDetailWidth();
+    setContentPanelPinnedOpen(true);
+    setDetailView({ type: 'tool', title, payload });
+  }, [ensurePreferredDetailWidth]);
+
+  const openWorkspace = useCallback(() => {
+    if (!currentChatId) {
+      return;
+    }
+    setAppView('case_graph');
+    ensurePreferredDetailWidth();
+    setContentPanelPinnedOpen(true);
+    const chatId = currentChatId;
+    workspaceRequestCounterRef.current += 1;
+    const requestId = workspaceRequestCounterRef.current;
+    appStore.dispatch({ type: 'workspace.open', chatId });
+    appStore.dispatch({ type: 'workspace.loading', chatId, requestId });
+    loadSessionWorkspace(chatId, authToken)
+      .then((workspace) => {
+        appStore.dispatch({ type: 'workspace.loaded', chatId, requestId, workspace });
+      })
+      .catch((error: unknown) => {
+        appStore.dispatch({
+          type: 'workspace.failed',
+          chatId,
+          requestId,
+          error: error instanceof Error ? error.message : '加载工作空间失败',
+        });
+      });
+  }, [authToken, currentChatId, ensurePreferredDetailWidth]);
+
+  const closeWorkspacePanel = useCallback(() => {
+    appStore.dispatch({ type: 'workspace.close' });
+  }, []);
+
+  const openWorkspaceFile = useCallback((file: SessionWorkspaceFile) => {
+    openMedia({ url: file.url, name: file.name, mime: file.mime });
+  }, [openMedia]);
+
+  const closeContentDetail = useCallback(() => {
+    setDetailView(null);
+  }, []);
+
+  const closeContentPanel = useCallback(() => {
+    setContentPanelPinnedOpen(false);
+    setDetailView(null);
+    appStore.dispatch({ type: 'workspace.close' });
+  }, []);
+
+  const toggleContentPanel = useCallback(() => {
+    if (contentPanelOpen) {
+      closeContentPanel();
+      return;
+    }
+    setAppView('case_graph');
+    ensurePreferredDetailWidth();
+    setContentPanelPinnedOpen(true);
+  }, [closeContentPanel, contentPanelOpen, ensurePreferredDetailWidth]);
+
+  const previewActions = useMemo(
+    () => ({ openMedia, openTool }),
+    [openMedia, openTool],
+  );
+  const handleOpenSettings = useCallback(() => {
+    setPreviewSidebarOpen(false);
+    setDetailView(null);
+    setAppView('settings');
+  }, []);
+  const handleSelectFeature = useCallback((view: FeatureView) => {
+    setPreviewSidebarOpen(false);
+    setDetailView(null);
+    setAppView(view);
+  }, []);
+  const handleToggleSidebar = useCallback(() => {
+    if (previewOpen && shouldUseImmersivePreview(window.innerWidth)) {
+      setPreviewSidebarOpen((value) => !value);
+      return;
+    }
+    setSidebarCollapsed((value) => !value);
+  }, [previewOpen]);
+
+  useEffect(() => {
+    document.title = bootstrap.title;
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = appearanceMode;
+    window.localStorage.setItem(STORAGE_KEYS.appearanceMode, appearanceMode);
+  }, [appearanceMode]);
+
+  useEffect(() => {
+    document.documentElement.dataset.uiTheme = uiTheme;
+    window.localStorage.setItem(STORAGE_KEYS.uiTheme, uiTheme);
+  }, [uiTheme]);
+
+  useEffect(() => {
+    window.localStorage.setItem(DETAIL_PANEL_WIDTH_KEY, String(detailPanelWidth));
+  }, [detailPanelWidth]);
+
+  useEffect(() => {
+    setDetailPanelWidth((current) => clampDetailWidth(current, viewportWidth, immersivePreview, previewSidebarOpen));
+  }, [viewportWidth, immersivePreview, previewSidebarOpen]);
+
+  useEffect(() => {
+    setDetailView(null);
+    setContentPanelPinnedOpen(false);
+  }, [currentChatId]);
+
+  useEffect(() => {
+    setPreviewSidebarOpen(false);
+  }, [currentChatId]);
+
+  useEffect(() => {
+    if (appView !== 'chat') {
+      setPreviewSidebarOpen(false);
+      setDetailView(null);
+      appStore.dispatch({ type: 'workspace.close' });
+    }
+  }, [appView]);
+
+  useEffect(() => {
+    if (!immersivePreview) {
+      setPreviewSidebarOpen(false);
+    }
+  }, [immersivePreview]);
+
+  useEffect(() => {
+    const syncResponsiveSidebar = () => {
+      const width = window.innerWidth;
+      setViewportWidth(width);
+      if (width <= MOBILE_SIDEBAR_BREAKPOINT) {
+        setSidebarCollapsed(true);
+        return;
+      }
+      setSidebarCollapsed(false);
+    };
+    syncResponsiveSidebar();
+    window.addEventListener('resize', syncResponsiveSidebar);
+    return () => window.removeEventListener('resize', syncResponsiveSidebar);
+  }, []);
+
+  useEffect(() => {
+    if (!resizingDetailPanel) {
+      return;
+    }
+
+    const onMouseMove = (event: MouseEvent) => {
+      const nextWidth = window.innerWidth - event.clientX;
+      setDetailPanelWidth(
+        clampDetailWidth(
+          nextWidth,
+          window.innerWidth,
+          shouldUseImmersivePreview(window.innerWidth),
+          previewOpen && previewSidebarOpen,
+        ),
+      );
+    };
+
+    const onMouseUp = () => {
+      setResizingDetailPanel(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [resizingDetailPanel]);
+
+  return (
+    <DetailPreviewContext.Provider value={previewActions}>
+      <div
+        className={`shell${previewOpen ? ' detail-open' : ''}${immersivePreview ? ' detail-immersive' : ''}${
+          previewSidebarOpen ? ' preview-sidebar-open' : ''
+        }`}
+        style={
+          immersiveChatWorkspaceWidth !== null && immersiveChatContentWidth !== null
+            ? ({
+                '--immersive-chat-workspace-width': `${immersiveChatWorkspaceWidth}px`,
+                '--immersive-chat-content-width': `${immersiveChatContentWidth}px`,
+              } as CSSProperties)
+            : undefined
+        }
+      >
+        {resizingDetailPanel ? <div className="detail-resize-overlay" aria-hidden="true" /> : null}
+        {appView === 'case_graph' || appView === 'settings' ? (
+          <CaseGraphWorkbench
+            token={authToken}
+            onBack={() => setAppView('case_graph')}
+            onOpenSettings={handleOpenSettings}
+            title={bootstrap.title}
+            authResolved={authResolved}
+            currentUser={currentUser}
+            showFlash={showFlash}
+            headerSlot={(
+              <FeatureNavigationMenu
+                activeView={appView === 'case_audit' ? 'case_audit' : 'case_graph'}
+                title={bootstrap.title}
+                onSelect={handleSelectFeature}
+              />
+            )}
+          />
+        ) : null}
+
+        {appView === 'case_audit' ? (
+          <CaseAuditPage
+            token={authToken}
+            onBack={() => setAppView('case_graph')}
+            navigationSlot={(
+              <FeatureNavigationMenu
+                activeView="case_audit"
+                title={bootstrap.title}
+                onSelect={handleSelectFeature}
+              />
+            )}
+          />
+        ) : null}
+
+        {appView === 'settings' ? (
+          <SettingsScreen
+            authRequired={bootstrap.authRequired}
+            connectionState={connectionState}
+            currentChatId={currentChatId}
+            onBack={() => setAppView('case_graph')}
+            onOpenAuth={() => setAuthModalOpen(true)}
+            appearanceMode={appearanceMode}
+            onAppearanceModeChange={setAppearanceMode}
+            uiTheme={uiTheme}
+            onUiThemeChange={setUiTheme}
+            token={authToken}
+            currentUser={currentUser}
+            authMode={bootstrap.authMode}
+            onLogout={handleLogout}
+          />
+        ) : null}
+
+        {bootstrap.authMode === 'pocketbase' && (!authToken || !currentUser) ? (
+          <LoginPage busy={authBusy} error={authError} onSubmit={handlePocketBaseLogin} />
+        ) : null}
+
+        {bootstrap.authMode !== 'pocketbase' ? (
+          <AuthTokenModal
+            open={authModalOpen}
+            draftToken={draftToken}
+            setDraftToken={setDraftToken}
+            onClose={() => setAuthModalOpen(false)}
+          />
+        ) : null}
+      </div>
+    </DetailPreviewContext.Provider>
+  );
+}

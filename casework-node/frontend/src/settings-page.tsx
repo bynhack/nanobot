@@ -1,0 +1,118 @@
+import { useState } from 'react';
+
+import { GeneralTab } from './components/settings/tabs/GeneralTab';
+import { SkillsTab } from './components/settings/tabs/SkillsTab';
+import { ConfigTab } from './components/settings/tabs/ConfigTab';
+import { RuntimeTab } from './components/settings/tabs/RuntimeTab';
+import { SETTINGS_TABS, SettingsTab, AppearanceMode, UiTheme } from './components/settings/types';
+import type { AppState, AuthUser, BootstrapConfig } from './types';
+import { connectionStatusText } from './ui-utils';
+
+export type { AppearanceMode, UiTheme, SettingsTab };
+
+export function SettingsScreen({
+  authRequired,
+  connectionState,
+  currentChatId,
+  onBack,
+  onOpenAuth,
+  appearanceMode,
+  onAppearanceModeChange,
+  uiTheme,
+  onUiThemeChange,
+  token,
+  currentUser,
+  authMode,
+  onLogout,
+}: {
+  authRequired: boolean;
+  connectionState: AppState['connectionState'];
+  currentChatId: string | null;
+  onBack: () => void;
+  onOpenAuth: () => void;
+  appearanceMode: AppearanceMode;
+  onAppearanceModeChange: (value: AppearanceMode) => void;
+  uiTheme: UiTheme;
+  onUiThemeChange: (value: UiTheme) => void;
+  token: string;
+  currentUser: AuthUser | null;
+  authMode: BootstrapConfig['authMode'];
+  onLogout: () => void;
+}) {
+  const allowedTabs = SETTINGS_TABS.filter((tab) => {
+    if (tab.value === 'general') {
+      return true;
+    }
+    if (currentUser?.role === 'admin') {
+      return true;
+    }
+    return tab.value === 'runtime';
+  });
+  const [activeTab, setActiveTab] = useState<SettingsTab>(allowedTabs[0]?.value ?? 'general');
+
+  return (
+    <div className="settings-overlay" onClick={onBack}>
+      <main className="settings-shell" onClick={(e) => e.stopPropagation()}>
+        <div className="settings-layout">
+          <aside className="settings-nav-sidebar">
+            <header className="settings-sidebar-header">
+              <button className="icon-button close-btn" type="button" onClick={onBack} aria-label="关闭">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </header>
+            <nav className="settings-nav" aria-label="设置导航">
+              {allowedTabs.map((tab) => (
+                <button
+                  key={tab.value}
+                  type="button"
+                  className={`settings-nav-item${activeTab === tab.value ? ' active' : ''}`}
+                  onClick={() => setActiveTab(tab.value)}
+                >
+                  <svg className="settings-nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d={tab.icon} />
+                  </svg>
+                  <span className="settings-nav-label">{tab.label}</span>
+                </button>
+              ))}
+            </nav>
+          </aside>
+          <div className="settings-content-wrapper">
+            <header className="settings-content-header">
+              <h2 className="settings-content-title">
+                {SETTINGS_TABS.find(t => t.value === activeTab)?.label}
+              </h2>
+              <div className={`status-badge ${connectionState}`}>
+                <span className="status-dot" />
+                <span>{connectionStatusText(connectionState)}</span>
+              </div>
+            </header>
+            <div className="settings-content-body">
+              <div className="settings-content-inner">
+                {activeTab === 'general' && (
+                  <GeneralTab
+                    connectionState={connectionState}
+                    currentChatId={currentChatId}
+                    authRequired={authRequired}
+                    onOpenAuth={onOpenAuth}
+                    appearanceMode={appearanceMode}
+                    onAppearanceModeChange={onAppearanceModeChange}
+                    uiTheme={uiTheme}
+                    onUiThemeChange={onUiThemeChange}
+                    currentUser={currentUser}
+                    authMode={authMode}
+                    onLogout={onLogout}
+                  />
+                )}
+                {activeTab === 'skills' && currentUser?.role === 'admin' && <SkillsTab token={token} />}
+                {activeTab === 'config' && currentUser?.role === 'admin' && <ConfigTab token={token} />}
+                {activeTab === 'runtime' && <RuntimeTab token={token} />}
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+}
